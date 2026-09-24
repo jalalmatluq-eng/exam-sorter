@@ -183,11 +183,67 @@ def find_unsorted_media(roots: list[Path] | None = None, max_depth: int = 8) -> 
     return found_files
 
 
+def is_visual_document_or_paper(image_path: str) -> bool:
+    """
+    فحص بصري بالرؤية الحاسوبية (OpenCV) لمعرفة ما إذا كانت الصورة ورقة مستند أو اختبار:
+    - فحص تشبع الألوان (HSV Saturation): الأوراق والمستندات ذات تشبع لوني شبه منعدم (< 48).
+    - فحص السطوع (HSV Value): خلفية الورقة فاتحة وبيضاء/رمادية (سطوع > 130).
+    - فحص نسبة الحبر للنصوص عبر Otsu Threshold: كثافة النصوص بين 1.2% و 38%.
+    - فحص التوزيع الأفقي للأسطر (Horizontal projection variance): وجود سطور كتابة.
+    """
+    try:
+        import cv2
+        import numpy as np
+
+        img = cv2.imread(image_path)
+        if img is None:
+            return False
+        h, w = img.shape[:2]
+        if h < 100 or w < 100:
+            return False
+
+        # تصغير سريع لتقليل استهلاك المعالج والذاكرة
+        max_dim = max(h, w)
+        if max_dim > 600:
+            scale = 600.0 / max_dim
+            small = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        else:
+            small = img
+
+        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+        mean_s = float(np.mean(hsv[:, :, 1]))
+        mean_v = float(np.mean(hsv[:, :, 2]))
+
+        # الأوراق والمستندات تتميز بخلفية بيضاء/فاتحة وتشبع لوني منخفض جداً
+        if mean_s > 48.0 or mean_v < 130.0:
+            return False
+
+        # استخراج عتبة الحبر والنصوص باستخدام Otsu Threshold
+        _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        ink_ratio = float(np.count_nonzero(thresh) / thresh.size)
+
+        # نسبة الحبر في أوراق الاختبارات والمستندات عادة بين 1.2% و 38%
+        if not (0.012 <= ink_ratio <= 0.38):
+            return False
+
+        # التحقق من وجود توزيع أفقي لسطور النصوص (Horizontal projection standard deviation)
+        horiz_hist = np.sum(thresh, axis=1)
+        if float(np.std(horiz_hist)) < 5.0:
+            return False
+
+        return True
+    except Exception:
+        return False
+
+
 def is_likely_exam_paper(image_path: str) -> bool:
     """
     فحص أولي سريع عالي الكفاءة لمعرفة ما إذا كانت الصورة ورقة اختبار:
-    - فحص اسم الملف (exam, test, quiz, midterm, final, اختبار, امتحان, مقرر).
-    - إذا توفر OCR محلي، فحص الكلمات المفتاحية الأكاديمية في ترويسة الورقة.
+    1. فحص اسم الملف (exam, test, quiz, midterm, final, اختبار, امتحان, مقرر...).
+    2. فحص الرؤية الحاسوبية المستنداتي (ورقة بيضاء + تشبع منخفض + كثافة حبر وتوزيع سطور).
+    3. فحص الترويسة عبر OCR إن كان متاحاً.
     """
     name_lower = Path(image_path).name.lower()
     exam_terms = [
@@ -195,6 +251,10 @@ def is_likely_exam_paper(image_path: str) -> bool:
         "اختبار", "امتحان", "كويز", "شهري", "نهائي", "ورقة", "مقرر", "اسئلة", "أسئلة"
     ]
     if any(term in name_lower for term in exam_terms):
+        return True
+
+    # فحص الرؤية الحاسوبية لمستندات الأوراق والاختبارات المصورة بالكاميرا مثل IMG_*.jpg
+    if is_visual_document_or_paper(image_path):
         return True
 
     # محاولة فحص الترويسة عبر OCR إن كانت المكتبة متوفرة
@@ -231,7 +291,7 @@ def process_one_file(file_path: str | Path, api_key: str | None = None) -> dict[
     # 1. إذا كان الملف صورة (Image Routing)
     # =========================================================================
     if ext in IMAGE_EXTENSIONS:
-        # أولوية 1: صور الاختبارات والمقررات بالاسم أو ترويسة OCR السريعة
+        # أولوية 1: صور الاختبارات والمقررات بالاسم أو الرؤية المستنداتية أو OCR
         if is_likely_exam_paper(str(p)):
             try:
                 subject_name = classifier.classify_exam_image(str(p), api_key=api_key, fallback_to_ocr=True)
@@ -239,9 +299,11 @@ def process_one_file(file_path: str | Path, api_key: str | None = None) -> dict[
                     target_category = subject_name.strip()
                     detected_details = f"ورقة اختبار مادة: {target_category}"
             except Exception:
-                pass
+                # إذا حُسمت الورقة كمستند/اختبار لكن تعذر استخراج المادة أوفلاين
+                target_category = "اختبارات عامة"
+                detected_details = "ورقة اختبار ومستند دراسي (بانتظار تحديد المادة)"
 
-        # إذا لم تحسم كاختبار بالاسم، نفحص الوجوه
+        # إذا لم تحسم كاختبار بالاسم أو الرؤية، نفحص الوجوه
         if target_category == CATEGORY_UNCLASSIFIED:
             face_result = face_classifier.detect_and_match_face(str(p))
             if face_result == "me":
@@ -251,9 +313,17 @@ def process_one_file(file_path: str | Path, api_key: str | None = None) -> dict[
                 target_category = CATEGORY_FRIENDS_PHOTOS
                 detected_details = "اكتشاف وجوه أشخاص آخرين"
             else:
-                # إذا كانت الصورة خالية من الوجوه (None): نفحص ما إذا كانت ورقة اختبار حقيقية بالذكاء الاصطناعي
-                # هذا يحمي صور الكاميرا الحقيقية مثل IMG_2026.jpg من الذهاب لـ 'خارج التصنيف'
-                if api_key or os.getenv("ANTHROPIC_API_KEY"):
+                # إذا كانت الصورة خالية من الوجوه (None): نفحص ما إذا كانت ورقة اختبار
+                if is_likely_exam_paper(str(p)):
+                    try:
+                        subject_name = classifier.classify_exam_image(str(p), api_key=api_key, fallback_to_ocr=True)
+                        if subject_name and subject_name.strip():
+                            target_category = subject_name.strip()
+                            detected_details = f"ورقة اختبار مادة مصنفة: {target_category}"
+                    except Exception:
+                        target_category = "اختبارات عامة"
+                        detected_details = "ورقة اختبار ومستند دراسي"
+                elif api_key or os.getenv("ANTHROPIC_API_KEY"):
                     try:
                         subject_name = classifier.classify_exam_image(str(p), api_key=api_key, fallback_to_ocr=True)
                         if subject_name and subject_name.strip():

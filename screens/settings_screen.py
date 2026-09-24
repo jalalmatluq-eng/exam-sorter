@@ -123,7 +123,7 @@ class SettingsScreen(Screen):
             api_key = getattr(app, "api_key", None)
             res = media_scanner.run_batch_scan(max_files=40, api_key=api_key)
 
-            def on_finish(dt: float) -> None:
+            def on_finish(_dt: float) -> None:
                 self._on_scan_finished(res)
 
             Clock.schedule_once(on_finish, 0)
