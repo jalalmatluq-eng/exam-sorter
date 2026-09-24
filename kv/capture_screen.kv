@@ -1,0 +1,137 @@
+#:kivy 2.0.0
+
+<CaptureScreen>:
+    name: "capture_screen"
+
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: 0.95, 0.96, 0.98, 1
+
+        # شريط التطبيق العلوي
+        MDTopAppBar:
+            id: top_bar
+            type: "small"
+            theme_bg_color: "Custom"
+            md_bg_color: 0.22, 0.26, 0.68, 1
+            elevation: 3
+
+            MDTopAppBarLeadingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: "arrow-right"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    on_release: root.go_back()
+
+            MDTopAppBarTitle:
+                id: top_bar_title
+                text: app.ar("إضافة ورقة اختبار")
+                theme_text_color: "Custom"
+                text_color: 1, 1, 1, 1
+                bold: True
+
+        MDBoxLayout:
+            orientation: "vertical"
+            padding: dp(20)
+            spacing: dp(16)
+
+            # منطقة معاينة الصورة المختارة (إطار فخم وبسيط)
+            MDCard:
+                id: preview_card
+                size_hint: 1, 0.62
+                radius: [20, 20, 20, 20]
+                elevation: 2
+                theme_bg_color: "Custom"
+                md_bg_color: 1, 1, 1, 1
+                padding: dp(10)
+
+                FloatLayout:
+                    # صورة المعاينة عند اختيار ملف
+                    Image:
+                        id: image_preview
+                        pos_hint: {"center_x": 0.5, "center_y": 0.5}
+                        opacity: 0
+
+                    # مؤشر الفراغ قبل اختيار صورة
+                    MDBoxLayout:
+                        id: placeholder_box
+                        orientation: "vertical"
+                        spacing: dp(10)
+                        pos_hint: {"center_x": 0.5, "center_y": 0.5}
+                        size_hint: 0.9, None
+                        height: dp(160)
+
+                        MDIcon:
+                            icon: "camera-iris"
+                            font_size: "68sp"
+                            halign: "center"
+                            theme_icon_color: "Custom"
+                            icon_color: 0.22, 0.26, 0.68, 0.7
+
+                        MDLabel:
+                            id: placeholder_label
+                            text: app.ar("لم يتم اختيار صورة بعد")
+                            halign: "center"
+                            bold: True
+                            font_size: "16sp"
+                            theme_text_color: "Primary"
+
+                        MDLabel:
+                            id: placeholder_hint
+                            text: app.ar("اختر صورة واضحة لورقة الاختبار تحتوي على الترويسة")
+                            halign: "center"
+                            font_size: "12sp"
+                            theme_text_color: "Secondary"
+
+            # أزرار الإجراءات (كاميرا / معرض) بتصميم متناسق
+            MDGridLayout:
+                cols: 2
+                spacing: dp(14)
+                size_hint_y: None
+                height: dp(54)
+
+                MDButton:
+                    id: btn_camera
+                    style: "outlined"
+                    size_hint_x: 0.5
+                    on_release: root.capture_from_camera()
+
+                    MDButtonIcon:
+                        icon: "camera"
+
+                    MDButtonText:
+                        id: text_camera
+                        text: app.ar("التقاط بالكاميرا")
+                        bold: True
+
+                MDButton:
+                    id: btn_gallery
+                    style: "outlined"
+                    size_hint_x: 0.5
+                    on_release: root.pick_from_gallery()
+
+                    MDButtonIcon:
+                        icon: "image-multiple"
+
+                    MDButtonText:
+                        id: text_gallery
+                        text: app.ar("اختيار من المعرض")
+                        bold: True
+
+            # زر المتابعة إلى التصنيف
+            MDButton:
+                id: btn_proceed
+                style: "filled"
+                size_hint_y: None
+                height: dp(52)
+                size_hint_x: 1
+                disabled: True
+                pos_hint: {"center_x": 0.5}
+                on_release: root.proceed_to_classify()
+
+                MDButtonIcon:
+                    icon: "creation"
+
+                MDButtonText:
+                    id: text_proceed
+                    text: app.ar("تحليل وتصنيف بالذكاء الاصطناعي")
+                    bold: True

@@ -1,0 +1,283 @@
+#:kivy 2.0.0
+
+<HomeScreen>:
+    name: "home_screen"
+
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: 0.95, 0.96, 0.98, 1
+
+        # شريط التطبيق العلوي الحديث
+        MDTopAppBar:
+            id: top_bar
+            type: "small"
+            theme_bg_color: "Custom"
+            md_bg_color: 0.22, 0.26, 0.68, 1
+            elevation: 3
+
+            MDTopAppBarLeadingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: "school"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+
+            MDTopAppBarTitle:
+                id: top_bar_title
+                text: app.ar("مصنّف الاختبارات الذكي")
+                theme_text_color: "Custom"
+                text_color: 1, 1, 1, 1
+                bold: True
+
+            MDTopAppBarTrailingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: "folder-open-outline"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    tooltip_text: "فتح مجلد الاختبارات"
+                    on_release: root.open_storage_folder()
+
+                MDActionTopAppBarButton:
+                    icon: "broom"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    tooltip_text: "تنظيف المجلدات الفارغة"
+                    on_release: root.clean_empty_folders()
+
+                MDActionTopAppBarButton:
+                    icon: "refresh"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    on_release: root.refresh_subjects()
+
+                MDActionTopAppBarButton:
+                    icon: "cog-outline"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    on_release: root.open_settings_dialog()
+
+        # المساحة التفاعلية الرئيسية
+        MDBoxLayout:
+            orientation: "vertical"
+            padding: [dp(16), dp(16), dp(16), dp(8)]
+            spacing: dp(12)
+
+            # بطاقة الإحصائيات الفخمة (Dashboard Card)
+            MDCard:
+                id: hero_card
+                size_hint_y: None
+                height: dp(124)
+                radius: [20, 20, 20, 20]
+                padding: dp(14)
+                elevation: 3
+                theme_bg_color: "Custom"
+                md_bg_color: 0.22, 0.26, 0.68, 1
+
+                MDBoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(8)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(26)
+
+                        MDLabel:
+                            id: hero_title
+                            text: app.ar("لوحة التحكم والفرز الأكاديمي")
+                            theme_text_color: "Custom"
+                            text_color: 0.85, 0.90, 1.0, 1
+                            font_size: "13sp"
+                            halign: "right"
+                            valign: "middle"
+
+                        MDIcon:
+                            icon: "creation"
+                            theme_icon_color: "Custom"
+                            icon_color: 1.0, 0.85, 0.3, 1
+                            font_size: "18sp"
+                            size_hint_x: None
+                            width: dp(24)
+
+                    # كبسولات الإحصائيات الأنيقة
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(10)
+
+                        # كبسولة عدد المواد
+                        MDCard:
+                            radius: [14, 14, 14, 14]
+                            padding: [dp(8), dp(4)]
+                            theme_bg_color: "Custom"
+                            md_bg_color: 1, 1, 1, 0.15
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                pos_hint: {"center_y": 0.5}
+
+                                MDLabel:
+                                    id: stats_count
+                                    text: app.ar("0 مواد")
+                                    theme_text_color: "Custom"
+                                    text_color: 1, 1, 1, 1
+                                    bold: True
+                                    font_size: "17sp"
+                                    halign: "center"
+
+                                MDLabel:
+                                    id: stats_title
+                                    text: app.ar("المواد المسجلة")
+                                    theme_text_color: "Custom"
+                                    text_color: 0.85, 0.90, 1.0, 1
+                                    font_size: "11sp"
+                                    halign: "center"
+
+                        # كبسولة إجمالي الأوراق
+                        MDCard:
+                            radius: [14, 14, 14, 14]
+                            padding: [dp(8), dp(4)]
+                            theme_bg_color: "Custom"
+                            md_bg_color: 1, 1, 1, 0.15
+
+                            MDBoxLayout:
+                                orientation: "vertical"
+                                pos_hint: {"center_y": 0.5}
+
+                                MDLabel:
+                                    id: stats_exams_count
+                                    text: app.ar("0 ورقة")
+                                    theme_text_color: "Custom"
+                                    text_color: 1, 1, 1, 1
+                                    bold: True
+                                    font_size: "17sp"
+                                    halign: "center"
+
+                                MDLabel:
+                                    id: stats_exams_title
+                                    text: app.ar("إجمالي الأوراق")
+                                    theme_text_color: "Custom"
+                                    text_color: 0.85, 0.90, 1.0, 1
+                                    font_size: "11sp"
+                                    halign: "center"
+
+            # شريط البحث السريع عن المقررات
+            MDCard:
+                size_hint_y: None
+                height: dp(46)
+                radius: [14, 14, 14, 14]
+                padding: [dp(12), dp(2), dp(12), dp(2)]
+                elevation: 1
+                theme_bg_color: "Custom"
+                md_bg_color: 1, 1, 1, 1
+                orientation: "horizontal"
+                spacing: dp(8)
+
+                MDIcon:
+                    icon: "magnify"
+                    pos_hint: {"center_y": 0.5}
+                    theme_icon_color: "Custom"
+                    icon_color: 0.5, 0.5, 0.6, 1
+                    size_hint_x: None
+                    width: dp(24)
+
+                TextInput:
+                    id: search_input
+                    hint_text: app.ar("ابحث عن مادة أو مقرر...")
+                    multiline: False
+                    background_color: 0, 0, 0, 0
+                    foreground_color: 0.1, 0.1, 0.2, 1
+                    font_size: "13sp"
+                    cursor_color: 0.22, 0.26, 0.68, 1
+                    pos_hint: {"center_y": 0.5}
+                    on_text: root.filter_subjects(self.text)
+
+            # شريط عنوان قسم المواد
+            MDBoxLayout:
+                size_hint_y: None
+                height: dp(24)
+                orientation: "horizontal"
+                padding: [dp(4), 0]
+
+                MDLabel:
+                    id: section_title
+                    text: app.ar("المواد والمجلدات المنظمة")
+                    bold: True
+                    font_size: "14sp"
+                    halign: "right"
+                    theme_text_color: "Primary"
+
+                MDIcon:
+                    icon: "folder-star-outline"
+                    theme_icon_color: "Custom"
+                    icon_color: 0.22, 0.26, 0.68, 1
+                    size_hint_x: None
+                    width: dp(22)
+
+            # الحاوية المركزية: قائمة المواد أو كرت الحالة الفارغة
+            FloatLayout:
+                # تصميم حالة عدم وجود مواد (Empty State جذاب وفخم)
+                MDCard:
+                    id: empty_state
+                    orientation: "vertical"
+                    size_hint: 0.92, None
+                    height: dp(260)
+                    pos_hint: {"center_x": 0.5, "center_y": 0.52}
+                    radius: [24, 24, 24, 24]
+                    elevation: 1
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1, 1, 1, 1
+                    padding: dp(20)
+                    spacing: dp(12)
+                    opacity: 0
+
+                    MDIcon:
+                        icon: "image-filter-frames"
+                        font_size: "52sp"
+                        halign: "center"
+                        theme_icon_color: "Custom"
+                        icon_color: 0.22, 0.26, 0.68, 0.85
+
+                    MDLabel:
+                        id: empty_state_label
+                        text: app.ar("لا توجد أوراق اختبار مصنفة بعد")
+                        halign: "center"
+                        bold: True
+                        font_size: "16sp"
+                        theme_text_color: "Primary"
+
+                    MDLabel:
+                        id: empty_state_sub
+                        text: app.ar("التقط صورة لورقة الامتحان، وسيتعرف الذكاء الاصطناعي تلقائياً على اسم المادة وينظمها في مجلدها المخصص.")
+                        halign: "center"
+                        font_size: "12sp"
+                        theme_text_color: "Secondary"
+
+                    MDButton:
+                        style: "filled"
+                        pos_hint: {"center_x": 0.5}
+                        on_release: root.go_to_capture()
+
+                        MDButtonIcon:
+                            icon: "camera-plus"
+
+                        MDButtonText:
+                            text: app.ar("تصوير أول ورقة اختبار")
+                            bold: True
+
+                # قائمة المواد القابلة للتمرير
+                ScrollView:
+                    id: scroll_view
+                    do_scroll_x: False
+
+                    MDList:
+                        id: subjects_list
+                        spacing: dp(10)
+                        padding: [0, dp(4), 0, dp(88)]
+
+    # الزر العائم المميز لإضافة ورقة اختبار
+    MDFabButton:
+        id: fab_add
+        icon: "camera"
+        style: "standard"
+        pos_hint: {"center_x": 0.86, "center_y": 0.08}
+        elevation: 4
+        on_release: root.go_to_capture()

@@ -1,0 +1,129 @@
+#:kivy 2.0.0
+
+<SubjectDetailScreen>:
+    name: "subject_detail_screen"
+
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: 0.95, 0.96, 0.98, 1
+
+        # شريط علوي أنيق
+        MDTopAppBar:
+            id: top_bar
+            elevation: 2
+            md_bg_color: 0.22, 0.30, 0.70, 1
+
+            MDTopAppBarLeadingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: "arrow-right"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    on_release: root.go_back()
+
+            MDTopAppBarTitle:
+                id: top_bar_title
+                text: "تفاصيل المادة"
+                pos_hint: {"center_x": 0.5}
+
+            MDTopAppBarTrailingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: "folder-open-outline"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    tooltip_text: "فتح في المستكشف"
+                    on_release: root.open_in_explorer()
+
+                MDActionTopAppBarButton:
+                    icon: "trash-can-outline"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 0.7, 0.7, 1
+                    tooltip_text: "حذف المادة"
+                    on_release: root.confirm_delete_subject()
+
+        # شريط معلومات وإحصائيات المادة
+        MDBoxLayout:
+            size_hint_y: None
+            height: dp(48)
+            padding: [dp(20), dp(6), dp(20), dp(6)]
+            orientation: "horizontal"
+            md_bg_color: 0.89, 0.92, 0.98, 1
+
+            MDButton:
+                style: "text"
+                size_hint_y: 1
+                pos_hint: {"center_y": 0.5}
+                on_release: root.add_new_exam()
+
+                MDButtonIcon:
+                    icon: "plus-circle-outline"
+
+                MDButtonText:
+                    id: add_exam_btn_text
+                    text: "إضافة ورقة"
+
+            Widget:
+
+            MDLabel:
+                id: info_label
+                text: "إجمالي الأوراق: 0"
+                bold: True
+                font_size: "13sp"
+                halign: "right"
+                pos_hint: {"center_y": 0.5}
+                theme_text_color: "Custom"
+                text_color: 0.22, 0.30, 0.70, 1
+
+        # منطقة عرض شبكة الصور
+        FloatLayout:
+            # حالة عدم وجود صور
+            MDCard:
+                id: empty_box
+                orientation: "vertical"
+                spacing: dp(14)
+                padding: dp(24)
+                pos_hint: {"center_x": 0.5, "center_y": 0.5}
+                size_hint: 0.88, None
+                height: dp(220)
+                radius: [24, 24, 24, 24]
+                elevation: 2
+                md_bg_color: 1, 1, 1, 1
+                opacity: 0
+
+                MDIcon:
+                    icon: "file-document-alert-outline"
+                    font_size: "52sp"
+                    pos_hint: {"center_x": 0.5}
+                    theme_text_color: "Custom"
+                    text_color: 0.5, 0.5, 0.6, 1
+
+                MDLabel:
+                    id: empty_label
+                    text: "لا توجد أوراق اختبار في هذه المادة بعد"
+                    halign: "center"
+                    bold: True
+                    font_size: "16sp"
+                    theme_text_color: "Primary"
+
+                MDButton:
+                    style: "filled"
+                    pos_hint: {"center_x": 0.5}
+                    on_release: root.add_new_exam()
+
+                    MDButtonIcon:
+                        icon: "camera-plus"
+
+                    MDButtonText:
+                        id: empty_action_text
+                        text: "التقط ورقة اختبار لهذه المادة"
+
+            # شبكة التمرير لعرض الصور (Grid)
+            ScrollView:
+                id: scroll_grid
+                do_scroll_x: False
+
+                MDGridLayout:
+                    id: images_grid
+                    cols: 2
+                    adaptive_height: True
+                    padding: dp(14)
+                    spacing: dp(14)

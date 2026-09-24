@@ -1,0 +1,146 @@
+#:kivy 2.0.0
+
+<ClassifyingScreen>:
+    name: "classifying_screen"
+
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: 0.95, 0.96, 0.98, 1
+
+        # شريط علوي أنيق
+        MDTopAppBar:
+            id: top_bar
+            elevation: 2
+            md_bg_color: 0.22, 0.30, 0.70, 1
+
+            MDTopAppBarTitle:
+                id: top_bar_title
+                text: "جاري تحليل الورقة"
+                pos_hint: {"center_x": 0.5}
+
+        MDBoxLayout:
+            orientation: "vertical"
+            padding: [dp(24), dp(32), dp(24), dp(24)]
+            spacing: dp(24)
+
+            Widget:
+                size_hint_y: 0.1
+
+            # بطاقة الذكاء الاصطناعي الرئيسية
+            MDCard:
+                size_hint: 0.92, None
+                height: dp(380)
+                pos_hint: {"center_x": 0.5}
+                radius: [28, 28, 28, 28]
+                elevation: 4
+                padding: dp(28)
+                orientation: "vertical"
+                spacing: dp(20)
+                md_bg_color: 1, 1, 1, 1
+
+                # شارة الذكاء الاصطناعي
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    size_hint: None, None
+                    size: dp(180), dp(36)
+                    pos_hint: {"center_x": 0.5}
+                    padding: [dp(12), dp(4), dp(12), dp(4)]
+                    spacing: dp(8)
+                    canvas.before:
+                        Color:
+                            rgba: 0.90, 0.92, 1.0, 1
+                        RoundedRectangle:
+                            pos: self.pos
+                            size: self.size
+                            radius: [18, 18, 18, 18]
+
+                    MDIcon:
+                        icon: "auto-fix"
+                        font_size: "18sp"
+                        pos_hint: {"center_y": 0.5}
+                        theme_text_color: "Custom"
+                        text_color: 0.22, 0.30, 0.70, 1
+
+                    MDLabel:
+                        id: ai_badge_label
+                        text: "Claude AI Vision"
+                        font_size: "12sp"
+                        bold: True
+                        halign: "center"
+                        pos_hint: {"center_y": 0.5}
+                        theme_text_color: "Custom"
+                        text_color: 0.22, 0.30, 0.70, 1
+
+                Widget:
+                    size_hint_y: 0.05
+
+                # مؤشر التحميل الدوار
+                MDCircularProgressIndicator:
+                    id: spinner
+                    size_hint: None, None
+                    size: dp(72), dp(72)
+                    pos_hint: {"center_x": 0.5}
+                    active: True
+                    color: 0.22, 0.30, 0.70, 1
+
+                Widget:
+                    size_hint_y: 0.05
+
+                MDLabel:
+                    id: title_label
+                    text: "جاري تحليل ورقة الاختبار..."
+                    bold: True
+                    font_size: "18sp"
+                    halign: "center"
+                    theme_text_color: "Primary"
+
+                MDLabel:
+                    id: status_label
+                    text: "قراءة الترويسة واستخراج اسم المادة عبر نموذج الذكاء الاصطناعي المتقدم"
+                    font_size: "13sp"
+                    halign: "center"
+                    theme_text_color: "Secondary"
+
+                # خطوات المعالجة المرئية
+                MDBoxLayout:
+                    orientation: "vertical"
+                    spacing: dp(8)
+                    size_hint_y: None
+                    height: dp(60)
+
+                    MDLabel:
+                        id: step1_label
+                        text: "✓ فحص الصورة واستخراج النصوص"
+                        font_size: "11sp"
+                        halign: "center"
+                        theme_text_color: "Custom"
+                        text_color: 0.25, 0.65, 0.35, 1
+
+                    MDLabel:
+                        id: step2_label
+                        text: "• تحديد اسم المادة والمقرر الدراسي..."
+                        font_size: "11sp"
+                        halign: "center"
+                        theme_text_color: "Custom"
+                        text_color: 0.22, 0.30, 0.70, 1
+
+            Widget:
+                size_hint_y: 0.15
+
+            # زر إلغاء والعودة
+            MDButton:
+                id: btn_cancel
+                style: "outlined"
+                pos_hint: {"center_x": 0.5}
+                size_hint_x: 0.6
+                on_release: root.cancel_classification()
+
+                MDButtonIcon:
+                    icon: "close-circle-outline"
+
+                MDButtonText:
+                    id: text_cancel
+                    text: "إلغاء والعودة"
+
+            Widget:
+                size_hint_y: 0.1

@@ -1,0 +1,234 @@
+#:kivy 2.0.0
+
+<ConfirmScreen>:
+    name: "confirm_screen"
+
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: 0.95, 0.96, 0.98, 1
+
+        # شريط علوي
+        MDTopAppBar:
+            id: top_bar
+            elevation: 2
+            md_bg_color: 0.22, 0.30, 0.70, 1
+
+            MDTopAppBarLeadingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: "arrow-right"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    on_release: root.go_back()
+
+            MDTopAppBarTitle:
+                id: top_bar_title
+                text: "تأكيد تصنيف المادة"
+                pos_hint: {"center_x": 0.5}
+
+        ScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: dp(20)
+                spacing: dp(16)
+                size_hint_y: None
+                height: self.minimum_height
+
+                # بطاقة الصورة المصغرة وحالة التحليل
+                MDCard:
+                    size_hint_y: None
+                    height: dp(190)
+                    radius: [20, 20, 20, 20]
+                    elevation: 2
+                    padding: dp(12)
+                    spacing: dp(14)
+                    orientation: "horizontal"
+                    md_bg_color: 1, 1, 1, 1
+
+                    # إطار الصورة المصغرة
+                    MDCard:
+                        size_hint: 0.38, 1
+                        radius: [14, 14, 14, 14]
+                        elevation: 0
+                        padding: dp(2)
+                        md_bg_color: 0.92, 0.94, 0.98, 1
+
+                        Image:
+                            id: image_thumbnail
+                            allow_stretch: True
+                            keep_ratio: True
+
+                    # تفاصيل الحالة والذكاء الاصطناعي
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        size_hint_x: 0.62
+                        spacing: dp(8)
+                        pos_hint: {"center_y": 0.5}
+
+                        # شارة الحالة
+                        MDBoxLayout:
+                            orientation: "horizontal"
+                            size_hint_y: None
+                            height: dp(28)
+                            spacing: dp(6)
+
+                            MDIcon:
+                                icon: "creation"
+                                font_size: "18sp"
+                                pos_hint: {"center_y": 0.5}
+                                theme_text_color: "Custom"
+                                text_color: 0.15, 0.65, 0.35, 1
+
+                            MDLabel:
+                                id: status_badge
+                                text: "تم التعرف بالذكاء الاصطناعي"
+                                bold: True
+                                font_size: "13sp"
+                                theme_text_color: "Custom"
+                                text_color: 0.15, 0.65, 0.35, 1
+                                halign: "right"
+                                pos_hint: {"center_y": 0.5}
+
+                        MDLabel:
+                            id: status_details
+                            text: "يمكنك اعتماد هذا الاسم أو تعديله أدناه قبل الحفظ النهائي"
+                            font_size: "12sp"
+                            theme_text_color: "Secondary"
+                            halign: "right"
+
+                # بطاقة إدخال وتعديل اسم المقرر
+                MDCard:
+                    size_hint_y: None
+                    height: dp(140)
+                    radius: [20, 20, 20, 20]
+                    elevation: 2
+                    padding: dp(18)
+                    orientation: "vertical"
+                    spacing: dp(10)
+                    md_bg_color: 1, 1, 1, 1
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(24)
+                        spacing: dp(8)
+
+                        MDIcon:
+                            icon: "folder-edit-outline"
+                            font_size: "20sp"
+                            theme_text_color: "Custom"
+                            text_color: 0.22, 0.30, 0.70, 1
+
+                        MDLabel:
+                            id: input_header
+                            text: "اسم المادة الدراسية (المجلد):"
+                            bold: True
+                            font_size: "14sp"
+                            halign: "right"
+                            theme_text_color: "Primary"
+
+                    MDTextField:
+                        id: subject_field
+                        font_size: "16sp"
+                        mode: "outlined"
+
+                        MDTextFieldHintText:
+                            id: subject_hint
+                            text: "اكتب اسم المادة هنا"
+
+                # قائمة مقترحات سريعة للمواد
+                MDCard:
+                    size_hint_y: None
+                    height: dp(110)
+                    radius: [20, 20, 20, 20]
+                    elevation: 1
+                    padding: dp(14)
+                    orientation: "vertical"
+                    spacing: dp(8)
+                    md_bg_color: 1, 1, 1, 1
+
+                    MDLabel:
+                        id: suggestions_label
+                        text: "أو اختر مادة بنقرة سريعة:"
+                        bold: True
+                        font_size: "12sp"
+                        halign: "right"
+                        theme_text_color: "Secondary"
+
+                    ScrollView:
+                        do_scroll_y: False
+                        do_scroll_x: True
+                        size_hint_y: None
+                        height: dp(46)
+
+                        MDBoxLayout:
+                            id: chips_box
+                            orientation: "horizontal"
+                            spacing: dp(8)
+                            size_hint_x: None
+                            width: self.minimum_width
+                            padding: [dp(2), 0, dp(2), 0]
+
+                # بطاقة مسار الحفظ المتوقع
+                MDCard:
+                    size_hint_y: None
+                    height: dp(72)
+                    radius: [16, 16, 16, 16]
+                    elevation: 0
+                    padding: [dp(16), dp(10), dp(16), dp(10)]
+                    md_bg_color: 0.90, 0.93, 0.99, 1
+                    orientation: "horizontal"
+                    spacing: dp(12)
+
+                    MDIcon:
+                        icon: "folder-check"
+                        font_size: "26sp"
+                        theme_text_color: "Custom"
+                        text_color: 0.22, 0.30, 0.70, 1
+                        pos_hint: {"center_y": 0.5}
+
+                    MDLabel:
+                        id: target_path_label
+                        text: "سيتم الحفظ في: ExamSorter/..."
+                        font_size: "12sp"
+                        halign: "right"
+                        pos_hint: {"center_y": 0.5}
+                        theme_text_color: "Custom"
+                        text_color: 0.15, 0.25, 0.55, 1
+
+                # أزرار الحفظ والإلغاء
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    spacing: dp(14)
+                    size_hint_y: None
+                    height: dp(54)
+                    padding: [0, dp(4), 0, 0]
+
+                    MDButton:
+                        id: btn_cancel
+                        style: "outlined"
+                        size_hint_x: 0.35
+                        on_release: root.go_back()
+
+                        MDButtonText:
+                            id: text_cancel
+                            text: "إلغاء"
+
+                    MDButton:
+                        id: btn_save
+                        style: "filled"
+                        size_hint_x: 0.65
+                        md_bg_color: 0.15, 0.65, 0.35, 1
+                        on_release: root.save_and_finish()
+
+                        MDButtonIcon:
+                            icon: "content-save-check"
+
+                        MDButtonText:
+                            id: text_save
+                            text: "حفظ وأرشفة الورقة"
+
+                Widget:
+                    size_hint_y: None
+                    height: dp(20)
