@@ -122,9 +122,15 @@ def scan_storage_roots() -> list[Path]:
         pass
 
     # على بيئة سطح المكتب للتطوير والتجربة
-    project_test_dir = Path(__file__).resolve().parent / "test_media_input"
+    project_dir = Path(__file__).resolve().parent
+    project_test_dir = project_dir / "test_media_input"
     project_test_dir.mkdir(parents=True, exist_ok=True)
     roots.append(project_test_dir)
+
+    # فحص أي مجلدات أمثلة تجريبية وضعها المستخدم في المشروع (باستثناء النسخ الاحتياطية)
+    for item in project_dir.iterdir():
+        if item.is_dir() and "امثلة" in item.name and "نسخة" not in item.name and "backup" not in item.name.lower():
+            roots.append(item)
 
     return roots
 
@@ -141,7 +147,8 @@ def find_unsorted_media(roots: list[Path] | None = None, max_depth: int = 8) -> 
     found_files: list[Path] = []
     excluded_dir_names = {
         "mediasorter", "examsorter", ".git", ".venv", "venv",
-        "__pycache__", "temp", "node_modules", ".buildozer"
+        "__pycache__", "temp", "node_modules", ".buildozer",
+        "امثلة_نسخة_احتياطية", "backup", "backups"
     }
 
     for root_dir in roots:
@@ -210,22 +217,28 @@ def is_visual_document_or_paper(image_path: str) -> bool:
         else:
             small = img
 
+        # استثناء الصور التي تحتوي على وجوه بشرية (صور شخصية وليست مستندات)
+        import face_classifier
+        faces = face_classifier.detect_faces_in_image(small)
+        if len(faces) > 0:
+            return False
+
         hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
 
         mean_s = float(np.mean(hsv[:, :, 1]))
         mean_v = float(np.mean(hsv[:, :, 2]))
 
-        # الأوراق والمستندات تتميز بخلفية بيضاء/فاتحة وتشبع لوني منخفض جداً
-        if mean_s > 48.0 or mean_v < 130.0:
+        # الأوراق والمستندات تتميز بخلفية بيضاء/فاتحة وتشبع لوني منخفض
+        if mean_s > 58.0 or mean_v < 118.0:
             return False
 
         # استخراج عتبة الحبر والنصوص باستخدام Otsu Threshold
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
         ink_ratio = float(np.count_nonzero(thresh) / thresh.size)
 
-        # نسبة الحبر في أوراق الاختبارات والمستندات عادة بين 1.2% و 38%
-        if not (0.012 <= ink_ratio <= 0.38):
+        # نسبة الحبر في أوراق الاختبارات والمستندات عادة بين 1% و 60%
+        if not (0.01 <= ink_ratio <= 0.60):
             return False
 
         # التحقق من وجود توزيع أفقي لسطور النصوص (Horizontal projection standard deviation)

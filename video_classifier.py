@@ -43,27 +43,31 @@ KEYWORDS_MAP = {
         "مضحك", "ضحك", "طقطقة", "نكتة", "كوميدي", "مقالب", "مقلب",
         "funny", "meme", "memes", "joke", "jokes", "prank", "comedy",
         "tiktok", "reels", "short", "shorts", "whatsapp animated gifs",
-        "vine", "fail", "fails"
-    ],
-    CATEGORY_LECTURE: [
-        "محاضرة", "محاضره", "شرح", "درس", "كورس", "دورة", "تعليم", "جامعة",
-        "أكاديمي", "ندوة", "دكتور", "أستاذ", "ملخص", "فهم",
-        "lecture", "tutorial", "lesson", "course", "study", "class",
-        "dr.", "prof", "chapter", "ch0", "ch1", "ch2", "ch3", "ch4", "ch5",
-        "udemy", "coursera", "webinar", "explanation"
-    ],
-    CATEGORY_MOVIES: [
-        "فيلم", "مسلسل", "حلقة", "سلسلة", "موسم", "سينما", "مترجم",
-        "movie", "film", "episode", "season", "series", "cinema",
-        "1080p", "720p", "480p", "bluray", "web-dl", "hdtv", "x264", "x265",
-        "netflix", "shahid", "hbo", "disney", "s01", "s02", "s03", "s04",
-        "e01", "e02", "e03", "e04", "e05"
+        "vine", "fail", "fails", "fyp", "viral", "تحشيش", "هسترة", "فرفشة"
     ],
     CATEGORY_SONGS: [
         "أغنية", "اغنية", "أغاني", "اغاني", "أنشودة", "انشودة", "أناشيد",
         "نشيد", "كليب", "شيلة", "شيلات", "موسيقى", "عزف", "طرب",
         "song", "songs", "track", "music", "audio", "clip", "official video",
-        "lyric", "lyrics", "remix", "nasheed", "melody"
+        "lyric", "lyrics", "remix", "nasheed", "melody", "soundtrack",
+        "علي الموسوي", "الموسوي", "moussawi", "علي بوحمد", "بوحمد", "bouhamad",
+        "لطمية", "لطميات", "رادود", "قصيدة", "قصائد", "عفاسي", "منشد"
+    ],
+    CATEGORY_LECTURE: [
+        "محاضرة", "محاضره", "شرح", "درس", "كورس", "دورة", "تعليم", "جامعة",
+        "أكاديمي", "ندوة", "دكتور", "دكتورة", "أستاذ", "أستاذة", "ملخص", "فهم",
+        "lecture", "tutorial", "lesson", "course", "study", "class",
+        "dr.", "prof", "chapter", "ch0", "ch1", "ch2", "ch3", "ch4", "ch5",
+        "udemy", "coursera", "webinar", "explanation", "database", "java",
+        "intellij", "python", "programming", "access", "sql", "code", "coding",
+        "software", "algorithm", "excel", "computer", "حاسوب", "برمجة", "حل"
+    ],
+    CATEGORY_MOVIES: [
+        "فيلم", "مسلسل", "حلقة", "سلسلة", "موسم", "سينما", "مترجم",
+        "movie", "film", "episode", "season", "series", "cinema",
+        "bluray", "web-dl", "hdtv", "x264", "x265",
+        "netflix", "shahid", "hbo", "disney", "s01", "s02", "s03", "s04",
+        "e01", "e02", "e03", "e04", "e05"
     ]
 }
 
@@ -155,10 +159,16 @@ def classify_video_locally(video_path: str) -> str | None:
     w = meta.get("width", 0)
     h = meta.get("height", 0)
 
-    # إذا كانت المدة طويلة جداً (أكثر من 45 دقيقة = 2700 ثانية)
-    if duration > 2700:
-        # شاشات عريضة عالية الجودة ترجح أفلام/مسلسلات
-        if w >= 1280 and (w / max(1, h)) >= 1.6:
+    # إذا كانت المدة طويلة جداً (أكثر من 70 دقيقة = 4200 ثانية)
+    if duration > 4200:
+        # أفلام ومسلسلات: شاشات عريضة بنسب سينمائية (16:9 أو أكثر)
+        if (w / max(1, h)) >= 1.4:
+            return CATEGORY_MOVIES
+        return CATEGORY_LECTURE
+
+    # مدة بين 40 و 70 دقيقة (2400 إلى 4200 ثانية)
+    if duration > 2400:
+        if (w / max(1, h)) >= 1.5 and w >= 1200:
             return CATEGORY_MOVIES
         return CATEGORY_LECTURE
 

@@ -52,5 +52,6 @@ service_control.json
 test_data/
 test_storage/
 test_sandbox_*/
+امثلة*/
 bin/
 .buildozer/

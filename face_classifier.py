@@ -89,29 +89,43 @@ def detect_faces_in_image(img: np.ndarray) -> list[np.ndarray]:
     if frontal_cascade is None:
         return []
 
+    h_img, w_img = img.shape[:2]
+    scale = 1.0
+    if max(h_img, w_img) > 1000:
+        scale = 1000.0 / max(h_img, w_img)
+        w_scaled, h_scaled = int(w_img * scale), int(h_img * scale)
+        gray_detect = cv2.resize(gray, (w_scaled, h_scaled), interpolation=cv2.INTER_AREA)
+    else:
+        gray_detect = gray
+
     # كشف الوجوه الأمامية
-    faces = frontal_cascade.detectMultiScale(
-        gray,
+    faces_scaled = frontal_cascade.detectMultiScale(
+        gray_detect,
         scaleFactor=1.1,
         minNeighbors=4,
-        minSize=(40, 40)
+        minSize=(30, 30)
     )
 
-    # إذا لم يُعثر على وجه أمامي، نجرب كشف الوجوه الجانبية (Profile Face)
-    if len(faces) == 0:
+    # إذا لم يُعثر على وجه أمامي، نجرب كشف الوجوه الجانبية (Profile Face) بعتبة حماية لمنع الإيجابيات الكاذبة
+    if len(faces_scaled) == 0:
         profile_cascade = _load_cascade("haarcascade_profileface.xml")
         if profile_cascade is not None:
-            faces = profile_cascade.detectMultiScale(
-                gray,
-                scaleFactor=1.1,
-                minNeighbors=3,
-                minSize=(40, 40)
+            faces_scaled = profile_cascade.detectMultiScale(
+                gray_detect,
+                scaleFactor=1.15,
+                minNeighbors=5,
+                minSize=(45, 45)
             )
 
     cropped_faces: list[np.ndarray] = []
-    h_img, w_img = img.shape[:2]
+    inv_scale = 1.0 / scale
 
-    for (x, y, w, h) in faces:
+    for (sx, sy, sw, sh) in faces_scaled:
+        x = int(sx * inv_scale)
+        y = int(sy * inv_scale)
+        w = int(sw * inv_scale)
+        h = int(sh * inv_scale)
+
         margin_x = int(w * 0.1)
         margin_y = int(h * 0.1)
         x1 = max(0, x - margin_x)
