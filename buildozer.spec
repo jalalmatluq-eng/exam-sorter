@@ -16,14 +16,14 @@ source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,ttf,otf,json,txt
 
 # (list) List of inclusions using pattern matching
-source.include_patterns = assets/*,assets/fonts/*,kv/*,screens/*,utils/*
+source.include_patterns = assets/*,assets/fonts/*,kv/*,screens/*,utils/*,service/*
 
 # (str) Application versioning (method 1)
 version = 1.0.0
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy==2.3.0,kivymd==2.0.0,materialyoucolor,asynckivy,pillow,plyer,python-dotenv,arabic-reshaper,python-bidi
+requirements = python3,kivy==2.3.0,kivymd==2.0.0,materialyoucolor,asynckivy,pillow,plyer,python-dotenv,arabic-reshaper,python-bidi,numpy,opencv
 
 # (str) Presplash of the application
 presplash.filename = %(source.dir)s/assets/presplash.png
@@ -35,12 +35,15 @@ icon.filename = %(source.dir)s/assets/icon.png
 # Valid values are: landscape, sensorLandscape, portrait or all
 orientation = portrait
 
+# (list) List of services to declare
+services = MediaWatcher:service/media_watcher_service.py:foreground
+
 #
 # Android specific
 #
 
 # (list) Permissions
-android.permissions = CAMERA, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, READ_MEDIA_IMAGES, INTERNET
+android.permissions = CAMERA, READ_EXTERNAL_STORAGE, WRITE_EXTERNAL_STORAGE, READ_MEDIA_IMAGES, READ_MEDIA_VIDEO, INTERNET, MANAGE_EXTERNAL_STORAGE, FOREGROUND_SERVICE, POST_NOTIFICATIONS
 
 # (int) Target Android API, should be as high as possible.
 android.api = 34

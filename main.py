@@ -28,6 +28,8 @@ from screens.capture_screen import CaptureScreen
 from screens.classifying_screen import ClassifyingScreen
 from screens.confirm_screen import ConfirmScreen
 from screens.subject_detail_screen import SubjectDetailScreen
+from screens.people_setup_screen import PeopleSetupScreen
+from screens.settings_screen import SettingsScreen
 
 
 # 1. تسجيل الخط العربي على مستوى المحرك بالكامل قبل تحميل أي واجهات
@@ -50,7 +52,7 @@ if font_path and os.path.exists(font_path):
 class ExamSorterApp(MDApp):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.title = "Exam Sorter - مصنّف الاختبارات"
+        self.title = "Exam & Media Sorter - منظّم الوسائط والاختبارات"
         self.api_key = os.getenv("ANTHROPIC_API_KEY", "")
         self.arabic_font = font_path or "Roboto"
         self.batch_queue = []
@@ -85,6 +87,8 @@ class ExamSorterApp(MDApp):
             "classifying_screen.kv",
             "confirm_screen.kv",
             "subject_detail_screen.kv",
+            "people_setup_screen.kv",
+            "settings_screen.kv",
         ]:
             file_path = kv_dir / kv_file
             if file_path.exists():
@@ -97,8 +101,17 @@ class ExamSorterApp(MDApp):
         sm.add_widget(ClassifyingScreen(name="classifying_screen"))
         sm.add_widget(ConfirmScreen(name="confirm_screen"))
         sm.add_widget(SubjectDetailScreen(name="subject_detail_screen"))
+        sm.add_widget(PeopleSetupScreen(name="people_setup_screen"))
+        sm.add_widget(SettingsScreen(name="settings_screen"))
 
         sm.current = "home_screen"
+
+        # بدء تشغيل خدمة المراقبة بالخلفية إذا كانت مفعلة برغبة المستخدم
+        from kivy.clock import Clock
+        from service import media_watcher_service
+        if media_watcher_service.is_service_desired_running():
+            Clock.schedule_once(lambda dt: media_watcher_service.start_system_service(), 2.0)
+
         return sm
 
     def request_android_permissions(self):
@@ -112,9 +125,39 @@ class ExamSorterApp(MDApp):
             ]
             if hasattr(Permission, "READ_MEDIA_IMAGES"):
                 perms.append(Permission.READ_MEDIA_IMAGES)
+            if hasattr(Permission, "READ_MEDIA_VIDEO"):
+                perms.append(Permission.READ_MEDIA_VIDEO)
+            if hasattr(Permission, "POST_NOTIFICATIONS"):
+                perms.append(Permission.POST_NOTIFICATIONS)
             request_permissions(perms)
         except Exception as e:
             print("تنبيه: تعذر استدعاء مكتبة صلاحيات أندرويد:", e)
+
+        self.check_and_request_all_files_permission()
+
+    def check_and_request_all_files_permission(self):
+        """طلب إذن الوصول الكامل لكافة الملفات (MANAGE_EXTERNAL_STORAGE) على أندرويد 11+"""
+        if platform != "android":
+            return
+        try:
+            from jnius import autoclass
+            from android import mActivity
+
+            Environment = autoclass("android.os.Environment")
+            Build = autoclass("android.os.Build")
+
+            if Build.VERSION.SDK_INT >= 30:  # Android 11+
+                if not Environment.isExternalStorageManager():
+                    Intent = autoclass("android.content.Intent")
+                    Settings = autoclass("android.provider.Settings")
+                    Uri = autoclass("android.net.Uri")
+
+                    intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                    uri = Uri.fromParts("package", mActivity.getPackageName(), None)
+                    intent.setData(uri)
+                    mActivity.startActivity(intent)
+        except Exception as e:
+            print("تنبيه: تعذر فتح إعدادات إذن الوصول لكافة الملفات:", e)
 
 
 if __name__ == "__main__":

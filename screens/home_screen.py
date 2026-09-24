@@ -34,33 +34,33 @@ class HomeScreen(Screen):
         """تطبيق إعادة التشكيل العربي على عناصر الشاشة الثابتة"""
         if hasattr(self, "ids"):
             if "top_bar_title" in self.ids:
-                self.ids.top_bar_title.text = ar("مصنّف الاختبارات الذكي")
+                self.ids.top_bar_title.text = ar("منظّم الوسائط والاختبارات")
             if "hero_title" in self.ids:
-                self.ids.hero_title.text = ar("لوحة التحكم والفرز الأكاديمي")
+                self.ids.hero_title.text = ar("لوحة التحكم والفرز الذكي")
             if "stats_title" in self.ids:
-                self.ids.stats_title.text = ar("المواد المسجلة")
+                self.ids.stats_title.text = ar("المجلدات المنظمة")
             if "stats_exams_title" in self.ids:
-                self.ids.stats_exams_title.text = ar("إجمالي الأوراق")
+                self.ids.stats_exams_title.text = ar("إجمالي الملفات")
             if "section_title" in self.ids:
-                self.ids.section_title.text = ar("المواد والمجلدات المنظمة")
+                self.ids.section_title.text = ar("الأقسام والمجلدات المنظمة")
             if "search_input" in self.ids:
-                self.ids.search_input.hint_text = ar("ابحث عن مادة أو مقرر...")
+                self.ids.search_input.hint_text = ar("ابحث عن مجلد أو مادة...")
             if "empty_state_label" in self.ids:
-                self.ids.empty_state_label.text = ar("لا توجد أوراق اختبار مصنفة بعد")
+                self.ids.empty_state_label.text = ar("لا توجد ملفات مصنفة بعد")
             if "empty_state_sub" in self.ids:
-                self.ids.empty_state_sub.text = ar("التقط صورة لورقة الامتحان، وسيتعرف الذكاء الاصطناعي تلقائياً على اسم المادة وينظمها في مجلدها المخصص.")
+                self.ids.empty_state_sub.text = ar("التقط ورقة امتحان، أو فعّل المراقبة التلقائية لفرز صورك وفيديوهاتك فورياً.")
 
     def refresh_subjects(self):
-        """تحديث قائمة المواد المعروضة من خلال فحص مجلد التخزين"""
+        """تحديث قائمة المواد والمعارض المعروضة من خلال فحص مجلد التخزين"""
         try:
             self.all_subjects = file_manager.list_subjects()
             count = len(self.all_subjects)
             total_exams = sum(s.get("count", 0) for s in self.all_subjects)
 
             if "stats_count" in self.ids:
-                self.ids.stats_count.text = ar(f"{count} مادة")
+                self.ids.stats_count.text = ar(f"{count} مجلد")
             if "stats_exams_count" in self.ids:
-                self.ids.stats_exams_count.text = ar(f"{total_exams} ورقة")
+                self.ids.stats_exams_count.text = ar(f"{total_exams} ملف")
 
             # إعادة تطبيق البحث الحالي إن وجد نص بحث
             query = ""
@@ -142,6 +142,16 @@ class HomeScreen(Screen):
         """الانتقال لشاشة التقاط أو اختيار الصورة"""
         app = self.get_app()
         app.root.current = "capture_screen"
+
+    def open_settings_screen(self):
+        """الانتقال إلى شاشة الإعدادات ومنظّم الوسائط"""
+        app = self.get_app()
+        app.root.current = "settings_screen"
+
+    def open_people_setup(self):
+        """الانتقال المباشر لشاشة بصمة وجه صاحب الجهاز"""
+        app = self.get_app()
+        app.root.current = "people_setup_screen"
 
     def open_settings_dialog(self):
         """فتح نافذة لإدخال أو تعديل مفتاح API"""

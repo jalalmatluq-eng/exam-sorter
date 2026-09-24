@@ -1,0 +1,278 @@
+#:kivy 2.0.0
+
+<PeopleSetupScreen>:
+    name: "people_setup_screen"
+
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: 0.95, 0.96, 0.98, 1
+
+        # شريط علوي
+        MDTopAppBar:
+            id: top_bar
+            type: "small"
+            theme_bg_color: "Custom"
+            md_bg_color: 0.22, 0.26, 0.68, 1
+            elevation: 3
+
+            MDTopAppBarLeadingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: "arrow-right"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    on_release: root.go_back()
+
+            MDTopAppBarTitle:
+                id: top_bar_title
+                text: app.ar("إعداد بصمة وجهي")
+                theme_text_color: "Custom"
+                text_color: 1, 1, 1, 1
+                bold: True
+
+        ScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: [dp(16), dp(16), dp(16), dp(24)]
+                spacing: dp(14)
+                size_hint_y: None
+                height: self.minimum_height
+
+                # بطاقة إرشادية علوية
+                MDCard:
+                    size_hint_y: None
+                    height: dp(110)
+                    radius: [20, 20, 20, 20]
+                    padding: dp(14)
+                    elevation: 2
+                    theme_bg_color: "Custom"
+                    md_bg_color: 0.22, 0.26, 0.68, 1
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(12)
+
+                        MDIcon:
+                            icon: "face-recognition"
+                            theme_icon_color: "Custom"
+                            icon_color: 1.0, 0.85, 0.3, 1
+                            font_size: "38sp"
+                            pos_hint: {"center_y": 0.5}
+
+                        MDBoxLayout:
+                            orientation: "vertical"
+                            spacing: dp(4)
+                            pos_hint: {"center_y": 0.5}
+
+                            MDLabel:
+                                id: header_title
+                                text: app.ar("التعرف على صاحب الجهاز")
+                                bold: True
+                                font_size: "15sp"
+                                theme_text_color: "Custom"
+                                text_color: 1, 1, 1, 1
+                                halign: "right"
+
+                            MDLabel:
+                                id: header_subtitle
+                                text: app.ar("أضف 3 إلى 5 صور واضحة لوجهك في ظروف إضاءة وزوايا مختلفة لتمييز صورك عن صور الزملاء.")
+                                font_size: "11sp"
+                                theme_text_color: "Custom"
+                                text_color: 0.85, 0.90, 1.0, 1
+                                halign: "right"
+
+                # بطاقة حالة البصمة الحالية
+                MDCard:
+                    size_hint_y: None
+                    height: dp(64)
+                    radius: [16, 16, 16, 16]
+                    padding: [dp(16), dp(8), dp(16), dp(8)]
+                    elevation: 1
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1, 1, 1, 1
+                    orientation: "horizontal"
+                    spacing: dp(10)
+
+                    MDIcon:
+                        id: status_icon
+                        icon: "check-decagram"
+                        font_size: "26sp"
+                        theme_icon_color: "Custom"
+                        icon_color: 0.20, 0.65, 0.35, 1
+                        pos_hint: {"center_y": 0.5}
+
+                    MDLabel:
+                        id: profile_status_label
+                        text: app.ar("بصمة الوجه: مسجلة ومفعلة")
+                        bold: True
+                        font_size: "13sp"
+                        halign: "right"
+                        pos_hint: {"center_y": 0.5}
+                        theme_text_color: "Primary"
+
+                # عنوان قسم الصور المرجعية
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(26)
+                    orientation: "horizontal"
+
+                    MDLabel:
+                        id: photos_section_title
+                        text: app.ar("صور وجهك المرجعية (3 - 5 صور)")
+                        bold: True
+                        font_size: "14sp"
+                        halign: "right"
+                        theme_text_color: "Primary"
+
+                    MDIcon:
+                        icon: "image-multiple-outline"
+                        font_size: "20sp"
+                        size_hint_x: None
+                        width: dp(26)
+                        theme_icon_color: "Custom"
+                        icon_color: 0.22, 0.26, 0.68, 1
+
+                # منطقة شبكة الصور المرجعية
+                MDGridLayout:
+                    id: samples_grid
+                    cols: 3
+                    size_hint_y: None
+                    height: dp(130)
+                    spacing: dp(10)
+
+                # أزرار الإضافة (كاميرا أو معرض)
+                MDBoxLayout:
+                    orientation: "horizontal"
+                    spacing: dp(10)
+                    size_hint_y: None
+                    height: dp(48)
+
+                    MDButton:
+                        style: "outlined"
+                        size_hint_x: 0.5
+                        on_release: root.pick_from_gallery()
+
+                        MDButtonIcon:
+                            icon: "image-plus"
+
+                        MDButtonText:
+                            id: btn_gallery_text
+                            text: app.ar("من المعرض")
+
+                    MDButton:
+                        style: "outlined"
+                        size_hint_x: 0.5
+                        on_release: root.capture_from_camera()
+
+                        MDButtonIcon:
+                            icon: "camera"
+
+                        MDButtonText:
+                            id: btn_camera_text
+                            text: app.ar("التقاط صورة")
+
+                # بطاقة ضبط عتبة دقة التعرف
+                MDCard:
+                    size_hint_y: None
+                    height: dp(80)
+                    radius: [16, 16, 16, 16]
+                    padding: [dp(14), dp(8), dp(14), dp(8)]
+                    elevation: 1
+                    orientation: "vertical"
+                    spacing: dp(2)
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1, 1, 1, 1
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(24)
+
+                        MDLabel:
+                            id: threshold_val_label
+                            text: "68%"
+                            bold: True
+                            font_size: "13sp"
+                            size_hint_x: None
+                            width: dp(45)
+                            theme_text_color: "Custom"
+                            text_color: 0.22, 0.26, 0.68, 1
+
+                        MDLabel:
+                            id: threshold_title
+                            text: app.ar("عتبة دقة المطابقة (Similarity Threshold):")
+                            font_size: "12sp"
+                            halign: "right"
+                            theme_text_color: "Primary"
+
+                    Slider:
+                        id: threshold_slider
+                        min: 50
+                        max: 90
+                        value: 68
+                        step: 1
+                        size_hint_y: None
+                        height: dp(34)
+                        on_value: root.on_threshold_change(self.value)
+
+                # زر حفظ وتدريب البصمة
+                MDButton:
+                    id: btn_train
+                    style: "filled"
+                    size_hint_y: None
+                    height: dp(50)
+                    md_bg_color: 0.15, 0.65, 0.35, 1
+                    on_release: root.train_and_save()
+
+                    MDButtonIcon:
+                        icon: "fingerprint"
+
+                    MDButtonText:
+                        id: btn_train_text
+                        text: app.ar("حفظ وتحديث بصمة وجهي")
+                        bold: True
+
+                # بطاقة اختبار فورية للتعرف على الوجه
+                MDCard:
+                    size_hint_y: None
+                    height: dp(130)
+                    radius: [18, 18, 18, 18]
+                    elevation: 1
+                    padding: dp(14)
+                    orientation: "vertical"
+                    spacing: dp(8)
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1, 1, 1, 1
+
+                    MDLabel:
+                        id: test_title
+                        text: app.ar("تجربة التعرف على أي صورة الآن:")
+                        bold: True
+                        font_size: "13sp"
+                        halign: "right"
+                        theme_text_color: "Primary"
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(10)
+
+                        MDButton:
+                            style: "outlined"
+                            size_hint_x: 0.45
+                            on_release: root.test_recognition()
+
+                            MDButtonIcon:
+                                icon: "file-find-outline"
+
+                            MDButtonText:
+                                id: btn_test_text
+                                text: app.ar("اختر صورة للتجربة")
+
+                        MDLabel:
+                            id: test_result_label
+                            text: app.ar("اختر صورة لفحصها...")
+                            font_size: "12sp"
+                            halign: "center"
+                            pos_hint: {"center_y": 0.5}
+                            theme_text_color: "Secondary"

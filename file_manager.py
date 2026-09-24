@@ -8,6 +8,7 @@
 5. استرجاع صور مادة معينة لعرضها في المعرض.
 """
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -205,13 +206,13 @@ def cleanup_temp_files(temp_dir: Path | None = None) -> int:
 
 def list_subjects(base_path: Path | None = None) -> list[dict[str, Any]]:
     """
-    إرجاع قائمة بجميع المواد المخزنة وعدد الصور في كل مادة وتاريخ آخر تحديث.
+    إرجاع قائمة بجميع المواد والأقسام المخزنة وعدد الملفات (صور وفيديوهات) في كل مجلد.
     
     المعاملات:
-        base_path: المسار الأساسي.
+        base_path: المسار الأساسي (اختياري، يدمج ExamSorter و MediaSorter تلقائياً إذا لم يُمرر).
         
     العائد:
-        قائمة قواميس مرتبة أبجدياً:
+        قائمة قواميس مرتبة تنازلياً بحسب عدد الملفات:
         [
             {
                 'name': 'رياضيات',
@@ -222,35 +223,46 @@ def list_subjects(base_path: Path | None = None) -> list[dict[str, Any]]:
             ...
         ]
     """
-    if base_path is None:
-        base_path = get_base_storage_path()
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"}
+    roots = []
+    if base_path is not None:
+        roots.append(Path(base_path))
+    else:
+        roots.append(get_base_storage_path())
+        media_root = get_media_sorter_base_path()
+        if media_root.resolve() != get_base_storage_path().resolve():
+            roots.append(media_root)
 
-    valid_extensions = {".jpg", ".jpeg", ".png", ".webp"}
-    subjects = []
+    subjects_dict: dict[str, dict[str, Any]] = {}
 
-    if not base_path.exists():
-        return subjects
+    for root in roots:
+        if not root.exists():
+            continue
+        for item in root.iterdir():
+            if item.is_dir():
+                media_files = [
+                    f for f in item.iterdir()
+                    if f.is_file() and f.suffix.lower() in valid_extensions
+                ]
+                count = len(media_files)
+                latest_mod = item.stat().st_mtime
+                if media_files:
+                    latest_mod = max(f.stat().st_mtime for f in media_files)
 
-    for item in sorted(base_path.iterdir()):
-        if item.is_dir():
-            # حساب عدد الصور المدعومة داخل المجلد
-            images = [
-                img for img in item.iterdir()
-                if img.is_file() and img.suffix.lower() in valid_extensions
-            ]
-            count = len(images)
-            latest_mod = item.stat().st_mtime
-            if images:
-                latest_mod = max(img.stat().st_mtime for img in images)
+                name = item.name
+                if name in subjects_dict:
+                    subjects_dict[name]["count"] += count
+                    subjects_dict[name]["latest_modified"] = max(subjects_dict[name]["latest_modified"], latest_mod)
+                else:
+                    subjects_dict[name] = {
+                        "name": name,
+                        "folder_path": str(item),
+                        "count": count,
+                        "latest_modified": latest_mod,
+                    }
 
-            subjects.append({
-                "name": item.name,
-                "folder_path": str(item),
-                "count": count,
-                "latest_modified": latest_mod,
-            })
-
-    # ترتيب المواد بحسب الأحدث أو الأبجدي (نضع المواد التي بها صور أولاً)
+    subjects = list(subjects_dict.values())
+    # ترتيب الأقسام: الأقسام التي بها ملفات أولاً ثم الأبجدي
     subjects.sort(key=lambda s: (-s["count"], s["name"]))
     return subjects
 
@@ -266,22 +278,24 @@ def get_subject_images(subject_name: str, base_path: Path | None = None) -> list
     العائد:
         قائمة بمسارات الصور مرتبة من الأحدث إلى الأقدم.
     """
-    if base_path is None:
-        base_path = get_base_storage_path()
-
     clean_name = sanitize_folder_name(subject_name)
-    subject_folder = Path(base_path) / clean_name
-    if not subject_folder.exists() or not subject_folder.is_dir():
-        return []
+    candidates: list[Path] = []
+    if base_path is not None:
+        candidates.append(Path(base_path) / clean_name)
+    else:
+        candidates.append(get_base_storage_path() / clean_name)
+        candidates.append(get_media_sorter_base_path() / clean_name)
 
-    valid_extensions = {".jpg", ".jpeg", ".png", ".webp"}
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"}
+    images: list[str] = []
 
-    images = [
-        str(img) for img in subject_folder.iterdir()
-        if img.is_file() and img.suffix.lower() in valid_extensions
-    ]
+    for subject_folder in candidates:
+        if subject_folder.exists() and subject_folder.is_dir():
+            for img in subject_folder.iterdir():
+                if img.is_file() and img.suffix.lower() in valid_extensions:
+                    images.append(str(img))
 
-    # فرز الصور حسب تاريخ التعديل (الأحدث أولاً)
+    # فرز الوسائط حسب تاريخ التعديل (الأحدث أولاً)
     images.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return images
 
@@ -321,29 +335,34 @@ def delete_subject_folder(subject_name: str, base_path: Path | None = None) -> b
 
 def clean_empty_subject_folders(base_path: Path | None = None) -> int:
     """
-    فحص مجلد التخزين وحذف أي مجلدات مواد فارغة لا تحتوي على صور.
+    فحص مجلد التخزين وحذف أي مجلدات مواد فارغة لا تحتوي على صور أو فيديوهات.
     """
-    if base_path is None:
-        base_path = get_base_storage_path()
+    valid_extensions = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"}
+    roots = []
+    if base_path is not None:
+        roots.append(Path(base_path))
+    else:
+        roots.append(get_base_storage_path())
+        media_root = get_media_sorter_base_path()
+        if media_root.resolve() != get_base_storage_path().resolve():
+            roots.append(media_root)
 
-    if not base_path.exists():
-        return 0
-
-    valid_extensions = {".jpg", ".jpeg", ".png", ".webp"}
     deleted_count = 0
-
-    for item in list(base_path.iterdir()):
-        if item.is_dir():
-            images = [
-                img for img in item.iterdir()
-                if img.is_file() and img.suffix.lower() in valid_extensions
-            ]
-            if len(images) == 0:
-                try:
-                    shutil.rmtree(item)
-                    deleted_count += 1
-                except Exception:
-                    pass
+    for root in roots:
+        if not root.exists():
+            continue
+        for item in list(root.iterdir()):
+            if item.is_dir():
+                media_files = [
+                    f for f in item.iterdir()
+                    if f.is_file() and f.suffix.lower() in valid_extensions
+                ]
+                if len(media_files) == 0:
+                    try:
+                        shutil.rmtree(item)
+                        deleted_count += 1
+                    except Exception:
+                        pass
 
     return deleted_count
 
@@ -375,4 +394,167 @@ def open_folder_native(folder_path: str) -> bool:
     except Exception as e:
         print("تعذر فتح المجلد في المستكشف:", e)
         return False
+
+
+# =========================================================================
+# وظائف منظّم الوسائط الشامل (Media Sorter Expansion)
+# =========================================================================
+
+def get_media_sorter_base_path() -> Path:
+    """تحديد المسار الأساسي الموحد لجميع مجلدات مُنظّم الوسائط (MediaSorter)"""
+    try:
+        from kivy.utils import platform
+        if platform == "android":
+            return Path("/storage/emulated/0/MediaSorter")
+    except Exception:
+        pass
+
+    # على الحاسوب: مجلد MediaSorter في مسار المشروع
+    base = Path(__file__).resolve().parent / "MediaSorter"
+    base.mkdir(parents=True, exist_ok=True)
+    return base
+
+
+def get_transfer_log_path() -> Path:
+    """مسار ملف سجل عمليات النقل للتراجع والمراجعة"""
+    base = get_media_sorter_base_path()
+    return base / "transfer_history.json"
+
+
+def _log_transfer_record(src_path: str, dest_path: str, category: str, file_size: int) -> None:
+    """تسجيل عملية نقل في سجل المعاملات JSON"""
+    log_file = get_transfer_log_path()
+    records: list[dict[str, Any]] = []
+    if log_file.exists():
+        try:
+            with open(log_file, "r", encoding="utf-8") as f:
+                records = json.load(f)
+        except Exception:
+            records = []
+
+    records.append({
+        "id": int(datetime.now().timestamp() * 1000),
+        "source": src_path,
+        "destination": dest_path,
+        "category": category,
+        "size_bytes": file_size,
+        "timestamp": datetime.now().isoformat(),
+    })
+
+    # الاحتفاظ بآخر 1000 عملية نقل
+    records = records[-1000:]
+    try:
+        with open(log_file, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("تعذر تحديث سجل النقل:", e)
+
+
+def get_transfer_history() -> list[dict[str, Any]]:
+    """استرجاع سجل عمليات النقل الأخيرة مرتبة من الأحدث إلى الأقدم"""
+    log_file = get_transfer_log_path()
+    if not log_file.exists():
+        return []
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return list(reversed(data))
+    except Exception:
+        return []
+
+
+def undo_transfer(record_id: int) -> bool:
+    """التراجع عن عملية نقل معينة وإعادة الملف إلى مكانه الأصلي"""
+    log_file = get_transfer_log_path()
+    if not log_file.exists():
+        return False
+
+    records: list[dict[str, Any]] = []
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            records = json.load(f)
+    except Exception:
+        return False
+
+    found_idx = -1
+    target_record = None
+    for idx, r in enumerate(records):
+        if r.get("id") == record_id:
+            found_idx = idx
+            target_record = r
+            break
+
+    if target_record is None:
+        return False
+
+    dest = Path(target_record["destination"])
+    src = Path(target_record["source"])
+
+    if not dest.exists():
+        return False
+
+    # إعادة الملف إلى مجلده الأصلي
+    src.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(dest), str(src))
+
+    # حذف السجل بعد التراجع عنه بنجاح
+    records.pop(found_idx)
+    with open(log_file, "w", encoding="utf-8") as f:
+        json.dump(records, f, ensure_ascii=False, indent=2)
+
+    return True
+
+
+def move_to_category(src_path: str | Path, category_name: str, base_path: Path | None = None) -> Path:
+    """
+    نقل الملف فعلياً (Move) إلى مجلد التصنيف المحدد مع أعلى معايير الأمان:
+    1. إنشاء مجلد التصنيف إن لم يكن موجوداً.
+    2. حل أي تعارض في الأسماء تلقائياً عبر إضافة ترقيم تسلسلي.
+    3. التحقق الحاسم: التأكد من نسخ الملف بالكامل وتطابق الحجم بالبايت قبل حذف الأصل.
+    4. توثيق العملية في سجل transfer_history.json لتمكين التراجع.
+    """
+    src = Path(src_path).resolve()
+    if not src.exists() or not src.is_file():
+        raise FileNotFoundError(f"الملف المصدر غير موجود: {src}")
+
+    if base_path is None:
+        base_path = get_media_sorter_base_path()
+
+    clean_cat = sanitize_folder_name(category_name)
+    target_folder = base_path / clean_cat
+    target_folder.mkdir(parents=True, exist_ok=True)
+
+    stem = src.stem
+    suffix = src.suffix
+
+    # حل تعارض الأسماء
+    dest = target_folder / f"{stem}{suffix}"
+    counter = 1
+    while dest.exists():
+        dest = target_folder / f"{stem}_{counter:02d}{suffix}"
+        counter += 1
+
+    src_size = src.stat().st_size
+
+    # خطوة النقل الآمن: نسخ مطابق للأصل أولاً
+    shutil.copy2(src, dest)
+
+    # فحص السلامة الصارم قبل أي حذف
+    if not dest.exists():
+        raise IOError(f"فشل التحقق: الملف الوجهة غير موجود بعد النقل: {dest}")
+
+    dest_size = dest.stat().st_size
+    if dest_size != src_size:
+        # خلل في اكتمال النقل - نحذف الملف الناقص ونحافظ على الأصل دون مساس
+        dest.unlink(missing_ok=True)
+        raise IOError(f"فشل التحقق: عدم تطابق الحجم (المصدر: {src_size} بايت، الوجهة: {dest_size} بايت). لم يتم حذف الأصل.")
+
+    # تم التحقق بنجاح 100%: حذف الملف المصدر
+    src.unlink()
+
+    # توثيق العملية في السجل
+    _log_transfer_record(str(src), str(dest), category_name, src_size)
+
+    return dest
+
 

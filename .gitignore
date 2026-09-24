@@ -44,6 +44,13 @@ temp/
 
 # Application Storage & Outputs (generated at runtime)
 ExamSorter/
+MediaSorter/
+my_face_profile.json
+scanned_media_cache.db
+transfer_history.json
+service_control.json
 test_data/
+test_storage/
+test_sandbox_*/
 bin/
 .buildozer/

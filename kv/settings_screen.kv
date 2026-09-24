@@ -1,0 +1,230 @@
+#:kivy 2.0.0
+
+<SettingsScreen>:
+    name: "settings_screen"
+
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: 0.95, 0.96, 0.98, 1
+
+        # شريط علوي
+        MDTopAppBar:
+            id: top_bar
+            type: "small"
+            theme_bg_color: "Custom"
+            md_bg_color: 0.22, 0.26, 0.68, 1
+            elevation: 3
+
+            MDTopAppBarLeadingButtonContainer:
+                MDActionTopAppBarButton:
+                    icon: "arrow-right"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    on_release: root.go_back()
+
+            MDTopAppBarTitle:
+                id: top_bar_title
+                text: app.ar("الإعدادات ومنظّم الوسائط")
+                theme_text_color: "Custom"
+                text_color: 1, 1, 1, 1
+                bold: True
+
+        ScrollView:
+            do_scroll_x: False
+
+            MDBoxLayout:
+                orientation: "vertical"
+                padding: [dp(16), dp(16), dp(16), dp(24)]
+                spacing: dp(14)
+                size_hint_y: None
+                height: self.minimum_height
+
+                # بطاقة حالة خدمة المراقبة التلقائية
+                MDCard:
+                    size_hint_y: None
+                    height: dp(100)
+                    radius: [20, 20, 20, 20]
+                    padding: dp(16)
+                    elevation: 2
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1, 1, 1, 1
+                    orientation: "horizontal"
+                    spacing: dp(12)
+
+                    MDIcon:
+                        id: service_icon
+                        icon: "radar"
+                        font_size: "32sp"
+                        pos_hint: {"center_y": 0.5}
+                        theme_icon_color: "Custom"
+                        icon_color: 0.22, 0.26, 0.68, 1
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        spacing: dp(4)
+                        pos_hint: {"center_y": 0.5}
+
+                        MDLabel:
+                            id: service_title
+                            text: app.ar("خدمة المراقبة التلقائية اللحظية")
+                            bold: True
+                            font_size: "14sp"
+                            halign: "right"
+                            theme_text_color: "Primary"
+
+                        MDLabel:
+                            id: service_desc
+                            text: app.ar("فرز ونقل أي صورة أو فيديو جديد فور التقاطه أو تنزيله")
+                            font_size: "11sp"
+                            halign: "right"
+                            theme_text_color: "Secondary"
+
+                    MDButton:
+                        id: btn_service_toggle
+                        style: "filled"
+                        size_hint: None, None
+                        size: dp(90), dp(40)
+                        pos_hint: {"center_y": 0.5}
+                        on_release: root.toggle_service()
+
+                        MDButtonText:
+                            id: text_service_toggle
+                            text: app.ar("تعمل")
+                            bold: True
+
+                # بطاقة الفحص اليدوي الفوري (Scan Now)
+                MDCard:
+                    size_hint_y: None
+                    height: dp(115)
+                    radius: [20, 20, 20, 20]
+                    padding: dp(16)
+                    elevation: 2
+                    theme_bg_color: "Custom"
+                    md_bg_color: 0.22, 0.26, 0.68, 1
+                    orientation: "vertical"
+                    spacing: dp(10)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+
+                        MDLabel:
+                            id: manual_scan_title
+                            text: app.ar("فحص وتصنيف الذاكرة يدوياً الآن")
+                            bold: True
+                            font_size: "14sp"
+                            theme_text_color: "Custom"
+                            text_color: 1, 1, 1, 1
+                            halign: "right"
+
+                        MDIcon:
+                            icon: "folder-sync-outline"
+                            theme_icon_color: "Custom"
+                            icon_color: 1.0, 0.85, 0.3, 1
+                            font_size: "22sp"
+                            size_hint_x: None
+                            width: dp(26)
+
+                    MDButton:
+                        style: "filled"
+                        md_bg_color: 0.15, 0.65, 0.35, 1
+                        size_hint_y: None
+                        height: dp(42)
+                        on_release: root.start_manual_scan()
+
+                        MDButtonIcon:
+                            icon: "play-circle"
+
+                        MDButtonText:
+                            id: btn_scan_text
+                            text: app.ar("بدء الفحص الشامل للوسائط")
+                            bold: True
+
+                # بطاقة إدارة بصمة الوجه لصاحب الجهاز
+                MDCard:
+                    size_hint_y: None
+                    height: dp(84)
+                    radius: [18, 18, 18, 18]
+                    padding: [dp(16), dp(10), dp(16), dp(10)]
+                    elevation: 1
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1, 1, 1, 1
+                    orientation: "horizontal"
+                    spacing: dp(12)
+
+                    MDIcon:
+                        icon: "account-box-multiple"
+                        font_size: "28sp"
+                        pos_hint: {"center_y": 0.5}
+                        theme_icon_color: "Custom"
+                        icon_color: 0.22, 0.26, 0.68, 1
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        pos_hint: {"center_y": 0.5}
+
+                        MDLabel:
+                            id: face_card_title
+                            text: app.ar("بصمة وجهي وصوري الخاصة")
+                            bold: True
+                            font_size: "13sp"
+                            halign: "right"
+                            theme_text_color: "Primary"
+
+                        MDLabel:
+                            id: face_card_status
+                            text: app.ar("جاهزة للتعرف وتمييز صورك")
+                            font_size: "11sp"
+                            halign: "right"
+                            theme_text_color: "Secondary"
+
+                    MDButton:
+                        style: "outlined"
+                        size_hint: None, None
+                        size: dp(100), dp(38)
+                        pos_hint: {"center_y": 0.5}
+                        on_release: root.open_people_setup()
+
+                        MDButtonText:
+                            id: btn_edit_face_text
+                            text: app.ar("تعديل البصمة")
+
+                # عنوان قسم سجل عمليات النقل الأخيرة
+                MDBoxLayout:
+                    size_hint_y: None
+                    height: dp(28)
+                    orientation: "horizontal"
+
+                    MDButton:
+                        style: "text"
+                        size_hint_y: 1
+                        on_release: root.refresh_history()
+
+                        MDButtonIcon:
+                            icon: "refresh"
+
+                        MDButtonText:
+                            id: refresh_history_text
+                            text: app.ar("تحديث")
+
+                    Widget:
+
+                    MDLabel:
+                        id: history_section_title
+                        text: app.ar("سجل عمليات النقل الأخيرة والتراجع")
+                        bold: True
+                        font_size: "13sp"
+                        halign: "right"
+                        theme_text_color: "Primary"
+
+                    MDIcon:
+                        icon: "history"
+                        font_size: "20sp"
+                        size_hint_x: None
+                        width: dp(24)
+                        theme_icon_color: "Custom"
+                        icon_color: 0.22, 0.26, 0.68, 1
+
+                # قائمة سجل العمليات
+                MDList:
+                    id: history_list
+                    spacing: dp(8)

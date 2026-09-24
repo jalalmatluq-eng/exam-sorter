@@ -17,7 +17,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.button import Button
 from kivy.metrics import dp
 from kivymd.uix.card import MDCard
-from kivymd.uix.label import MDLabel
+from kivymd.uix.label import MDLabel, MDIcon
 from kivymd.uix.button import MDButton, MDButtonIcon, MDButtonText
 
 import file_manager
@@ -115,14 +115,39 @@ class SubjectDetailScreen(Screen):
             on_release=lambda x, p=img_path: self.preview_image(p)
         )
 
-        # صورة مصغرة
-        thumb = Image(
-            source=img_path,
-            size_hint=(1, 0.72),
-            allow_stretch=True,
-            keep_ratio=True
-        )
-        card.add_widget(thumb)
+        ext = Path(img_path).suffix.lower()
+        is_video = ext in [".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"]
+
+        if is_video:
+            video_thumb_box = BoxLayout(
+                orientation="vertical",
+                size_hint=(1, 0.72),
+                padding=dp(10),
+                spacing=dp(4)
+            )
+            v_icon = MDIcon(
+                icon="movie-play-outline",
+                font_size="48sp",
+                pos_hint={"center_x": 0.5},
+                theme_icon_color="Custom",
+                icon_color=(0.22, 0.26, 0.68, 1)
+            )
+            v_badge = MDLabel(
+                text=ar("مقطع فيديو"),
+                font_size="11sp",
+                halign="center",
+                bold=True,
+                theme_text_color="Primary"
+            )
+            video_thumb_box.add_widget(v_icon)
+            video_thumb_box.add_widget(v_badge)
+            card.add_widget(video_thumb_box)
+        else:
+            thumb = Image(
+                source=img_path,
+                size_hint=(1, 0.72)
+            )
+            card.add_widget(thumb)
 
         # شريط سفلي للبطاقة يحوي الاسم وأيقونة الحذف
         bottom_bar = BoxLayout(
@@ -159,8 +184,10 @@ class SubjectDetailScreen(Screen):
         return card
 
     def preview_image(self, img_path: str):
-        """عرض الصورة بحجم كبير في نافذة منبثقة للمعاينة"""
+        """عرض الصورة بحجم كبير أو تشغيل الفيديو في مشغل النظام"""
         filename = Path(img_path).name
+        ext = Path(img_path).suffix.lower()
+        is_video = ext in [".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"]
 
         content = BoxLayout(
             orientation="vertical",
@@ -168,12 +195,50 @@ class SubjectDetailScreen(Screen):
             padding=dp(10)
         )
 
-        full_img = Image(
-            source=img_path,
-            allow_stretch=True,
-            keep_ratio=True
-        )
-        content.add_widget(full_img)
+        if is_video:
+            v_center_box = BoxLayout(
+                orientation="vertical",
+                spacing=dp(12),
+                padding=dp(16),
+                size_hint=(1, 0.8)
+            )
+            v_big_icon = MDIcon(
+                icon="play-circle",
+                font_size="76sp",
+                pos_hint={"center_x": 0.5},
+                theme_icon_color="Custom",
+                icon_color=(0.22, 0.26, 0.68, 1)
+            )
+            v_filename = MDLabel(
+                text=filename,
+                halign="center",
+                bold=True,
+                font_size="13sp",
+                theme_text_color="Primary"
+            )
+            v_desc = MDLabel(
+                text=ar("انقر أدناه لتشغيل الفيديو في مشغل الوسائط الرسمي"),
+                halign="center",
+                font_size="11sp",
+                theme_text_color="Secondary"
+            )
+            play_btn = Button(
+                text=ar("▶ تشغيل مقطع الفيديو الآن"),
+                background_color=(0.15, 0.65, 0.35, 1),
+                color=(1, 1, 1, 1),
+                size_hint=(0.85, None),
+                height=dp(46),
+                pos_hint={"center_x": 0.5}
+            )
+            play_btn.bind(on_release=lambda x: file_manager.open_folder_native(img_path))
+            v_center_box.add_widget(v_big_icon)
+            v_center_box.add_widget(v_filename)
+            v_center_box.add_widget(v_desc)
+            v_center_box.add_widget(play_btn)
+            content.add_widget(v_center_box)
+        else:
+            full_img = Image(source=img_path)
+            content.add_widget(full_img)
 
         actions_box = BoxLayout(
             orientation="horizontal",

@@ -30,17 +30,21 @@
 
             MDTopAppBarTrailingButtonContainer:
                 MDActionTopAppBarButton:
+                    icon: "account-box-multiple"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
+                    on_release: root.open_people_setup()
+
+                MDActionTopAppBarButton:
                     icon: "folder-open-outline"
                     theme_icon_color: "Custom"
                     icon_color: 1, 1, 1, 1
-                    tooltip_text: "فتح مجلد الاختبارات"
                     on_release: root.open_storage_folder()
 
                 MDActionTopAppBarButton:
                     icon: "broom"
                     theme_icon_color: "Custom"
                     icon_color: 1, 1, 1, 1
-                    tooltip_text: "تنظيف المجلدات الفارغة"
                     on_release: root.clean_empty_folders()
 
                 MDActionTopAppBarButton:
@@ -53,7 +57,7 @@
                     icon: "cog-outline"
                     theme_icon_color: "Custom"
                     icon_color: 1, 1, 1, 1
-                    on_release: root.open_settings_dialog()
+                    on_release: root.open_settings_screen()
 
         # المساحة التفاعلية الرئيسية
         MDBoxLayout:

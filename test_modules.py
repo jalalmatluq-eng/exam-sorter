@@ -124,10 +124,136 @@ def test_classifier_encoding():
 
     print("✓ نجح فحص وحدة التصنيف.\n")
 
+def test_face_classifier():
+    print("--- 4. فحص وحدة تصنيف الوجوه والتعرف عليها (Face Classifier) ---")
+    import numpy as np
+    import cv2
+    import face_classifier
+
+    sandbox = Path("test_sandbox_face")
+    sandbox.mkdir(exist_ok=True)
+    profile_path = sandbox / "test_face_profile.json"
+
+    # 1. فحص استخراج تضمين الوجه من مصفوفة وجه اصطناعية
+    mock_face = np.full((120, 120), 128, dtype=np.uint8)
+    cv2.circle(mock_face, (40, 40), 10, 50, -1)  # عين يسرى
+    cv2.circle(mock_face, (80, 40), 10, 50, -1)  # عين يمنى
+    cv2.rectangle(mock_face, (45, 80), (75, 95), 40, -1)  # فم
+
+    emb1 = face_classifier.extract_face_embedding(mock_face)
+    assert emb1 is not None and len(emb1) == 512, "فشل استخراج التضمين أو طول المتجه ليس 512!"
+    norm = np.linalg.norm(emb1)
+    assert abs(norm - 1.0) < 1e-4, f"المتجه غير معياري: norm={norm}"
+    print("✓ تم استخراج التضمين بنجاح بطول 512 وبمعيارية 1.0.")
+
+    # 2. فحص تطابق الوجه مع نفسه
+    sim_self = face_classifier.cosine_similarity(emb1, emb1)
+    assert abs(sim_self - 1.0) < 1e-4, f"تشابه الوجه مع نفسه يجب أن يكون 1.0 ولكن وجد: {sim_self}"
+    print("✓ تم التحقق من حساب جيب التمام بنجاح (تشابه تام = 1.0).")
+
+    # 3. فحص إنشاء وحفظ وتحديث الملف الشخصي
+    profile = face_classifier.build_and_save_profile([emb1, emb1], profile_path=profile_path)
+    assert profile is not None and "mean_embedding" in profile
+    assert profile_path.exists(), "لم يتم حفظ ملف البصمة!"
+    loaded_profile = face_classifier.load_user_face_profile(profile_path=profile_path)
+    assert loaded_profile is not None
+    print("✓ تم حفظ وتحميل ملف البصمة بنجاح.")
+
+    # تنظيف
+    shutil.rmtree(sandbox)
+    print("✓ نجح فحص وحدة تصنيف الوجوه بالكامل.\n")
+
+def test_video_classifier():
+    print("--- 5. فحص وحدة تصنيف الفيديوهات (Video Classifier) ---")
+    import video_classifier
+
+    # 1. فحص الكلمات المفتاحية لمسارات الفيديو
+    cat1 = video_classifier.classify_video_locally("C:/Downloads/funny_cat_tiktok_reel.mp4")
+    assert cat1 == "فيديوهات مضحكة", f"فشل تصنيف الفيديو المضحك: {cat1}"
+    print(f"✓ فيديو مضحك: {cat1}")
+
+    cat2 = video_classifier.classify_video_locally("D:/Study/CS50_Lecture_01_algorithms.mp4")
+    assert cat2 == "محاضرات وتعلم", f"فشل تصنيف المحاضرة: {cat2}"
+    print(f"✓ فيديو محاضرة: {cat2}")
+
+    cat3 = video_classifier.classify_video_locally("E:/Movies/Inception.2010.1080p.mkv")
+    assert cat3 == "أفلام ومسلسلات", f"فشل تصنيف الفيلم: {cat3}"
+    print(f"✓ فيديو فيلم: {cat3}")
+
+    cat4 = video_classifier.classify_video_locally("C:/Music/New_Official_Audio_Song.mp4")
+    assert cat4 == "أغاني وأناشيد", f"فشل تصنيف الأغنية: {cat4}"
+    print(f"✓ فيديو أغنية: {cat4}")
+
+    print("✓ نجح فحص وحدة تصنيف الفيديوهات بالكامل.\n")
+
+def test_media_scanner_and_rollback():
+    print("--- 6. فحص النقل الآمن، السجل، والتراجع (Safety Move & Rollback) ---")
+    sandbox = Path("test_sandbox_scanner")
+    if sandbox.exists():
+        shutil.rmtree(sandbox)
+    sandbox.mkdir(exist_ok=True)
+
+    src_dir = sandbox / "source"
+    dest_dir = sandbox / "dest"
+    src_dir.mkdir()
+    dest_dir.mkdir()
+
+    # إنشاء ملفات تجريبية
+    file1 = src_dir / "funny_memes.mp4"
+    file1.write_bytes(b"TEST_VIDEO_DATA_FOR_VERIFICATION_BYTES_123456789")
+    size_before = file1.stat().st_size
+
+    # فحص النقل الآمن
+    dest_path = file_manager.move_to_category(
+        src_path=str(file1),
+        category_name="فيديوهات مضحكة",
+        base_path=dest_dir
+    )
+
+    assert not file1.exists(), "الملف المصدر لم يُحذف بعد التحقق من سلامة الوجهة!"
+    dest_file = Path(dest_path)
+    assert dest_file.exists(), "الملف النهائي غير موجود في الوجهة!"
+    assert dest_file.stat().st_size == size_before, "حجم الملف في الوجهة لا يتطابق مع المصدر بالبايت!"
+    print("✓ تم النقل بأمان مع التحقق الدقيق من الحجم بالبايت.")
+
+    # فحص السجل والتراجع (Rollback)
+    history = file_manager.get_transfer_history()
+    assert len(history) > 0, "العملية لم تُسجل في transfer_history.json!"
+    rec_id = history[0]["id"]
+
+    undo_ok = file_manager.undo_transfer(rec_id)
+    assert undo_ok, "فشلت عملية التراجع عن النقل!"
+    assert file1.exists(), "الملف لم يعد إلى مكانه الأصلي بعد التراجع!"
+    assert not dest_file.exists(), "الملف المنقول لم يُحذف من الوجهة بعد التراجع!"
+    assert file1.stat().st_size == size_before, "حجم الملف المستعاد غير مطابق!"
+    print(f"✓ تم التراجع بنجاح وإعادة الملف لمكانه الأصلي بدقة 100% (ID: {rec_id}).")
+
+    # تنظيف
+    shutil.rmtree(sandbox)
+    print("✓ نجح فحص النقل الآمن والتراجع بالكامل.\n")
+
+def test_service_watcher():
+    print("--- 7. فحص خدمة المراقبة بالخلفية (Media Watcher Service) ---")
+    from service import media_watcher_service
+    import time
+
+    media_watcher_service.stop_watcher_thread()
+    assert not media_watcher_service.is_watcher_running(), "الخدمة يجب أن تكون متوقفة بعد الاستدعاء"
+    media_watcher_service.start_watcher_thread(interval_seconds=1)
+    assert media_watcher_service.is_watcher_running(), "فشل بدء ثريد الخدمة!"
+    time.sleep(0.5)
+    media_watcher_service.stop_watcher_thread()
+    assert not media_watcher_service.is_watcher_running(), "فشل إيقاف ثريد الخدمة!"
+    print("✓ تم بدء وإيقاف ثريد خدمة المراقبة بنجاح.\n")
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
     test_classifier_encoding()
+    test_face_classifier()
+    test_video_classifier()
+    test_media_scanner_and_rollback()
+    test_service_watcher()
     print("==================================================")
     print("  جميع الفحوصات الآلية للوحدات تمت بنجاح 100%!  ")
     print("==================================================")
