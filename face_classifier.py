@@ -58,9 +58,20 @@ def _load_cascade(xml_name: str) -> cv2.CascadeClassifier | None:
     try:
         if not hasattr(cv2, "CascadeClassifier"):
             return None
+
+        # البحث عن مسار قوالب Haar المدمجة في OpenCV بأمان لتجنب أخطاء الفاحص
         haarcascades_dir = ""
-        if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
-            haarcascades_dir = str(cv2.data.haarcascades)
+        data_mod: object = getattr(cv2, "data", None)
+        if data_mod is not None:
+            val: object = getattr(data_mod, "haarcascades", "")
+            if isinstance(val, str) and os.path.isdir(val):
+                haarcascades_dir = val
+
+        if not haarcascades_dir and hasattr(cv2, "__file__") and cv2.__file__:
+            fallback = os.path.join(os.path.dirname(cv2.__file__), "data")
+            if os.path.isdir(fallback):
+                haarcascades_dir = fallback
+
         if haarcascades_dir:
             path = os.path.join(haarcascades_dir, xml_name)
             if os.path.exists(path):
