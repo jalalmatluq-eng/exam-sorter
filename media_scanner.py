@@ -31,7 +31,8 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 VIDEO_EXTENSIONS = {".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"}
 
 CATEGORY_MY_PHOTOS = "صوري"
-CATEGORY_FRIENDS_PHOTOS = "صور الزملاء والإخوة"
+CATEGORY_FRIENDS_PHOTOS = "صور اصدقاء"
+CATEGORY_EXAMS_ROOT = "صور اختبارات"
 CATEGORY_UNCLASSIFIED = "خارج التصنيف"
 
 
@@ -202,7 +203,7 @@ def is_visual_document_or_paper(image_path: str) -> bool:
         import cv2
         import numpy as np
 
-        img = cv2.imread(image_path)
+        img = face_classifier._safe_read_image(image_path)
         if img is None:
             return False
         h, w = img.shape[:2]
@@ -309,11 +310,12 @@ def process_one_file(file_path: str | Path, api_key: str | None = None) -> dict[
             try:
                 subject_name = classifier.classify_exam_image(str(p), api_key=api_key, fallback_to_ocr=True)
                 if subject_name and subject_name.strip():
-                    target_category = subject_name.strip()
-                    detected_details = f"ورقة اختبار مادة: {target_category}"
+                    clean_sub = subject_name.strip()
+                    target_category = f"{CATEGORY_EXAMS_ROOT}/{clean_sub}"
+                    detected_details = f"ورقة اختبار مادة: {clean_sub}"
             except Exception:
                 # إذا حُسمت الورقة كمستند/اختبار لكن تعذر استخراج المادة أوفلاين
-                target_category = "اختبارات عامة"
+                target_category = f"{CATEGORY_EXAMS_ROOT}/اختبارات عامة"
                 detected_details = "ورقة اختبار ومستند دراسي (بانتظار تحديد المادة)"
 
         # إذا لم تحسم كاختبار بالاسم أو الرؤية، نفحص الوجوه
@@ -324,24 +326,26 @@ def process_one_file(file_path: str | Path, api_key: str | None = None) -> dict[
                 detected_details = "مطابقة بصمة وجه صاحب الجهاز"
             elif face_result == "other":
                 target_category = CATEGORY_FRIENDS_PHOTOS
-                detected_details = "اكتشاف وجوه أشخاص آخرين"
+                detected_details = "اكتشاف وجوه أصدقاء وإخوة"
             else:
                 # إذا كانت الصورة خالية من الوجوه (None): نفحص ما إذا كانت ورقة اختبار
                 if is_likely_exam_paper(str(p)):
                     try:
                         subject_name = classifier.classify_exam_image(str(p), api_key=api_key, fallback_to_ocr=True)
                         if subject_name and subject_name.strip():
-                            target_category = subject_name.strip()
-                            detected_details = f"ورقة اختبار مادة مصنفة: {target_category}"
+                            clean_sub = subject_name.strip()
+                            target_category = f"{CATEGORY_EXAMS_ROOT}/{clean_sub}"
+                            detected_details = f"ورقة اختبار مادة مصنفة: {clean_sub}"
                     except Exception:
-                        target_category = "اختبارات عامة"
+                        target_category = f"{CATEGORY_EXAMS_ROOT}/اختبارات عامة"
                         detected_details = "ورقة اختبار ومستند دراسي"
                 elif api_key or os.getenv("ANTHROPIC_API_KEY"):
                     try:
                         subject_name = classifier.classify_exam_image(str(p), api_key=api_key, fallback_to_ocr=True)
                         if subject_name and subject_name.strip():
-                            target_category = subject_name.strip()
-                            detected_details = f"ورقة اختبار مادة مصنفة بالذكاء الاصطناعي: {target_category}"
+                            clean_sub = subject_name.strip()
+                            target_category = f"{CATEGORY_EXAMS_ROOT}/{clean_sub}"
+                            detected_details = f"ورقة اختبار مادة مصنفة بالذكاء الاصطناعي: {clean_sub}"
                     except Exception:
                         pass
 

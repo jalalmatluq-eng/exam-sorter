@@ -60,7 +60,8 @@ KEYWORDS_MAP = {
         "dr.", "prof", "chapter", "ch0", "ch1", "ch2", "ch3", "ch4", "ch5",
         "udemy", "coursera", "webinar", "explanation", "database", "java",
         "intellij", "python", "programming", "access", "sql", "code", "coding",
-        "software", "algorithm", "excel", "computer", "حاسوب", "برمجة", "حل"
+        "software", "algorithm", "excel", "computer", "حاسوب", "برمجة",
+        "حلول تمارين", "حل مسائل", "حل أسئلة", "حل اسئلة"
     ],
     CATEGORY_MOVIES: [
         "فيلم", "مسلسل", "حلقة", "سلسلة", "موسم", "سينما", "مترجم",

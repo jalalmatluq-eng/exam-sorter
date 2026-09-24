@@ -401,11 +401,29 @@ def open_folder_native(folder_path: str) -> bool:
 # =========================================================================
 
 def get_media_sorter_base_path() -> Path:
-    """تحديد المسار الأساسي الموحد لجميع مجلدات مُنظّم الوسائط (MediaSorter)"""
+    """تحديد المسار الأساسي الموحد لجميع مجلدات مُنظّم الوسائط (MediaSorter) مع دعم بطاقات الذاكرة الخارجية SD Card"""
     try:
         from kivy.utils import platform
         if platform == "android":
-            return Path("/storage/emulated/0/MediaSorter")
+            # 1. التحقق أولاً من وجود بطاقة ذاكرة خارجية MicroSD متاحة وقابلة للكتابة
+            storage_dir = Path("/storage")
+            if storage_dir.exists():
+                for item in storage_dir.iterdir():
+                    if item.is_dir() and item.name not in ("emulated", "self", "knox"):
+                        candidate = item / "MediaSorter"
+                        try:
+                            candidate.mkdir(parents=True, exist_ok=True)
+                            test_file = candidate / ".write_test"
+                            test_file.touch()
+                            test_file.unlink()
+                            return candidate
+                        except (PermissionError, OSError):
+                            pass
+
+            # 2. المسار الأساسي في وحدة التخزين المشتركة
+            base = Path("/storage/emulated/0/MediaSorter")
+            base.mkdir(parents=True, exist_ok=True)
+            return base
     except Exception:
         pass
 
@@ -415,15 +433,21 @@ def get_media_sorter_base_path() -> Path:
     return base
 
 
-def get_transfer_log_path() -> Path:
-    """مسار ملف سجل عمليات النقل للتراجع والمراجعة"""
-    base = get_media_sorter_base_path()
+def get_transfer_log_path(base_path: Path | None = None) -> Path:
+    """مسار ملف سجل عمليات النقل للتراجع والمراجعة (مع إمكانية عزل المسار للاختبارات)"""
+    base = base_path if base_path is not None else get_media_sorter_base_path()
     return base / "transfer_history.json"
 
 
-def _log_transfer_record(src_path: str, dest_path: str, category: str, file_size: int) -> None:
+def _log_transfer_record(
+    src_path: str,
+    dest_path: str,
+    category: str,
+    file_size: int,
+    base_path: Path | None = None
+) -> None:
     """تسجيل عملية نقل في سجل المعاملات JSON"""
-    log_file = get_transfer_log_path()
+    log_file = get_transfer_log_path(base_path)
     records: list[dict[str, Any]] = []
     if log_file.exists():
         try:
@@ -450,9 +474,9 @@ def _log_transfer_record(src_path: str, dest_path: str, category: str, file_size
         print("تعذر تحديث سجل النقل:", e)
 
 
-def get_transfer_history() -> list[dict[str, Any]]:
+def get_transfer_history(base_path: Path | None = None) -> list[dict[str, Any]]:
     """استرجاع سجل عمليات النقل الأخيرة مرتبة من الأحدث إلى الأقدم"""
-    log_file = get_transfer_log_path()
+    log_file = get_transfer_log_path(base_path)
     if not log_file.exists():
         return []
     try:
@@ -463,9 +487,9 @@ def get_transfer_history() -> list[dict[str, Any]]:
         return []
 
 
-def undo_transfer(record_id: int) -> bool:
+def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     """التراجع عن عملية نقل معينة وإعادة الملف إلى مكانه الأصلي"""
-    log_file = get_transfer_log_path()
+    log_file = get_transfer_log_path(base_path)
     if not log_file.exists():
         return False
 
@@ -508,7 +532,7 @@ def undo_transfer(record_id: int) -> bool:
 def move_to_category(src_path: str | Path, category_name: str, base_path: Path | None = None) -> Path:
     """
     نقل الملف فعلياً (Move) إلى مجلد التصنيف المحدد مع أعلى معايير الأمان:
-    1. إنشاء مجلد التصنيف إن لم يكن موجوداً.
+    1. إنشاء مجلد التصنيف إن لم يكن موجوداً (مع دعم المسارات الفرعية مثل 'صور اختبارات/رياضيات').
     2. حل أي تعارض في الأسماء تلقائياً عبر إضافة ترقيم تسلسلي.
     3. التحقق الحاسم: التأكد من نسخ الملف بالكامل وتطابق الحجم بالبايت قبل حذف الأصل.
     4. توثيق العملية في سجل transfer_history.json لتمكين التراجع.
@@ -517,11 +541,17 @@ def move_to_category(src_path: str | Path, category_name: str, base_path: Path |
     if not src.exists() or not src.is_file():
         raise FileNotFoundError(f"الملف المصدر غير موجود: {src}")
 
-    if base_path is None:
-        base_path = get_media_sorter_base_path()
+    target_base = base_path if base_path is not None else get_media_sorter_base_path()
 
-    clean_cat = sanitize_folder_name(category_name)
-    target_folder = base_path / clean_cat
+    # دعم المجلدات والمجلدات الفرعية مع الحفاظ على تنظيف كل جزء
+    clean_parts = [
+        sanitize_folder_name(p)
+        for p in str(category_name).replace("\\", "/").split("/")
+        if p.strip()
+    ]
+    target_folder = target_base
+    for part in clean_parts:
+        target_folder = target_folder / part
     target_folder.mkdir(parents=True, exist_ok=True)
 
     stem = src.stem
@@ -552,8 +582,8 @@ def move_to_category(src_path: str | Path, category_name: str, base_path: Path |
     # تم التحقق بنجاح 100%: حذف الملف المصدر
     src.unlink()
 
-    # توثيق العملية في السجل
-    _log_transfer_record(str(src), str(dest), category_name, src_size)
+    # توثيق العملية في السجل الخاص بنفس مسار الوجهة
+    _log_transfer_record(str(src), str(dest), category_name, src_size, base_path=target_base)
 
     return dest
 

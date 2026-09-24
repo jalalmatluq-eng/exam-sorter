@@ -216,12 +216,12 @@ def test_media_scanner_and_rollback():
     assert dest_file.stat().st_size == size_before, "حجم الملف في الوجهة لا يتطابق مع المصدر بالبايت!"
     print("✓ تم النقل بأمان مع التحقق الدقيق من الحجم بالبايت.")
 
-    # فحص السجل والتراجع (Rollback)
-    history = file_manager.get_transfer_history()
-    assert len(history) > 0, "العملية لم تُسجل في transfer_history.json!"
+    # فحص السجل والتراجع (Rollback) في بيئة معزولة
+    history = file_manager.get_transfer_history(base_path=dest_dir)
+    assert len(history) > 0, "العملية لم تُسجل في transfer_history.json المعزول!"
     rec_id = history[0]["id"]
 
-    undo_ok = file_manager.undo_transfer(rec_id)
+    undo_ok = file_manager.undo_transfer(rec_id, base_path=dest_dir)
     assert undo_ok, "فشلت عملية التراجع عن النقل!"
     assert file1.exists(), "الملف لم يعد إلى مكانه الأصلي بعد التراجع!"
     assert not dest_file.exists(), "الملف المنقول لم يُحذف من الوجهة بعد التراجع!"

@@ -156,9 +156,33 @@ def is_file_stable(file_path: Path) -> bool:
         return False
 
 
+def _collect_monitored_files(dir_path: Path, max_depth: int = 3) -> list[Path]:
+    """جمع ملفات الوسائط في المجلد ومجلداته الفرعية حتى عمق محدد لالتقاط وسائط WhatsApp وTelegram الفرعية"""
+    found_files: list[Path] = []
+    if not dir_path.exists() or not dir_path.is_dir():
+        return found_files
+
+    def _walk(curr: Path, depth: int) -> None:
+        if depth > max_depth or not curr.exists() or not curr.is_dir():
+            return
+        try:
+            for entry in curr.iterdir():
+                if entry.is_file():
+                    ext = entry.suffix.lower()
+                    if ext in media_scanner.IMAGE_EXTENSIONS or ext in media_scanner.VIDEO_EXTENSIONS:
+                        found_files.append(entry)
+                elif entry.is_dir() and not entry.name.startswith(".") and entry.name != "MediaSorter":
+                    _walk(entry, depth + 1)
+        except (PermissionError, OSError):
+            pass
+
+    _walk(dir_path, 0)
+    return found_files
+
+
 def run_watcher_loop():
     """
-    حلقة المراقبة الدورية المستمرة للخدمة الخلفية.
+    حلقة المراقبة الدورية المستمرة للخدمة الخلفية مع الفحص الشامل للمجلدات الفرعية.
     """
     print("بدء خدمة مراقبة الوسائط Media Watcher...")
     setup_android_foreground_notification()
@@ -176,20 +200,20 @@ def run_watcher_loop():
                 if not w_dir.exists():
                     continue
 
-                for entry in w_dir.iterdir():
-                    if entry.is_file():
-                        ext = entry.suffix.lower()
-                        if ext in media_scanner.IMAGE_EXTENSIONS or ext in media_scanner.VIDEO_EXTENSIONS:
-                            st = entry.stat()
-                            # هل عولج مسبقاً؟
-                            if media_scanner.is_file_already_processed(str(entry), st.st_size, st.st_mtime):
-                                continue
+                for entry in _collect_monitored_files(w_dir, max_depth=3):
+                    try:
+                        st = entry.stat()
+                        # هل عولج مسبقاً؟
+                        if media_scanner.is_file_already_processed(str(entry), st.st_size, st.st_mtime):
+                            continue
 
-                            # التأكد من اكتمال كتابة الملف
-                            if is_file_stable(entry):
-                                print(f"[خدمة المراقبة] معالجة ملف جديد: {entry.name}")
-                                res = media_scanner.process_one_file(entry)
-                                print(f"[خدمة المراقبة] النتيجة: {res.get('category')}")
+                        # التأكد من اكتمال كتابة الملف
+                        if is_file_stable(entry):
+                            print(f"[خدمة المراقبة] معالجة ملف جديد: {entry.name}")
+                            res = media_scanner.process_one_file(entry)
+                            print(f"[خدمة المراقبة] النتيجة: {res.get('category')}")
+                    except (OSError, PermissionError):
+                        continue
 
         except Exception as e:
             print("خطأ في حلقة الخدمة الخلفية:", e)
