@@ -1,4 +1,7 @@
-# -*- coding: utf-8 -*-
+# pyright: reportMissingTypeStubs=false
+# pyright: reportUnknownMemberType=false
+# pyright: reportUnknownArgumentType=false
+# pyright: reportUnknownVariableType=false
 """
 وحدة تصنيف الوجوه ومطابقة صور صاحب الجهاز (Face Classifier)
 - الكشف عن الوجوه البشرية في الصور عبر تقنيات OpenCV السريعة والخفيفة.
@@ -14,14 +17,16 @@
 """
 
 import json
+import logging
 import os
 from pathlib import Path
-from typing import Any
 
 import cv2
 import numpy as np
 
 import file_manager
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.68
 PROFILE_FILENAME = "my_face_profile.json"
@@ -32,34 +37,35 @@ def get_profile_path() -> Path:
     try:
         from kivy.app import App
         app = App.get_running_app()
-        if app and hasattr(app, "user_data_dir") and app.user_data_dir:
-            profile_dir = Path(app.user_data_dir)
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            return profile_dir / PROFILE_FILENAME
-    except Exception:
-        pass
+        if app and hasattr(app, "user_data_dir"):
+            user_data_dir = getattr(app, "user_data_dir", None)
+            if user_data_dir:
+                profile_dir = Path(str(user_data_dir))
+                profile_dir.mkdir(parents=True, exist_ok=True)
+                return profile_dir / PROFILE_FILENAME
+    except (ImportError, AttributeError, OSError) as exc:
+        logger.debug("تعذر جلب user_data_dir من تطبيق Kivy: %s", exc)
 
     profile_dir = file_manager.get_base_storage_path().parent
     profile_dir.mkdir(parents=True, exist_ok=True)
     return profile_dir / PROFILE_FILENAME
 
 
-def _load_cascade(xml_name: str) -> Any:
+def _load_cascade(xml_name: str) -> cv2.CascadeClassifier | None:
     """تحميل مصنف Haar Cascade من مسارات OpenCV المدمجة بأمان فائق"""
     try:
-        cascade_cls = getattr(cv2, "CascadeClassifier", None)
-        if cascade_cls is None:
+        if not hasattr(cv2, "CascadeClassifier"):
             return None
         data_mod = getattr(cv2, "data", None)
-        haarcascades_dir = getattr(data_mod, "haarcascades", "") if data_mod else ""
+        haarcascades_dir = getattr(data_mod, "haarcascades", "") if data_mod is not None else ""
         if haarcascades_dir:
             path = os.path.join(haarcascades_dir, xml_name)
             if os.path.exists(path):
-                cascade = cascade_cls(path)
+                cascade = cv2.CascadeClassifier(path)
                 if not cascade.empty():
                     return cascade
-    except Exception as e:
-        print(f"تعذر تحميل Haar Cascade {xml_name}:", e)
+    except (cv2.error, OSError, AttributeError, ValueError) as exc:
+        logger.warning("تعذر تحميل Haar Cascade %s: %s", xml_name, exc)
     return None
 
 
@@ -72,12 +78,12 @@ def _safe_read_image(image_path: str) -> np.ndarray | None:
         numpy_array = np.asarray(bytes_data, dtype=np.uint8)
         img = cv2.imdecode(numpy_array, cv2.IMREAD_COLOR)
         return img
-    except Exception as e:
-        print(f"خطأ أثناء قراءة الصورة {image_path}:", e)
+    except (OSError, ValueError, cv2.error) as exc:
+        logger.warning("خطأ أثناء قراءة الصورة %s: %s", image_path, exc)
         return None
 
 
-def detect_faces_in_image(img: np.ndarray) -> list[np.ndarray]:
+def detect_faces_in_image(img: np.ndarray | None) -> list[np.ndarray]:
     """اكتشاف الوجوه البشرية في مصفوفة صورة BGR وإرجاع قائمة بالوجوه المقصوصة"""
     if img is None or img.size == 0:
         return []
@@ -89,11 +95,13 @@ def detect_faces_in_image(img: np.ndarray) -> list[np.ndarray]:
     if frontal_cascade is None:
         return []
 
-    h_img, w_img = img.shape[:2]
-    scale = 1.0
-    if max(h_img, w_img) > 1000:
-        scale = 1000.0 / max(h_img, w_img)
-        w_scaled, h_scaled = int(w_img * scale), int(h_img * scale)
+    h_img = int(img.shape[0])
+    w_img = int(img.shape[1])
+    scale: float = 1.0
+    max_dim = max(h_img, w_img)
+    if max_dim > 1000:
+        scale = 1000.0 / float(max_dim)
+        w_scaled, h_scaled = int(float(w_img) * scale), int(float(h_img) * scale)
         gray_detect = cv2.resize(gray, (w_scaled, h_scaled), interpolation=cv2.INTER_AREA)
     else:
         gray_detect = gray
@@ -118,16 +126,16 @@ def detect_faces_in_image(img: np.ndarray) -> list[np.ndarray]:
             )
 
     cropped_faces: list[np.ndarray] = []
-    inv_scale = 1.0 / scale
+    inv_scale: float = 1.0 / scale
 
     for (sx, sy, sw, sh) in faces_scaled:
-        x = int(sx * inv_scale)
-        y = int(sy * inv_scale)
-        w = int(sw * inv_scale)
-        h = int(sh * inv_scale)
+        x = int(float(sx) * inv_scale)
+        y = int(float(sy) * inv_scale)
+        w = int(float(sw) * inv_scale)
+        h = int(float(sh) * inv_scale)
 
-        margin_x = int(w * 0.1)
-        margin_y = int(h * 0.1)
+        margin_x = int(float(w) * 0.1)
+        margin_y = int(float(h) * 0.1)
         x1 = max(0, x - margin_x)
         y1 = max(0, y - margin_y)
         x2 = min(w_img, x + w + margin_x)
@@ -160,7 +168,7 @@ def extract_face_embedding(face_img: np.ndarray) -> np.ndarray:
     resized = cv2.resize(face_img, (112, 112), interpolation=cv2.INTER_AREA)
 
     # 2. التحويل للتدرج الرمادي وموازنة الإضاءة
-    if len(resized.shape) == 3 and resized.shape[2] == 3:
+    if resized.ndim == 3 and resized.shape[2] == 3:
         gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
     else:
         gray = resized
@@ -175,7 +183,7 @@ def extract_face_embedding(face_img: np.ndarray) -> np.ndarray:
     # كل خلية 14x14 بكسل، ويتم حساب هستوجرام تدرج الاتجاهات (8 اتجاهات)
     cells_y, cells_x = 8, 8
     cell_h, cell_w = 112 // cells_y, 112 // cells_x
-    features = []
+    features: list[float] = []
 
     for cy in range(cells_y):
         for cx in range(cells_x):
@@ -185,25 +193,25 @@ def extract_face_embedding(face_img: np.ndarray) -> np.ndarray:
             
             # توزيع الطاقة على 7 أطوار زاوية + متوسط إضاءة الخلية المكانية (8 قيم لكل خلية = 512 قيمة)
             hist, _ = np.histogram(cell_ang, bins=7, range=(0, 360), weights=cell_mag)
-            features.extend(hist)
+            features.extend([float(v) for v in hist])
             features.append(float(np.mean(cell_gray) / 255.0))
 
     embedding = np.array(features, dtype=np.float32)
 
     # 5. التطبيع الإقليدي (L2 Normalization) لتوحيد طول المتجه إلى 1.0
-    norm = np.linalg.norm(embedding)
+    norm = float(np.linalg.norm(embedding))
     if norm > 1e-6:
         embedding = embedding / norm
     else:
-        embedding = np.ones_like(embedding, dtype=np.float32) / np.sqrt(len(embedding))
+        embedding = np.ones_like(embedding, dtype=np.float32) / float(np.sqrt(len(embedding)))
 
     return embedding
 
 
 def compute_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
     """حساب نسبة التشابه الجيبي (Cosine Similarity) بين بصمتين رقميتين (0.0 إلى 1.0)"""
-    dot = np.dot(emb1, emb2)
-    return float(np.clip(dot, 0.0, 1.0))
+    dot_val = float(np.dot(emb1, emb2))
+    return float(np.clip(dot_val, 0.0, 1.0))
 
 
 cosine_similarity = compute_similarity
@@ -213,7 +221,7 @@ def build_and_save_profile(
     embeddings: list[np.ndarray | list[float]],
     profile_path: Path | None = None,
     threshold: float = DEFAULT_SIMILARITY_THRESHOLD
-) -> dict[str, Any] | None:
+) -> dict[str, object] | None:
     """بناء وحفظ ملف بصمة الوجه المرجعية مباشرة من قائمة متجهات التضمين"""
     if not embeddings:
         return None
@@ -221,11 +229,11 @@ def build_and_save_profile(
     emb_list = [e.tolist() if isinstance(e, np.ndarray) else e for e in embeddings]
     emb_array = np.array(emb_list, dtype=np.float32)
     mean_emb = np.mean(emb_array, axis=0)
-    norm = np.linalg.norm(mean_emb)
+    norm = float(np.linalg.norm(mean_emb))
     if norm > 1e-6:
         mean_emb = mean_emb / norm
 
-    profile_data = {
+    profile_data: dict[str, object] = {
         "registered": True,
         "sample_count": len(emb_list),
         "threshold": threshold,
@@ -242,7 +250,7 @@ def build_and_save_profile(
     return profile_data
 
 
-def save_user_face_profile(image_paths: list[str], threshold: float = DEFAULT_SIMILARITY_THRESHOLD) -> dict[str, Any]:
+def save_user_face_profile(image_paths: list[str], threshold: float = DEFAULT_SIMILARITY_THRESHOLD) -> dict[str, object]:
     """
     استخراج بصمات الوجه من الصور المرجعية لصاحب الجهاز وحفظها محلياً.
     """
@@ -254,9 +262,10 @@ def save_user_face_profile(image_paths: list[str], threshold: float = DEFAULT_SI
         faces = detect_faces(path)
         if faces:
             # نأخذ أكبر وجه مكتشف في الصورة المرجعية
-            faces.sort(key=lambda f: f.shape[0] * f.shape[1], reverse=True)
+            faces.sort(key=lambda f: int(f.shape[0] * f.shape[1]), reverse=True)
             emb = extract_face_embedding(faces[0])
-            valid_embeddings.append(emb.tolist())
+            emb_list: list[float] = [float(x) for x in emb.tolist()]
+            valid_embeddings.append(emb_list)
 
     if len(valid_embeddings) < 3:
         return {
@@ -268,11 +277,11 @@ def save_user_face_profile(image_paths: list[str], threshold: float = DEFAULT_SI
     # حساب المتوسط التراكمي (Centroid) للبصمات المرجعية
     emb_array = np.array(valid_embeddings, dtype=np.float32)
     mean_emb = np.mean(emb_array, axis=0)
-    norm = np.linalg.norm(mean_emb)
+    norm = float(np.linalg.norm(mean_emb))
     if norm > 1e-6:
         mean_emb = mean_emb / norm
 
-    profile_data = {
+    profile_data: dict[str, object] = {
         "registered": True,
         "sample_count": len(valid_embeddings),
         "threshold": threshold,
@@ -292,7 +301,7 @@ def save_user_face_profile(image_paths: list[str], threshold: float = DEFAULT_SI
     }
 
 
-def load_user_face_profile(profile_path: Path | None = None) -> dict[str, Any] | None:
+def load_user_face_profile(profile_path: Path | None = None) -> dict[str, object] | None:
     """تحميل البصمة المرجعية المحفوظة لصاحب الجهاز"""
     path = Path(profile_path) if profile_path else get_profile_path()
     if not path.exists():
@@ -300,10 +309,10 @@ def load_user_face_profile(profile_path: Path | None = None) -> dict[str, Any] |
     try:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if data.get("registered") and "mean_embedding" in data:
+            if isinstance(data, dict) and data.get("registered") and "mean_embedding" in data:
                 return data
-    except Exception as e:
-        print("خطأ أثناء قراءة ملف بصمة الوجه:", e)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("خطأ أثناء قراءة ملف بصمة الوجه: %s", exc)
     return None
 
 
@@ -313,7 +322,10 @@ load_user_profile = load_user_face_profile
 def is_user_profile_registered() -> bool:
     """التحقق مما إذا كان صاحب الجهاز قد قام بإعداد بصمة وجهه مسبقاً"""
     profile = load_user_face_profile()
-    return profile is not None and profile.get("sample_count", 0) > 0
+    if profile is None:
+        return False
+    sample_count = profile.get("sample_count", 0)
+    return int(sample_count) > 0 if isinstance(sample_count, (int, float)) else False
 
 
 def detect_and_match_face(image_path: str, threshold: float | None = None) -> str:
@@ -335,9 +347,15 @@ def detect_and_match_face(image_path: str, threshold: float | None = None) -> st
     if profile is None:
         return "other"
 
-    eff_threshold = threshold if threshold is not None else profile.get("threshold", DEFAULT_SIMILARITY_THRESHOLD)
-    mean_emb = np.array(profile["mean_embedding"], dtype=np.float32)
-    sample_embs = [np.array(s, dtype=np.float32) for s in profile.get("samples", [])]
+    thresh_val = profile.get("threshold", DEFAULT_SIMILARITY_THRESHOLD)
+    eff_threshold = threshold if threshold is not None else float(thresh_val) if isinstance(thresh_val, (int, float)) else DEFAULT_SIMILARITY_THRESHOLD
+
+    mean_raw = profile.get("mean_embedding", [])
+    mean_emb = np.array(mean_raw, dtype=np.float32)
+
+    samples_raw = profile.get("samples", [])
+    sample_list: list[list[float]] = samples_raw if isinstance(samples_raw, list) else []
+    sample_embs = [np.array(s, dtype=np.float32) for s in sample_list]
 
     # فحص كل وجه مكتشف في الصورة
     for face_crop in faces:
