@@ -2,6 +2,8 @@
 # pyright: reportUnknownMemberType=false
 # pyright: reportUnknownArgumentType=false
 # pyright: reportUnknownVariableType=false
+# pyright: reportAny=false
+# pyright: reportExplicitAny=false
 """
 وحدة تصنيف الوجوه ومطابقة صور صاحب الجهاز (Face Classifier)
 - الكشف عن الوجوه البشرية في الصور عبر تقنيات OpenCV السريعة والخفيفة.
@@ -39,8 +41,8 @@ def get_profile_path() -> Path:
         app = App.get_running_app()
         if app and hasattr(app, "user_data_dir"):
             user_data_dir = getattr(app, "user_data_dir", None)
-            if user_data_dir:
-                profile_dir = Path(str(user_data_dir))
+            if isinstance(user_data_dir, str) and user_data_dir:
+                profile_dir = Path(user_data_dir)
                 profile_dir.mkdir(parents=True, exist_ok=True)
                 return profile_dir / PROFILE_FILENAME
     except (ImportError, AttributeError, OSError) as exc:
@@ -56,8 +58,9 @@ def _load_cascade(xml_name: str) -> cv2.CascadeClassifier | None:
     try:
         if not hasattr(cv2, "CascadeClassifier"):
             return None
-        data_mod = getattr(cv2, "data", None)
-        haarcascades_dir = getattr(data_mod, "haarcascades", "") if data_mod is not None else ""
+        haarcascades_dir = ""
+        if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
+            haarcascades_dir = str(cv2.data.haarcascades)
         if haarcascades_dir:
             path = os.path.join(haarcascades_dir, xml_name)
             if os.path.exists(path):
@@ -308,7 +311,7 @@ def load_user_face_profile(profile_path: Path | None = None) -> dict[str, object
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
-            data = json.load(f)
+            data: object = json.load(f)
             if isinstance(data, dict) and data.get("registered") and "mean_embedding" in data:
                 return data
     except (OSError, json.JSONDecodeError) as exc:
