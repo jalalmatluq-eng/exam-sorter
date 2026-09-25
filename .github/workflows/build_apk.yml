@@ -14,74 +14,78 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python 3.11
+      # Python 3.10 - fully compatible with buildozer 1.5.0 and Cython 0.29.x
+      - name: Setup Python 3.10
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.10"
 
-      - name: Install system build dependencies
+      - name: Install ALL system build dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get install -y \
             git zip unzip curl wget \
             openjdk-17-jdk \
-            autoconf libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev \
+            autoconf automake autopoint gettext \
+            libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 \
             cmake libffi-dev libssl-dev build-essential \
             ccache python3-dev \
-            libjpeg-dev libpng-dev lld
+            libjpeg-dev libpng-dev \
+            lld python3-pip python3-venv
           java -version
           python3 --version
+          pip3 --version
 
       - name: Cache .buildozer directory
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: buildozer-v5-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: buildozer-v5-${{ runner.os }}-
+          key: buildozer-v6-py310-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-v6-py310-${{ runner.os }}-
 
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-v5-${{ runner.os }}-py311
-          restore-keys: pip-v5-${{ runner.os }}-
+          key: pip-v6-py310-${{ runner.os }}
+          restore-keys: pip-v6-py310-
 
-      - name: Install Buildozer and Cython
+      - name: Install Buildozer, Cython and dependencies
         run: |
           pip install --upgrade pip wheel setuptools
-          # Cython < 3.0 is required by buildozer, but 0.29.36 fails on Python 3.11
-          # Use 0.29.37 which is the last 0.29.x with Python 3.11 wheel support
-          pip install "cython>=0.29.33,<3.0"
-          pip install buildozer==1.5.0 virtualenv
+          pip install cython==0.29.37
+          pip install buildozer==1.5.0
+          pip install virtualenv
+          echo "=== Versions ==="
           buildozer version
           cython --version
+          python --version
 
       - name: Verify project structure
         run: |
-          echo "=== buildozer.spec requirements ==="
-          grep "^requirements" buildozer.spec
+          echo "=== buildozer.spec ==="
+          cat buildozer.spec
+          echo ""
           echo "=== Key source files ==="
           ls -la *.py
-          ls -la kv/ screens/ utils/ service/ assets/
-          echo "=== Icon and presplash ==="
-          ls -lh assets/icon.png assets/presplash.png
+          ls -la assets/
 
       - name: Build debug APK
         run: |
           set -o pipefail
-          buildozer -v android debug 2>&1 | tee build.log
+          yes "" | buildozer -v android debug 2>&1 | tee build.log
 
-      - name: Show build result summary
+      - name: Show build result
         if: always()
         run: |
-          echo "=== LAST 80 LINES OF BUILD LOG ==="
-          tail -80 build.log 2>/dev/null || echo "No build.log found"
+          echo "=== LAST 100 LINES OF BUILD LOG ==="
+          tail -100 build.log 2>/dev/null || echo "No build.log"
           echo ""
           echo "=== APK FILES ==="
-          find bin/ -name "*.apk" 2>/dev/null && echo "SUCCESS: APK generated!" || echo "No APK found"
+          find . -name "*.apk" 2>/dev/null || echo "No APK found"
 
-      - name: Upload APK and build log
+      - name: Upload APK and logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
