@@ -26,8 +26,13 @@ import urllib.request
 from dotenv import load_dotenv
 from PIL import Image
 
-# تحميل المتغيرات من ملف .env إن وجد
-_ = load_dotenv()
+# تحميل المتغيرات من ملف .env إن وجد بأمان
+try:
+    _env_file = Path(__file__).resolve().parent / ".env"
+    if _env_file.exists():
+        load_dotenv(dotenv_path=str(_env_file))
+except Exception:
+    pass
 
 # =========================================================================
 # أين تضع مفتاح API؟

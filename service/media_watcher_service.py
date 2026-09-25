@@ -284,7 +284,8 @@ def start_system_service() -> None:
         try:
             from android import mActivity
             from jnius import autoclass
-            Service = autoclass("org.examsorter.app.ServiceMediawatcher")
+            pkg = mActivity.getPackageName()
+            Service = autoclass(f"{pkg}.ServiceMediawatcher")
             Service.start(mActivity, "")
             print("✓ تم استدعاء بدء خدمة أندرويد بنجاح.")
             return
@@ -301,7 +302,8 @@ def stop_system_service() -> None:
         try:
             from android import mActivity
             from jnius import autoclass
-            Service = autoclass("org.examsorter.app.ServiceMediawatcher")
+            pkg = mActivity.getPackageName()
+            Service = autoclass(f"{pkg}.ServiceMediawatcher")
             Service.stop(mActivity)
             print("✓ تم استدعاء إيقاف خدمة أندرويد بنجاح.")
         except Exception as e:

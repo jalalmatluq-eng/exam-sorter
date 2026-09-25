@@ -12,7 +12,6 @@
 
 import threading
 from pathlib import Path
-from typing import override
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -36,7 +35,6 @@ class SettingsScreen(Screen):
         super().__init__(**kwargs)
         self.is_scanning: bool = False
 
-    @override
     def on_enter(self, *args: object) -> None:
         self.apply_arabic_texts()
         self.refresh_service_ui()

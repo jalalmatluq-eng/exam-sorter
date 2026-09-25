@@ -5,15 +5,16 @@
 لتظهر الكلمات العربية متصلة ومن اليمين إلى اليسار بدون تقطيع.
 """
 
+import os
 from pathlib import Path
 
 # استيراد مكتبات التشكيل وإعادة الترتيب
 try:
     import arabic_reshaper  # type: ignore
     from bidi.algorithm import get_display  # type: ignore
-
     has_arabic_support: bool = True
-except ImportError:
+except Exception as e:
+    print("تنبيه: تعذر استيراد مكتبات التشكيل العربي:", e)
     arabic_reshaper = None  # type: ignore
     get_display = None  # type: ignore
     has_arabic_support = False
@@ -42,7 +43,6 @@ def ar(text: str) -> str:
 
     if has_arabic_support and arabic_reshaper is not None and get_display is not None:
         try:
-            # تكوين معالج النصوص ليدعم الأرقام والتشكيل
             configuration: dict[str, bool] = {
                 "delete_harakat": False,
                 "support_ligatures": True,
@@ -54,7 +54,8 @@ def ar(text: str) -> str:
             if isinstance(display_result, bytes):
                 return display_result.decode("utf-8", errors="replace")
             return str(display_result)
-        except (ValueError, TypeError, AttributeError):
+        except Exception as e:
+            print("خطأ أثناء تشكيل النص العربي:", e)
             return text
     return text
 
@@ -63,9 +64,14 @@ def get_arabic_font_path() -> str:
     """
     استرجاع مسار الخط العربي المتوفر في مجلد assets/fonts/ لربطه بـ Kivy.
     """
-    base_dir: Path = Path(__file__).resolve().parent.parent
-    font_path: Path = base_dir / "assets" / "fonts" / "Amiri-Regular.ttf"
-    if font_path.exists():
-        return str(font_path)
+    candidates = [
+        Path(__file__).resolve().parent.parent / "assets" / "fonts" / "Amiri-Regular.ttf",
+        Path("assets/fonts/Amiri-Regular.ttf").resolve(),
+        Path(os.getcwd()) / "assets" / "fonts" / "Amiri-Regular.ttf",
+        Path("/data/user/0/com.wasaet.smart.wasaetdhakiyah/files/app/assets/fonts/Amiri-Regular.ttf"),
+    ]
+    for font_path in candidates:
+        if font_path.exists():
+            return str(font_path)
 
     return ""

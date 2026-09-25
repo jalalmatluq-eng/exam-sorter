@@ -19,8 +19,23 @@ from kivy.utils import platform
 
 from kivymd.app import MDApp
 
-# تحميل المتغيرات من .env
-load_dotenv()
+# تحسين الاستقرار ومنع انهيار معالجات الرسوميات (Adreno GPUs) عند الضغط على الأزرار
+try:
+    from kivymd.uix.behaviors.ripple_behavior import CommonRipple, M3CommonRipple
+    CommonRipple.call_ripple_animation_methods = lambda *args, **kwargs: None
+    M3CommonRipple.call_ripple_animation_methods = lambda *args, **kwargs: None
+    CommonRipple.lay_canvas_instructions = lambda *args, **kwargs: None
+    M3CommonRipple.lay_canvas_instructions = lambda *args, **kwargs: None
+except Exception:
+    pass
+
+# تحميل المتغيرات من .env بأمان
+try:
+    dotenv_file = Path(__file__).resolve().parent / ".env"
+    if dotenv_file.exists():
+        load_dotenv(dotenv_path=str(dotenv_file))
+except Exception:
+    pass
 
 # استيراد الشاشات
 from screens.home_screen import HomeScreen
@@ -109,6 +124,9 @@ class ExamSorterApp(MDApp):
 
         sm.current = "home_screen"
 
+        # ربط زر الرجوع الفعلي للجوال للعودة للشاشة الرئيسية بدلاً من إغلاق التطبيق
+        Window.bind(on_keyboard=self.on_hardware_back_key)
+
         # بدء تشغيل خدمة المراقبة بالخلفية إذا كانت مفعلة برغبة المستخدم
         from kivy.clock import Clock
         from service import media_watcher_service
@@ -116,6 +134,15 @@ class ExamSorterApp(MDApp):
             Clock.schedule_once(lambda dt: media_watcher_service.start_system_service(), 2.0)
 
         return sm
+
+    def on_hardware_back_key(self, window, key, scancode, codepoint, modifier):
+        """التعامل الذكي مع زر الرجوع بأندرويد (مفتاح 27)"""
+        if key == 27:
+            if hasattr(self, "root") and self.root and hasattr(self.root, "current"):
+                if self.root.current != "home_screen":
+                    self.root.current = "home_screen"
+                    return True  # استهلاك الحدث لمنع خروج التطبيق
+        return False
 
     def request_android_permissions(self):
         """طلب صلاحيات الكاميرا والتخزين على أجهزة أندرويد"""
@@ -147,9 +174,9 @@ class ExamSorterApp(MDApp):
             from android import mActivity
 
             Environment = autoclass("android.os.Environment")
-            Build = autoclass("android.os.Build")
+            BuildVersion = autoclass("android.os.Build$VERSION")
 
-            if Build.VERSION.SDK_INT >= 30:  # Android 11+
+            if BuildVersion.SDK_INT >= 30:  # Android 11+
                 if not Environment.isExternalStorageManager():
                     Intent = autoclass("android.content.Intent")
                     Settings = autoclass("android.provider.Settings")
