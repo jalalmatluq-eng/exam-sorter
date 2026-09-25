@@ -29,6 +29,9 @@ rsync -a \
 
 cd "$BUILD_DIR"
 
+echo "تأكيد توافق إصدار بايثون 3.11 مع حزم المشروع..."
+python3 /mnt/d/exam-sorter/patch_p4a.py
+
 echo "تشغيل Buildozer في بيئة ext4..."
 buildozer -v android debug 2>&1 | tee /mnt/d/exam-sorter/build_wsl.log
 
