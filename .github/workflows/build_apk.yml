@@ -1,4 +1,4 @@
-﻿name: Build APK - Wasaet Dhakiyah
+name: Build APK - Wasaet Dhakiyah
 
 on:
   push:
@@ -8,90 +8,41 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Python 3.9 - same as WSL where buildozer works perfectly
-      - name: Setup Python 3.9
-        uses: actions/setup-python@v5
+      - name: Cache Buildozer global directory
+        uses: actions/cache@v4
         with:
-          python-version: "3.9"
+          path: ~/.buildozer
+          key: buildozer-global-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-global-${{ runner.os }}-
 
-      - name: Install ALL system build dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y \
-            git zip unzip curl wget \
-            openjdk-17-jdk \
-            autoconf automake autopoint gettext \
-            libtool pkg-config \
-            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo6 \
-            cmake libffi-dev libssl-dev build-essential \
-            ccache python3-dev \
-            libjpeg-dev libpng-dev \
-            lld
-          echo "JAVA:" && java -version
-          echo "PYTHON:" && python --version
-          echo "PIP:" && pip --version
-
-      - name: Cache .buildozer directory
+      - name: Cache .buildozer local directory
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: buildozer-py39-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: buildozer-py39-v1-${{ runner.os }}-
+          key: buildozer-local-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-local-${{ runner.os }}-
 
-      - name: Cache pip packages
-        uses: actions/cache@v4
+      - name: Build with Buildozer
+        uses: ArtemSBulgakov/buildozer-action@v1
+        id: buildozer
         with:
-          path: ~/.cache/pip
-          key: pip-py39-v1-${{ runner.os }}
-          restore-keys: pip-py39-v1-
+          command: buildozer -v android debug
+          buildozer_version: stable
 
-      - name: Install Buildozer and Cython
-        run: |
-          pip install --upgrade pip wheel setuptools
-          pip install cython==0.29.37
-          pip install buildozer==1.5.0
-          echo "=== Versions ==="
-          buildozer version
-          cython --version
-          python --version
-
-      - name: Verify project structure
-        run: |
-          echo "=== buildozer.spec requirements ==="
-          grep "^requirements\|^title\|^package\|^version\|^android" buildozer.spec
-          echo ""
-          echo "=== Files ==="
-          ls *.py kv/ screens/ utils/ service/ assets/
-
-      - name: Build debug APK
-        run: |
-          set -o pipefail
-          yes "" | buildozer -v android debug 2>&1 | tee build.log
-          BUILD_EXIT=${PIPESTATUS[1]}
-          echo "Build exit code: $BUILD_EXIT"
-          exit $BUILD_EXIT
-
-      - name: Show build result
-        if: always()
-        run: |
-          echo "====== LAST 100 LINES OF BUILD LOG ======"
-          tail -100 build.log 2>/dev/null || echo "No build.log found"
-          echo ""
-          echo "====== APK FILES ======"
-          find . -name "*.apk" 2>/dev/null && echo "APK GENERATED!" || echo "No APK found"
-
-      - name: Upload APK and build log
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: wasaet-dhakiyah-v2-debug
           path: |
             bin/*.apk
-            build.log
+            ${{ steps.buildozer.outputs.filename }}
           retention-days: 30
