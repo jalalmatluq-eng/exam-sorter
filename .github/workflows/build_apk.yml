@@ -14,11 +14,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # Python 3.10 - fully compatible with buildozer 1.5.0 and Cython 0.29.x
-      - name: Setup Python 3.10
+      # Python 3.9 - same as WSL where buildozer works perfectly
+      - name: Setup Python 3.9
         uses: actions/setup-python@v5
         with:
-          python-version: "3.10"
+          python-version: "3.9"
 
       - name: Install ALL system build dependencies
         run: |
@@ -32,31 +32,30 @@ jobs:
             cmake libffi-dev libssl-dev build-essential \
             ccache python3-dev \
             libjpeg-dev libpng-dev \
-            lld python3-pip python3-venv
-          java -version
-          python3 --version
-          pip3 --version
+            lld
+          echo "JAVA:" && java -version
+          echo "PYTHON:" && python --version
+          echo "PIP:" && pip --version
 
       - name: Cache .buildozer directory
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: buildozer-v6-py310-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: buildozer-v6-py310-${{ runner.os }}-
+          key: buildozer-py39-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-py39-v1-${{ runner.os }}-
 
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-v6-py310-${{ runner.os }}
-          restore-keys: pip-v6-py310-
+          key: pip-py39-v1-${{ runner.os }}
+          restore-keys: pip-py39-v1-
 
-      - name: Install Buildozer, Cython and dependencies
+      - name: Install Buildozer and Cython
         run: |
           pip install --upgrade pip wheel setuptools
           pip install cython==0.29.37
           pip install buildozer==1.5.0
-          pip install virtualenv
           echo "=== Versions ==="
           buildozer version
           cython --version
@@ -64,28 +63,30 @@ jobs:
 
       - name: Verify project structure
         run: |
-          echo "=== buildozer.spec ==="
-          cat buildozer.spec
+          echo "=== buildozer.spec requirements ==="
+          grep "^requirements\|^title\|^package\|^version\|^android" buildozer.spec
           echo ""
-          echo "=== Key source files ==="
-          ls -la *.py
-          ls -la assets/
+          echo "=== Files ==="
+          ls *.py kv/ screens/ utils/ service/ assets/
 
       - name: Build debug APK
         run: |
           set -o pipefail
           yes "" | buildozer -v android debug 2>&1 | tee build.log
+          BUILD_EXIT=${PIPESTATUS[1]}
+          echo "Build exit code: $BUILD_EXIT"
+          exit $BUILD_EXIT
 
       - name: Show build result
         if: always()
         run: |
-          echo "=== LAST 100 LINES OF BUILD LOG ==="
-          tail -100 build.log 2>/dev/null || echo "No build.log"
+          echo "====== LAST 100 LINES OF BUILD LOG ======"
+          tail -100 build.log 2>/dev/null || echo "No build.log found"
           echo ""
-          echo "=== APK FILES ==="
-          find . -name "*.apk" 2>/dev/null || echo "No APK found"
+          echo "====== APK FILES ======"
+          find . -name "*.apk" 2>/dev/null && echo "APK GENERATED!" || echo "No APK found"
 
-      - name: Upload APK and logs
+      - name: Upload APK and build log
         uses: actions/upload-artifact@v4
         if: always()
         with:
