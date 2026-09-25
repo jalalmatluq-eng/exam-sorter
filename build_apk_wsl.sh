@@ -1,12 +1,27 @@
 #!/bin/bash
-# Build APK via WSL - Usage: wsl bash /mnt/d/exam-sorter/build_apk_wsl.sh
+# =============================================================
+# Build APK via WSL for Wasaet Dhakiyah v2.0.0
+# =============================================================
 set -e
+
 cd /mnt/d/exam-sorter
-echo Building APK...
-sudo apt-get update -qq
-sudo apt-get install -y git zip unzip openjdk-17-jdk autoconf libtool pkg-config zlib1g-dev libncurses5-dev cmake libffi-dev libssl-dev build-essential ccache python3-pip python3-dev python3-venv 2>/dev/null
-pip3 install --upgrade pip wheel --quiet
-pip3 install cython==0.29.37 --quiet
-pip3 install buildozer==1.5.0 --quiet
-buildozer -v android debug
-find bin/ -name "*.apk" 2>/dev/null && echo "APK ready!" || echo "No APK found"
+
+echo "=========================================="
+echo "  بدء بناء APK لتطبيق وسائط ذكية v2.0.0"
+echo "=========================================="
+
+# Build APK and pipe output to log file
+buildozer -v android debug 2>&1 | tee build_wsl.log
+
+echo "=========================================="
+echo "  فحص ملف الـ APK الناتج:"
+echo "=========================================="
+if ls bin/*.apk 1> /dev/null 2>&1; then
+    echo "تم إنشاء الـ APK بنجاح!"
+    ls -lh bin/*.apk
+    # نسخ الـ APK إلى المجلد الرئيسي ليسهل على المستخدم سحبه
+    cp bin/*.apk /mnt/d/exam-sorter/ 2>/dev/null || true
+    echo "تم نسخ الـ APK إلى: d:\exam-sorter\"
+else
+    echo "لم يتم العثور على APK بعد"
+fi
