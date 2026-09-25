@@ -29,8 +29,7 @@ jobs:
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev build-essential \
             ccache python3-dev \
-            libjpeg-dev libpng-dev \
-            lld
+            libjpeg-dev libpng-dev lld
           java -version
           python3 --version
 
@@ -38,45 +37,51 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: buildozer-v3-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: |
-            buildozer-v3-${{ runner.os }}-
+          key: buildozer-v5-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-v5-${{ runner.os }}-
 
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-v3-${{ runner.os }}-py311
-          restore-keys: pip-v3-${{ runner.os }}-
+          key: pip-v5-${{ runner.os }}-py311
+          restore-keys: pip-v5-${{ runner.os }}-
 
       - name: Install Buildozer and Cython
         run: |
           pip install --upgrade pip wheel setuptools
-          pip install buildozer==1.5.0 cython==0.29.36 virtualenv
+          # Cython < 3.0 is required by buildozer, but 0.29.36 fails on Python 3.11
+          # Use 0.29.37 which is the last 0.29.x with Python 3.11 wheel support
+          pip install "cython>=0.29.33,<3.0"
+          pip install buildozer==1.5.0 virtualenv
           buildozer version
+          cython --version
 
-      - name: Verify buildozer.spec
+      - name: Verify project structure
         run: |
           echo "=== buildozer.spec requirements ==="
           grep "^requirements" buildozer.spec
-          echo "=== Source files ==="
-          ls *.py kv/ screens/ utils/ service/ assets/
+          echo "=== Key source files ==="
+          ls -la *.py
+          ls -la kv/ screens/ utils/ service/ assets/
+          echo "=== Icon and presplash ==="
+          ls -lh assets/icon.png assets/presplash.png
 
       - name: Build debug APK
         run: |
           set -o pipefail
           buildozer -v android debug 2>&1 | tee build.log
-          echo "Exit code: $?"
 
-      - name: Check build result
+      - name: Show build result summary
         if: always()
         run: |
-          echo "=== Last 50 lines of build.log ==="
-          tail -50 build.log || echo "No build.log found"
-          echo "=== APK files ==="
-          find bin/ -name "*.apk" 2>/dev/null && echo "APK found!" || echo "No APK generated"
+          echo "=== LAST 80 LINES OF BUILD LOG ==="
+          tail -80 build.log 2>/dev/null || echo "No build.log found"
+          echo ""
+          echo "=== APK FILES ==="
+          find bin/ -name "*.apk" 2>/dev/null && echo "SUCCESS: APK generated!" || echo "No APK found"
 
-      - name: Upload APK and logs
+      - name: Upload APK and build log
         uses: actions/upload-artifact@v4
         if: always()
         with:
