@@ -8,6 +8,7 @@ on:
 jobs:
   build-apk:
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -27,32 +28,55 @@ jobs:
             autoconf libtool pkg-config \
             zlib1g-dev libncurses5-dev libncursesw5-dev \
             cmake libffi-dev libssl-dev build-essential \
-            ccache python3-dev
+            ccache python3-dev \
+            libjpeg-dev libpng-dev \
+            lld
+          java -version
+          python3 --version
 
       - name: Cache .buildozer directory
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: buildozer-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
-          restore-keys: buildozer-${{ runner.os }}-
+          key: buildozer-v3-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: |
+            buildozer-v3-${{ runner.os }}-
 
       - name: Cache pip packages
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: pip-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-          restore-keys: pip-${{ runner.os }}-
+          key: pip-v3-${{ runner.os }}-py311
+          restore-keys: pip-v3-${{ runner.os }}-
 
       - name: Install Buildozer and Cython
         run: |
-          pip install --upgrade pip wheel
+          pip install --upgrade pip wheel setuptools
           pip install buildozer==1.5.0 cython==0.29.36 virtualenv
+          buildozer version
+
+      - name: Verify buildozer.spec
+        run: |
+          echo "=== buildozer.spec requirements ==="
+          grep "^requirements" buildozer.spec
+          echo "=== Source files ==="
+          ls *.py kv/ screens/ utils/ service/ assets/
 
       - name: Build debug APK
         run: |
+          set -o pipefail
           buildozer -v android debug 2>&1 | tee build.log
+          echo "Exit code: $?"
 
-      - name: Upload APK artifact
+      - name: Check build result
+        if: always()
+        run: |
+          echo "=== Last 50 lines of build.log ==="
+          tail -50 build.log || echo "No build.log found"
+          echo "=== APK files ==="
+          find bin/ -name "*.apk" 2>/dev/null && echo "APK found!" || echo "No APK generated"
+
+      - name: Upload APK and logs
         uses: actions/upload-artifact@v4
         if: always()
         with:
