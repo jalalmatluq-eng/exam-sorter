@@ -137,12 +137,27 @@ class SettingsScreen(Screen):
 
         processed = result.get("processed_count", 0)
         total = result.get("total_unprocessed_found", 0)
+
+        # احضر إحصائيات التخزين الحديثة بعد الفحص
+        try:
+            import storage_utils
+            stats = storage_utils.get_storage_stats()
+            stats_text = (
+                f"\n\n📊 إحصائيات التخزين:\n"
+                f"- الملفات المنظمة: {stats['total_files']} ملف\n"
+                f"- الحجم الكلي: {stats['total_size_mb']} MB\n"
+                f"- الأقسام النشطة: {len(stats['categories'])}"
+            )
+        except Exception:
+            stats_text = ""
+
         _ = show_app_dialog(
             title="اكتمل الفحص الشامل",
             text=(
                 f"اكتملت دورة الفحص بنجاح!\n\n"
-                f"- الملفات الجديدة المفحوصة والمصنفة: {processed}\n"
+                f"- الملفات الجديدة المصنفة: {processed}\n"
                 f"- إجمالي الملفات المعالجة: {total}"
+                + stats_text
             )
         )
 
@@ -265,6 +280,43 @@ class SettingsScreen(Screen):
             title="تم التراجع الشامل",
             text=f"تم التراجع عن {count} ملف بنجاح وإلغاء نسخها، وملفاتك الأصلية بأمان تام في أماكنها."
         )
+
+    def find_duplicates_action(self) -> None:
+        """كشف الملفات المكررة داخل مجلدات التخزين وإعلام المستخدم"""
+        try:
+            import storage_utils
+            dupes = storage_utils.find_duplicate_files()
+            if not dupes:
+                _ = show_app_dialog(
+                    title="لا توجد مكررات ✓",
+                    text="ممتاز! لم يتم اكتشاف أي ملفات مكررة في مجلداتك المنظمة."
+                )
+            else:
+                total_dupes = sum(len(g) - 1 for g in dupes)
+                msg = f"تم اكتشاف {total_dupes} ملف مكرر في {len(dupes)} مجموعة.\n\nأمثلة:\n"
+                for group in dupes[:3]:
+                    msg += f"• {Path(group[0]).name}\n"
+                msg += "\nيمكنك حذفها يدوياً لتوفير المساحة."
+                _ = show_app_dialog(title="ملفات مكررة مكتشفة", text=msg)
+        except Exception as e:
+            _ = show_app_dialog(title="خطأ", text=f"تعذر فحص المكررات: {e}")
+
+    def show_storage_stats(self) -> None:
+        """عرض إحصائيات التخزين الشاملة"""
+        try:
+            import storage_utils
+            stats = storage_utils.get_storage_stats()
+            cats = stats.get("categories", {})
+            lines = [f"📁 الملفات المنظمة: {stats['total_files']} ملف"]
+            lines.append(f"💾 الحجم الكلي: {stats['total_size_mb']} MB")
+            lines.append(f"📂 الأقسام: {len(cats)}")
+            if cats:
+                lines.append("")
+                for name, info in sorted(cats.items(), key=lambda x: x[1]['count'], reverse=True)[:6]:
+                    lines.append(f"  • {name}: {info['count']} ملف ({info['size_mb']} MB)")
+            _ = show_app_dialog(title="إحصائيات التخزين الذكي", text="\n".join(lines))
+        except Exception as e:
+            _ = show_app_dialog(title="خطأ", text=f"تعذر جلب الإحصائيات: {e}")
 
     def go_back(self) -> None:
         app = self.get_app()

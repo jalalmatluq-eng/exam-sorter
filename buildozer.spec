@@ -1,13 +1,13 @@
 [app]
 
 # (str) Title of your application
-title = Exam Sorter
+title = وسائط ذكية
 
 # (str) Package name
-package.name = examsorter
+package.name = wasaetdhakiyah
 
 # (str) Package domain (needed for android/ios packaging)
-package.domain = org.examsorter
+package.domain = com.wasaet.smart
 
 # (str) Source code where the main.py lives
 source.dir = .
@@ -18,8 +18,12 @@ source.include_exts = py,png,jpg,jpeg,kv,atlas,ttf,otf,json,txt
 # (list) List of inclusions using pattern matching
 source.include_patterns = assets/*,assets/fonts/*,kv/*,screens/*,utils/*,service/*
 
+# (list) Source files to exclude (dev-only files)
+source.exclude_patterns = exam_sorter_prompt.md,exam_sorter_full_media_prompt.md,test_modules.py,pyrightconfig.json,.env.example,امثلة*/*
+source.exclude_dirs = .git,.venv,.idea,__pycache__,test_media_input,ExamSorter,MediaSorter,temp
+
 # (str) Application versioning (method 1)
-version = 1.0.0
+version = 2.0.0
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy

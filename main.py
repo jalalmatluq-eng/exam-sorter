@@ -52,7 +52,7 @@ if font_path and os.path.exists(font_path):
 class ExamSorterApp(MDApp):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.title = "Exam & Media Sorter - منظّم الوسائط والاختبارات"
+        self.title = "وسائط ذكية - AI Media Organizer"
         self.api_key = os.getenv("ANTHROPIC_API_KEY", "")
         self.arabic_font = font_path or "Roboto"
         self.batch_queue = []
