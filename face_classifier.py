@@ -27,8 +27,6 @@ from typing import Any
 import cv2
 import numpy as np
 
-import file_manager
-
 logger = logging.getLogger(__name__)
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.68
@@ -49,8 +47,7 @@ def get_profile_path() -> Path:
     except (ImportError, AttributeError, OSError) as exc:
         logger.debug("تعذر جلب user_data_dir من تطبيق Kivy: %s", exc)
 
-    profile_dir = file_manager.get_base_storage_path().parent
-    profile_dir.mkdir(parents=True, exist_ok=True)
+    profile_dir = Path(__file__).resolve().parent
     return profile_dir / PROFILE_FILENAME
 
 

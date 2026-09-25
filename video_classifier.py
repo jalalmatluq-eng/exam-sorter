@@ -29,7 +29,6 @@ import cv2
 import numpy as np
 
 import classifier
-import file_manager
 
 CATEGORY_FUNNY = "فيديوهات مضحكة"
 CATEGORY_LECTURE = "محاضرات وتعلم"

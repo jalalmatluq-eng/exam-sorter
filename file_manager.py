@@ -620,8 +620,14 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
 
     # تصفير قاعدة بيانات الكاش
     try:
-        import media_scanner
-        media_scanner.clear_all_cache()
+        cache_db = get_media_sorter_base_path() / "scanned_media_cache.db"
+        if cache_db.exists():
+            import sqlite3
+            conn = sqlite3.connect(str(cache_db))
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM scanned_files")
+            conn.commit()
+            conn.close()
     except Exception:
         pass
 
