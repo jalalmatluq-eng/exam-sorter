@@ -1,0 +1,24 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "include": [
+    "."
+  ],
+  "exclude": [
+    "**/node_modules",
+    "**/__pycache__",
+    ".venv",
+    ".git",
+    "temp",
+    "test_data",
+    "MediaSorter",
+    "test_media_input",
+    "امثلة*"
+  ],
+  "reportMissingTypeStubs": false,
+  "reportUnknownMemberType": false,
+  "reportUnknownArgumentType": false,
+  "reportUnknownVariableType": false,
+  "reportAny": false,
+  "reportExplicitAny": false
+}
