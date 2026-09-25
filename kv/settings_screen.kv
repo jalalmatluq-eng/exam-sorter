@@ -5,28 +5,28 @@
 
     MDBoxLayout:
         orientation: "vertical"
-        md_bg_color: 0.95, 0.96, 0.98, 1
+        md_bg_color: 0.976, 0.965, 0.945, 1
 
-        # شريط علوي
+        # شريط علوي أنيق بلون البيج والعاجي الفاخر
         MDTopAppBar:
             id: top_bar
             type: "small"
             theme_bg_color: "Custom"
-            md_bg_color: 0.22, 0.26, 0.68, 1
-            elevation: 3
+            md_bg_color: 0.957, 0.937, 0.902, 1
+            elevation: 1
 
             MDTopAppBarLeadingButtonContainer:
                 MDActionTopAppBarButton:
                     icon: "arrow-right"
                     theme_icon_color: "Custom"
-                    icon_color: 1, 1, 1, 1
+                    icon_color: 0.72, 0.42, 0.24, 1
                     on_release: root.go_back()
 
             MDTopAppBarTitle:
                 id: top_bar_title
                 text: app.ar("الإعدادات ومنظّم الوسائط")
                 theme_text_color: "Custom"
-                text_color: 1, 1, 1, 1
+                text_color: 0.20, 0.16, 0.14, 1
                 bold: True
 
         ScrollView:
@@ -45,9 +45,9 @@
                     height: dp(100)
                     radius: [20, 20, 20, 20]
                     padding: dp(16)
-                    elevation: 2
+                    elevation: 1
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 1, 1, 1
+                    md_bg_color: 1, 0.992, 0.980, 1
                     orientation: "horizontal"
                     spacing: dp(12)
 
@@ -57,7 +57,7 @@
                         font_size: "32sp"
                         pos_hint: {"center_y": 0.5}
                         theme_icon_color: "Custom"
-                        icon_color: 0.22, 0.26, 0.68, 1
+                        icon_color: 0.72, 0.42, 0.24, 1
 
                     MDBoxLayout:
                         orientation: "vertical"
@@ -70,14 +70,16 @@
                             bold: True
                             font_size: "14sp"
                             halign: "right"
-                            theme_text_color: "Primary"
+                            theme_text_color: "Custom"
+                            text_color: 0.20, 0.16, 0.14, 1
 
                         MDLabel:
                             id: service_desc
                             text: app.ar("فرز ونقل أي صورة أو فيديو جديد فور التقاطه أو تنزيله")
                             font_size: "11sp"
                             halign: "right"
-                            theme_text_color: "Secondary"
+                            theme_text_color: "Custom"
+                            text_color: 0.52, 0.46, 0.42, 1
 
                     MDButton:
                         id: btn_service_toggle
@@ -85,14 +87,18 @@
                         size_hint: None, None
                         size: dp(90), dp(40)
                         pos_hint: {"center_y": 0.5}
+                        theme_bg_color: "Custom"
+                        md_bg_color: 0.72, 0.42, 0.24, 1
                         on_release: root.toggle_service()
 
                         MDButtonText:
                             id: text_service_toggle
                             text: app.ar("تعمل")
                             bold: True
+                            theme_text_color: "Custom"
+                            text_color: 1, 1, 1, 1
 
-                # بطاقة الفحص اليدوي الفوري (Scan Now)
+                # بطاقة الفحص اليدوي الفوري (Scan Now) بلون البيج الكراميلي الفاخر
                 MDCard:
                     size_hint_y: None
                     height: dp(115)
@@ -100,7 +106,7 @@
                     padding: dp(16)
                     elevation: 2
                     theme_bg_color: "Custom"
-                    md_bg_color: 0.22, 0.26, 0.68, 1
+                    md_bg_color: 0.925, 0.885, 0.825, 1
                     orientation: "vertical"
                     spacing: dp(10)
 
@@ -113,31 +119,36 @@
                             bold: True
                             font_size: "14sp"
                             theme_text_color: "Custom"
-                            text_color: 1, 1, 1, 1
+                            text_color: 0.22, 0.17, 0.14, 1
                             halign: "right"
 
                         MDIcon:
                             icon: "folder-sync-outline"
                             theme_icon_color: "Custom"
-                            icon_color: 1.0, 0.85, 0.3, 1
+                            icon_color: 0.85, 0.52, 0.15, 1
                             font_size: "22sp"
                             size_hint_x: None
                             width: dp(26)
 
                     MDButton:
                         style: "filled"
-                        md_bg_color: 0.15, 0.65, 0.35, 1
+                        theme_bg_color: "Custom"
+                        md_bg_color: 0.72, 0.42, 0.24, 1
                         size_hint_y: None
                         height: dp(42)
                         on_release: root.start_manual_scan()
 
                         MDButtonIcon:
                             icon: "play-circle"
+                            theme_icon_color: "Custom"
+                            icon_color: 1, 1, 1, 1
 
                         MDButtonText:
                             id: btn_scan_text
                             text: app.ar("بدء الفحص الشامل للوسائط")
                             bold: True
+                            theme_text_color: "Custom"
+                            text_color: 1, 1, 1, 1
 
                 # بطاقة إدارة بصمة الوجه لصاحب الجهاز
                 MDCard:
@@ -147,7 +158,7 @@
                     padding: [dp(16), dp(10), dp(16), dp(10)]
                     elevation: 1
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 1, 1, 1
+                    md_bg_color: 1, 0.992, 0.980, 1
                     orientation: "horizontal"
                     spacing: dp(12)
 
@@ -156,7 +167,7 @@
                         font_size: "28sp"
                         pos_hint: {"center_y": 0.5}
                         theme_icon_color: "Custom"
-                        icon_color: 0.22, 0.26, 0.68, 1
+                        icon_color: 0.72, 0.42, 0.24, 1
 
                     MDBoxLayout:
                         orientation: "vertical"
@@ -168,25 +179,31 @@
                             bold: True
                             font_size: "13sp"
                             halign: "right"
-                            theme_text_color: "Primary"
+                            theme_text_color: "Custom"
+                            text_color: 0.20, 0.16, 0.14, 1
 
                         MDLabel:
                             id: face_card_status
                             text: app.ar("جاهزة للتعرف وتمييز صورك")
                             font_size: "11sp"
                             halign: "right"
-                            theme_text_color: "Secondary"
+                            theme_text_color: "Custom"
+                            text_color: 0.52, 0.46, 0.42, 1
 
                     MDButton:
                         style: "outlined"
                         size_hint: None, None
                         size: dp(100), dp(38)
                         pos_hint: {"center_y": 0.5}
+                        theme_bg_color: "Custom"
+                        md_bg_color: 1, 0.992, 0.980, 1
                         on_release: root.open_people_setup()
 
                         MDButtonText:
                             id: btn_edit_face_text
                             text: app.ar("تعديل البصمة")
+                            theme_text_color: "Custom"
+                            text_color: 0.72, 0.42, 0.24, 1
 
                 # عنوان قسم سجل عمليات النقل الأخيرة
                 MDBoxLayout:
@@ -201,10 +218,14 @@
 
                         MDButtonIcon:
                             icon: "refresh"
+                            theme_icon_color: "Custom"
+                            icon_color: 0.52, 0.40, 0.30, 1
 
                         MDButtonText:
                             id: refresh_history_text
                             text: app.ar("تحديث")
+                            theme_text_color: "Custom"
+                            text_color: 0.52, 0.40, 0.30, 1
 
                     MDButton:
                         style: "text"
@@ -214,13 +235,13 @@
                         MDButtonIcon:
                             icon: "undo-variant"
                             theme_icon_color: "Custom"
-                            icon_color: 0.85, 0.25, 0.2, 1
+                            icon_color: 0.85, 0.35, 0.25, 1
 
                         MDButtonText:
                             id: undo_all_text
                             text: app.ar("تراجع عن الكل")
                             theme_text_color: "Custom"
-                            text_color: 0.85, 0.25, 0.2, 1
+                            text_color: 0.85, 0.35, 0.25, 1
 
                     Widget:
 
@@ -230,7 +251,8 @@
                         bold: True
                         font_size: "13sp"
                         halign: "right"
-                        theme_text_color: "Primary"
+                        theme_text_color: "Custom"
+                        text_color: 0.20, 0.16, 0.14, 1
 
                     MDIcon:
                         icon: "history"
@@ -238,7 +260,7 @@
                         size_hint_x: None
                         width: dp(24)
                         theme_icon_color: "Custom"
-                        icon_color: 0.22, 0.26, 0.68, 1
+                        icon_color: 0.72, 0.42, 0.24, 1
 
                 # قائمة سجل العمليات
                 MDList:

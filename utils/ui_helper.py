@@ -20,29 +20,65 @@ from kivymd.uix.dialog import (
 )
 
 
+def get_category_icon_and_unit(name: str) -> tuple[str, tuple[float, float, float, float], str]:
+    """تحديد الأيقونة واللون ونوع المحتوى بذكاء بناءً على اسم المجلد"""
+    clean = name.strip()
+    if "فيديو" in clean or "مضحك" in clean:
+        return "emoticon-happy-outline", (0.82, 0.48, 0.22, 1), "مقطع فيديو مضحك"
+    elif "محاضر" in clean or "تعلم" in clean:
+        return "school-outline", (0.72, 0.44, 0.26, 1), "محاضرة تعليمية"
+    elif "فيلم" in clean or "مسلسل" in clean or "افلام" in clean:
+        return "movie-open-outline", (0.78, 0.40, 0.25, 1), "فيلم / مسلسل"
+    elif "أغاني" in clean or "اغاني" in clean or "اناشيد" in clean:
+        return "music-note-outline", (0.75, 0.48, 0.30, 1), "مقطع صوتي / أغنية"
+    elif "صوري" in clean:
+        return "account-heart-outline", (0.80, 0.42, 0.26, 1), "صورة شخصية"
+    elif "اصدقاء" in clean or "أصدقاء" in clean:
+        return "account-multiple-outline", (0.70, 0.45, 0.32, 1), "صورة للأصدقاء والإخوة"
+    elif "اختبار" in clean:
+        return "file-document-outline", (0.74, 0.42, 0.24, 1), "ورقة اختبار ومستند"
+    else:
+        # مادة دراسية جامعية (رياضيات، فيزياء، برمجة، إلخ)
+        return "book-open-page-variant-outline", (0.72, 0.44, 0.26, 1), "ورقة اختبار مسجلة"
+
+
 def create_subject_list_item(name: str, count: int, on_release_callback):
-    """إنشاء بطاقة مادة دراسية حديثة وفخمة متوافقة مع KivyMD 2"""
+    """إنشاء بطاقة مادة/مجلد حديثة وفخمة بتنسيق البيج الدافئ"""
+    icon, color, unit = get_category_icon_and_unit(name)
+    if count == 1:
+        sub_text = f"1 {unit}"
+    elif count == 2:
+        sub_text = f"2 {unit}"
+    elif count > 2:
+        sub_text = f"{count} {unit}"
+    else:
+        sub_text = f"0 {unit}"
+
     item = MDListItem(
         MDListItemLeadingIcon(
-            icon="folder-school",
+            icon=icon,
             theme_icon_color="Custom",
-            icon_color=(0.22, 0.26, 0.68, 1),
+            icon_color=color,
         ),
         MDListItemHeadlineText(
             text=ar(name),
             bold=True,
+            theme_text_color="Custom",
+            text_color=(0.20, 0.16, 0.14, 1),
         ),
         MDListItemSupportingText(
-            text=ar(f"{count} ورقة اختبار مسجلة"),
+            text=ar(sub_text),
+            theme_text_color="Custom",
+            text_color=(0.52, 0.45, 0.39, 1),
         ),
         MDListItemTrailingIcon(
             icon="chevron-left",
             theme_icon_color="Custom",
-            icon_color=(0.35, 0.40, 0.55, 1),
+            icon_color=(0.70, 0.62, 0.54, 1),
         ),
-        radius=[16, 16, 16, 16],
+        radius=[18, 18, 18, 18],
         theme_bg_color="Custom",
-        md_bg_color=(1, 1, 1, 1),
+        md_bg_color=(1, 0.992, 0.980, 1),
         on_release=on_release_callback,
     )
     return item

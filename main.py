@@ -63,17 +63,20 @@ class ExamSorterApp(MDApp):
 
     def build(self):
         """بناء التطبيق وضبط الواجهة والشاشات"""
-        # ضبط مظهر Material Design 3 العصري
-        self.theme_cls.primary_palette = "Indigo"
+        # ضبط مظهر Material Design 3 العصري بالبيج والعاجي الفاخر
+        self.theme_cls.primary_palette = "Brown"
         self.theme_cls.theme_style = "Light"
+        Window.clearcolor = (0.976, 0.965, 0.945, 1)
 
         # تنظيف الملفات المؤقتة القديمة عند بدء التشغيل
         import file_manager
         file_manager.cleanup_temp_files()
 
-        # محاكاة حجم شاشة الهاتف عند التشغيل على الحاسوب
+        # إعداد الحجم المريح والملائم على الحاسوب وشاشات الويب
         if platform not in ("android", "ios"):
-            Window.size = (412, 732)
+            Window.size = (420, 760)
+            Window.minimum_width = 340
+            Window.minimum_height = 500
 
         # طلب أذونات أندرويد عند بدء التشغيل
         if platform == "android":

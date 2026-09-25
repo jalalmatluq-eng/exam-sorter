@@ -34,13 +34,21 @@ class HomeScreen(Screen):
         """تطبيق إعادة التشكيل العربي على عناصر الشاشة الثابتة"""
         if hasattr(self, "ids"):
             if "top_bar_title" in self.ids:
-                self.ids.top_bar_title.text = ar("منظّم الوسائط والاختبارات")
+                self.ids.top_bar_title.text = ar("منظّم الوسائط الذكي")
             if "hero_title" in self.ids:
-                self.ids.hero_title.text = ar("لوحة التحكم والفرز الذكي")
+                self.ids.hero_title.text = ar("لوحة الفرز والتحكم الذكي")
             if "stats_title" in self.ids:
                 self.ids.stats_title.text = ar("المجلدات المنظمة")
             if "stats_exams_title" in self.ids:
                 self.ids.stats_exams_title.text = ar("إجمالي الملفات")
+            if "btn_quick_face_text" in self.ids:
+                self.ids.btn_quick_face_text.text = ar("بصمة وجهي")
+            if "btn_quick_scan_text" in self.ids:
+                self.ids.btn_quick_scan_text.text = ar("فحص فوري")
+            if "btn_quick_folder_text" in self.ids:
+                self.ids.btn_quick_folder_text.text = ar("المجلد")
+            if "btn_quick_clean_text" in self.ids:
+                self.ids.btn_quick_clean_text.text = ar("تنظيف")
             if "section_title" in self.ids:
                 self.ids.section_title.text = ar("الأقسام والمجلدات المنظمة")
             if "search_input" in self.ids:
@@ -120,6 +128,27 @@ class HomeScreen(Screen):
                 title="المجلدات سليمة",
                 text="لا توجد مجلدات فارغة، جميع مجلدات المواد منظمة وتحتوي على أوراق اختبار."
             )
+
+    def run_instant_scan(self):
+        """تشغيل فحص فوري وسريع للوسائط وتحديث القائمة"""
+        import media_scanner
+        from utils.ui_helper import show_app_dialog
+        try:
+            res = media_scanner.run_batch_scan(max_files=50)
+            processed = res.get("processed_count", 0)
+            self.refresh_subjects()
+            if processed > 0:
+                show_app_dialog(
+                    title="اكتمل الفحص الذكي",
+                    text=f"تم فحص وتصنيف {processed} ملف بنجاح وتنظيمها في مجلداتها المخصصة."
+                )
+            else:
+                show_app_dialog(
+                    title="الوسائط منظمة",
+                    text="تم فحص الذاكرة الداخلية بنجاح، وجميع الصور والفيديوهات مصنفة مسبقاً ولا توجد ملفات جديدة مفرزة."
+                )
+        except Exception as e:
+            show_app_dialog(title="تنبيه الفحص", text=f"حدث خطأ أثناء الفحص: {e}")
 
     def open_storage_folder(self):
         """فتح المجلد الرئيسي للتخزين في مستكشف ويندوز أو إظهار المسار على الهاتف"""

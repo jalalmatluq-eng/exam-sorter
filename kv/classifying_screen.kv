@@ -5,17 +5,22 @@
 
     MDBoxLayout:
         orientation: "vertical"
-        md_bg_color: 0.95, 0.96, 0.98, 1
+        md_bg_color: 0.976, 0.965, 0.945, 1
 
-        # شريط علوي أنيق
+        # شريط علوي أنيق بلون البيج والعاجي الفاخر
         MDTopAppBar:
             id: top_bar
-            elevation: 2
-            md_bg_color: 0.22, 0.30, 0.70, 1
+            type: "small"
+            theme_bg_color: "Custom"
+            md_bg_color: 0.957, 0.937, 0.902, 1
+            elevation: 1
 
             MDTopAppBarTitle:
                 id: top_bar_title
                 text: "جاري تحليل الورقة"
+                theme_text_color: "Custom"
+                text_color: 0.20, 0.16, 0.14, 1
+                bold: True
                 pos_hint: {"center_x": 0.5}
 
         MDBoxLayout:
@@ -32,13 +37,14 @@
                 height: dp(380)
                 pos_hint: {"center_x": 0.5}
                 radius: [28, 28, 28, 28]
-                elevation: 4
+                elevation: 2
                 padding: dp(28)
                 orientation: "vertical"
                 spacing: dp(20)
-                md_bg_color: 1, 1, 1, 1
+                theme_bg_color: "Custom"
+                md_bg_color: 1, 0.992, 0.980, 1
 
-                # شارة الذكاء الاصطناعي
+                # شارة الذكاء الاصطناعي بلون الكراميل الرملي
                 MDBoxLayout:
                     orientation: "horizontal"
                     size_hint: None, None
@@ -48,7 +54,7 @@
                     spacing: dp(8)
                     canvas.before:
                         Color:
-                            rgba: 0.90, 0.92, 1.0, 1
+                            rgba: 0.935, 0.895, 0.835, 1
                         RoundedRectangle:
                             pos: self.pos
                             size: self.size
@@ -58,8 +64,8 @@
                         icon: "auto-fix"
                         font_size: "18sp"
                         pos_hint: {"center_y": 0.5}
-                        theme_text_color: "Custom"
-                        text_color: 0.22, 0.30, 0.70, 1
+                        theme_icon_color: "Custom"
+                        icon_color: 0.72, 0.42, 0.24, 1
 
                     MDLabel:
                         id: ai_badge_label
@@ -69,19 +75,19 @@
                         halign: "center"
                         pos_hint: {"center_y": 0.5}
                         theme_text_color: "Custom"
-                        text_color: 0.22, 0.30, 0.70, 1
+                        text_color: 0.72, 0.42, 0.24, 1
 
                 Widget:
                     size_hint_y: 0.05
 
-                # مؤشر التحميل الدوار
+                # مؤشر التحميل الدوار بتنسيق التراكوتا والكراميل الدافئ
                 MDCircularProgressIndicator:
                     id: spinner
                     size_hint: None, None
-                    size: dp(72), dp(72)
+                    size: dp(64), dp(64)
                     pos_hint: {"center_x": 0.5}
                     active: True
-                    color: 0.22, 0.30, 0.70, 1
+                    color: 0.72, 0.42, 0.24, 1
 
                 Widget:
                     size_hint_y: 0.05
@@ -92,14 +98,16 @@
                     bold: True
                     font_size: "18sp"
                     halign: "center"
-                    theme_text_color: "Primary"
+                    theme_text_color: "Custom"
+                    text_color: 0.20, 0.16, 0.14, 1
 
                 MDLabel:
                     id: status_label
                     text: "قراءة الترويسة واستخراج اسم المادة عبر نموذج الذكاء الاصطناعي المتقدم"
                     font_size: "13sp"
                     halign: "center"
-                    theme_text_color: "Secondary"
+                    theme_text_color: "Custom"
+                    text_color: 0.52, 0.46, 0.42, 1
 
                 # خطوات المعالجة المرئية
                 MDBoxLayout:
@@ -114,7 +122,7 @@
                         font_size: "11sp"
                         halign: "center"
                         theme_text_color: "Custom"
-                        text_color: 0.25, 0.65, 0.35, 1
+                        text_color: 0.20, 0.65, 0.35, 1
 
                     MDLabel:
                         id: step2_label
@@ -122,7 +130,7 @@
                         font_size: "11sp"
                         halign: "center"
                         theme_text_color: "Custom"
-                        text_color: 0.22, 0.30, 0.70, 1
+                        text_color: 0.72, 0.42, 0.24, 1
 
             Widget:
                 size_hint_y: 0.15
@@ -133,14 +141,22 @@
                 style: "outlined"
                 pos_hint: {"center_x": 0.5}
                 size_hint_x: 0.6
+                radius: [14, 14, 14, 14]
+                theme_bg_color: "Custom"
+                md_bg_color: 1, 0.992, 0.980, 1
                 on_release: root.cancel_classification()
 
                 MDButtonIcon:
                     icon: "close-circle-outline"
+                    theme_icon_color: "Custom"
+                    icon_color: 0.52, 0.46, 0.42, 1
 
                 MDButtonText:
                     id: text_cancel
                     text: "إلغاء والعودة"
+                    theme_text_color: "Custom"
+                    text_color: 0.52, 0.46, 0.42, 1
+                    bold: True
 
             Widget:
                 size_hint_y: 0.1

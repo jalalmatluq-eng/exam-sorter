@@ -5,28 +5,28 @@
 
     MDBoxLayout:
         orientation: "vertical"
-        md_bg_color: 0.95, 0.96, 0.98, 1
+        md_bg_color: 0.976, 0.965, 0.945, 1
 
-        # شريط التطبيق العلوي
+        # شريط التطبيق العلوي بالبيج والعاجي الفاخر
         MDTopAppBar:
             id: top_bar
             type: "small"
             theme_bg_color: "Custom"
-            md_bg_color: 0.22, 0.26, 0.68, 1
-            elevation: 3
+            md_bg_color: 0.957, 0.937, 0.902, 1
+            elevation: 1
 
             MDTopAppBarLeadingButtonContainer:
                 MDActionTopAppBarButton:
                     icon: "arrow-right"
                     theme_icon_color: "Custom"
-                    icon_color: 1, 1, 1, 1
+                    icon_color: 0.72, 0.42, 0.24, 1
                     on_release: root.go_back()
 
             MDTopAppBarTitle:
                 id: top_bar_title
                 text: app.ar("إضافة ورقة اختبار")
                 theme_text_color: "Custom"
-                text_color: 1, 1, 1, 1
+                text_color: 0.20, 0.16, 0.14, 1
                 bold: True
 
         MDBoxLayout:
@@ -39,9 +39,9 @@
                 id: preview_card
                 size_hint: 1, 0.62
                 radius: [20, 20, 20, 20]
-                elevation: 2
+                elevation: 1
                 theme_bg_color: "Custom"
-                md_bg_color: 1, 1, 1, 1
+                md_bg_color: 1, 0.992, 0.980, 1
                 padding: dp(10)
 
                 FloatLayout:
@@ -65,7 +65,7 @@
                             font_size: "68sp"
                             halign: "center"
                             theme_icon_color: "Custom"
-                            icon_color: 0.22, 0.26, 0.68, 0.7
+                            icon_color: 0.72, 0.42, 0.24, 0.7
 
                         MDLabel:
                             id: placeholder_label
@@ -73,14 +73,16 @@
                             halign: "center"
                             bold: True
                             font_size: "16sp"
-                            theme_text_color: "Primary"
+                            theme_text_color: "Custom"
+                            text_color: 0.20, 0.16, 0.14, 1
 
                         MDLabel:
                             id: placeholder_hint
                             text: app.ar("اختر صورة واضحة لورقة الاختبار تحتوي على الترويسة")
                             halign: "center"
                             font_size: "12sp"
-                            theme_text_color: "Secondary"
+                            theme_text_color: "Custom"
+                            text_color: 0.52, 0.46, 0.42, 1
 
             # أزرار الإجراءات (كاميرا / معرض) بتصميم متناسق
             MDGridLayout:
@@ -93,29 +95,43 @@
                     id: btn_camera
                     style: "outlined"
                     size_hint_x: 0.5
+                    radius: [14, 14, 14, 14]
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1, 0.992, 0.980, 1
                     on_release: root.capture_from_camera()
 
                     MDButtonIcon:
                         icon: "camera"
+                        theme_icon_color: "Custom"
+                        icon_color: 0.72, 0.42, 0.24, 1
 
                     MDButtonText:
                         id: text_camera
                         text: app.ar("التقاط بالكاميرا")
                         bold: True
+                        theme_text_color: "Custom"
+                        text_color: 0.20, 0.16, 0.14, 1
 
                 MDButton:
                     id: btn_gallery
                     style: "outlined"
                     size_hint_x: 0.5
+                    radius: [14, 14, 14, 14]
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1, 0.992, 0.980, 1
                     on_release: root.pick_from_gallery()
 
                     MDButtonIcon:
                         icon: "image-multiple"
+                        theme_icon_color: "Custom"
+                        icon_color: 0.72, 0.42, 0.24, 1
 
                     MDButtonText:
                         id: text_gallery
                         text: app.ar("اختيار من المعرض")
                         bold: True
+                        theme_text_color: "Custom"
+                        text_color: 0.20, 0.16, 0.14, 1
 
             # زر المتابعة إلى التصنيف
             MDButton:
@@ -124,14 +140,21 @@
                 size_hint_y: None
                 height: dp(52)
                 size_hint_x: 1
+                radius: [16, 16, 16, 16]
                 disabled: True
                 pos_hint: {"center_x": 0.5}
+                theme_bg_color: "Custom"
+                md_bg_color: 0.72, 0.42, 0.24, 1
                 on_release: root.proceed_to_classify()
 
                 MDButtonIcon:
                     icon: "creation"
+                    theme_icon_color: "Custom"
+                    icon_color: 1, 1, 1, 1
 
                 MDButtonText:
                     id: text_proceed
                     text: app.ar("تحليل وتصنيف بالذكاء الاصطناعي")
                     bold: True
+                    theme_text_color: "Custom"
+                    text_color: 1, 1, 1, 1
