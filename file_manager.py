@@ -444,9 +444,10 @@ def _log_transfer_record(
     dest_path: str,
     category: str,
     file_size: int,
-    base_path: Path | None = None
+    base_path: Path | None = None,
+    is_copy: bool = True
 ) -> None:
-    """تسجيل عملية نقل في سجل المعاملات JSON"""
+    """تسجيل عملية نسخ/فرز في سجل المعاملات JSON"""
     log_file = get_transfer_log_path(base_path)
     records: list[dict[str, Any]] = []
     if log_file.exists():
@@ -462,16 +463,17 @@ def _log_transfer_record(
         "destination": dest_path,
         "category": category,
         "size_bytes": file_size,
+        "is_copy": is_copy,
         "timestamp": datetime.now().isoformat(),
     })
 
-    # الاحتفاظ بآخر 1000 عملية نقل
+    # الاحتفاظ بآخر 1000 عملية
     records = records[-1000:]
     try:
         with open(log_file, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print("تعذر تحديث سجل النقل:", e)
+        print("تعذر تحديث سجل العمليات:", e)
 
 
 def get_transfer_history(base_path: Path | None = None) -> list[dict[str, Any]]:
@@ -488,7 +490,12 @@ def get_transfer_history(base_path: Path | None = None) -> list[dict[str, Any]]:
 
 
 def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
-    """التراجع عن عملية نقل معينة وإعادة الملف إلى مكانه الأصلي"""
+    """
+    التراجع عن عملية تصنيف/نسخ معينة:
+    1. حذف النسخة من مجلد MediaSorter مع بقاء الملف الأصلي في مكانه دون مساس.
+    2. حذف السجل من transfer_history.json.
+    3. إزالة الملف من قاعدة بيانات التتبع scanned_media_cache.db لتمكين إعادة فحصه.
+    """
     log_file = get_transfer_log_path(base_path)
     if not log_file.exists():
         return False
@@ -513,29 +520,110 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
 
     dest = Path(target_record["destination"])
     src = Path(target_record["source"])
+    is_copy = target_record.get("is_copy", True)
 
-    if not dest.exists():
-        return False
+    # إذا كان الملف منسوخاً أو الأصل موجوداً بالفعل: نحذف النسخة من مجلد الفرز فقط
+    if is_copy or src.exists():
+        if dest.exists():
+            try:
+                dest.unlink()
+            except Exception as e:
+                print(f"تعذر حذف النسخة {dest}:", e)
+                return False
+    else:
+        # إذا كان منقولاً ولم يعد الأصل موجوداً، نعيد الملف إلى مكانه الأصلي
+        if dest.exists():
+            src.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(dest), str(src))
 
-    # إعادة الملف إلى مجلده الأصلي
-    src.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(str(dest), str(src))
-
-    # حذف السجل بعد التراجع عنه بنجاح
+    # حذف السجل
     records.pop(found_idx)
-    with open(log_file, "w", encoding="utf-8") as f:
-        json.dump(records, f, ensure_ascii=False, indent=2)
+    try:
+        with open(log_file, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+    # إزالة الملف من قاعدة بيانات التتبع المؤقتة
+    try:
+        import media_scanner
+        media_scanner.unrecord_processed_file(str(src), str(dest))
+    except Exception:
+        pass
 
     return True
 
 
-def move_to_category(src_path: str | Path, category_name: str, base_path: Path | None = None) -> Path:
+def undo_all_transfers(base_path: Path | None = None) -> int:
     """
-    نقل الملف فعلياً (Move) إلى مجلد التصنيف المحدد مع أعلى معايير الأمان:
-    1. إنشاء مجلد التصنيف إن لم يكن موجوداً (مع دعم المسارات الفرعية مثل 'صور اختبارات/رياضيات').
-    2. حل أي تعارض في الأسماء تلقائياً عبر إضافة ترقيم تسلسلي.
-    3. التحقق الحاسم: التأكد من نسخ الملف بالكامل وتطابق الحجم بالبايت قبل حذف الأصل.
-    4. توثيق العملية في سجل transfer_history.json لتمكين التراجع.
+    التراجع عن جميع عمليات النسخ/الفرز دفعة واحدة:
+    - حذف جميع النسخ التي أنشأها التطبيق في MediaSorter.
+    - تصفير سجل transfer_history.json.
+    - تصفير قاعدة بيانات scanned_media_cache.db.
+    يعيد عدد الملفات التي تم التراجع عنها.
+    """
+    log_file = get_transfer_log_path(base_path)
+    if not log_file.exists():
+        return 0
+
+    records: list[dict[str, Any]] = []
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            records = json.load(f)
+    except Exception:
+        return 0
+
+    undone_count = 0
+    for r in records:
+        dest = Path(r["destination"])
+        src = Path(r["source"])
+        is_copy = r.get("is_copy", True)
+
+        if is_copy or src.exists():
+            if dest.exists():
+                try:
+                    dest.unlink()
+                    undone_count += 1
+                except Exception:
+                    pass
+        else:
+            if dest.exists():
+                try:
+                    src.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(dest), str(src))
+                    undone_count += 1
+                except Exception:
+                    pass
+
+    # تفريغ ملف السجل
+    try:
+        with open(log_file, "w", encoding="utf-8") as f:
+            json.dump([], f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+    # تصفير قاعدة بيانات الكاش
+    try:
+        import media_scanner
+        media_scanner.clear_all_cache()
+    except Exception:
+        pass
+
+    return undone_count
+
+
+def copy_to_category(
+    src_path: str | Path,
+    category_name: str,
+    base_path: Path | None = None
+) -> Path:
+    """
+    نسخ الملف بأمان (Copy) إلى مجلد التصنيف المحدد مع الحفاظ التام على الملف الأصلي:
+    1. إنشاء مجلد التصنيف إن لم يكن موجوداً.
+    2. حل أي تعارض في الأسماء تلقائياً عبر إضافة ترقيم تسلسلي (مع تخطي النسخ إن كان نفس الملف منسوخاً مسبقاً بنفس الحجم).
+    3. التحقق الحاسم من اكتمال النسخ وتطابق الحجم بالبايت.
+    4. الحفاظ على الملف المصدر دون حذفه لحماية ملفات المستخدم 100%.
+    5. توثيق العملية في transfer_history.json لتمكين التراجع الفوري.
     """
     src = Path(src_path).resolve()
     if not src.exists() or not src.is_file():
@@ -543,7 +631,6 @@ def move_to_category(src_path: str | Path, category_name: str, base_path: Path |
 
     target_base = base_path if base_path is not None else get_media_sorter_base_path()
 
-    # دعم المجلدات والمجلدات الفرعية مع الحفاظ على تنظيف كل جزء
     clean_parts = [
         sanitize_folder_name(p)
         for p in str(category_name).replace("\\", "/").split("/")
@@ -556,35 +643,62 @@ def move_to_category(src_path: str | Path, category_name: str, base_path: Path |
 
     stem = src.stem
     suffix = src.suffix
+    src_size = src.stat().st_size
+
+    # إذا كان الملف موجوداً مسبقاً في الوجهة وبنفس الحجم تماماً، لا داعي لتكرار نسخه
+    primary_dest = target_folder / f"{stem}{suffix}"
+    if primary_dest.exists() and primary_dest.stat().st_size == src_size:
+        _log_transfer_record(str(src), str(primary_dest), category_name, src_size, base_path=target_base, is_copy=True)
+        return primary_dest
 
     # حل تعارض الأسماء
-    dest = target_folder / f"{stem}{suffix}"
+    dest = primary_dest
     counter = 1
     while dest.exists():
+        if dest.stat().st_size == src_size:
+            _log_transfer_record(str(src), str(dest), category_name, src_size, base_path=target_base, is_copy=True)
+            return dest
         dest = target_folder / f"{stem}_{counter:02d}{suffix}"
         counter += 1
 
-    src_size = src.stat().st_size
-
-    # خطوة النقل الآمن: نسخ مطابق للأصل أولاً
+    # خطوة النسخ المطابق (shutil.copy2) مع الحفاظ التام على الأصل
     shutil.copy2(src, dest)
 
-    # فحص السلامة الصارم قبل أي حذف
+    # التحقق الحاسم: التأكد من اكتمال النسخ وتطابق الحجم
     if not dest.exists():
-        raise IOError(f"فشل التحقق: الملف الوجهة غير موجود بعد النقل: {dest}")
+        raise IOError(f"فشل التحقق: الملف الوجهة غير موجود بعد النسخ: {dest}")
 
     dest_size = dest.stat().st_size
     if dest_size != src_size:
-        # خلل في اكتمال النقل - نحذف الملف الناقص ونحافظ على الأصل دون مساس
         dest.unlink(missing_ok=True)
-        raise IOError(f"فشل التحقق: عدم تطابق الحجم (المصدر: {src_size} بايت، الوجهة: {dest_size} بايت). لم يتم حذف الأصل.")
+        raise IOError(f"فشل التحقق: عدم تطابق الحجم بعد النسخ (المصدر: {src_size} بايت، الوجهة: {dest_size} بايت)")
 
-    # تم التحقق بنجاح 100%: حذف الملف المصدر
+    # توثيق العملية كنسخة آمنة
+    _log_transfer_record(str(src), str(dest), category_name, src_size, base_path=target_base, is_copy=True)
+
+    return dest
+
+
+def move_to_category(
+    src_path: str | Path,
+    category_name: str,
+    base_path: Path | None = None,
+    copy_only: bool = True
+) -> Path:
+    """
+    نقل أو نسخ الملف إلى مجلد التصنيف المحدد.
+    الافتراضي الآن هو النسخ الآمن (copy_only=True) للحفاظ التام على أصول المستخدم من أي تلف أو فقدان.
+    """
+    if copy_only:
+        return copy_to_category(src_path, category_name, base_path=base_path)
+
+    # النقل مع الحذف (في حال طُلب صراحة):
+    src = Path(src_path).resolve()
+    if not src.exists() or not src.is_file():
+        raise FileNotFoundError(f"الملف المصدر غير موجود: {src}")
+
+    dest = copy_to_category(src, category_name, base_path=base_path)
     src.unlink()
-
-    # توثيق العملية في السجل الخاص بنفس مسار الوجهة
-    _log_transfer_record(str(src), str(dest), category_name, src_size, base_path=target_base)
-
     return dest
 
 

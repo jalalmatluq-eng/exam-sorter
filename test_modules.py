@@ -203,18 +203,18 @@ def test_media_scanner_and_rollback():
     file1.write_bytes(b"TEST_VIDEO_DATA_FOR_VERIFICATION_BYTES_123456789")
     size_before = file1.stat().st_size
 
-    # فحص النقل الآمن
+    # فحص النسخ الآمن
     dest_path = file_manager.move_to_category(
         src_path=str(file1),
         category_name="فيديوهات مضحكة",
         base_path=dest_dir
     )
 
-    assert not file1.exists(), "الملف المصدر لم يُحذف بعد التحقق من سلامة الوجهة!"
+    assert file1.exists(), "الملف المصدر يجب أن يظل موجوداً وسليماً في وضع النسخ الآمن!"
     dest_file = Path(dest_path)
-    assert dest_file.exists(), "الملف النهائي غير موجود في الوجهة!"
+    assert dest_file.exists(), "الملف النهائي المنسوخ غير موجود في الوجهة!"
     assert dest_file.stat().st_size == size_before, "حجم الملف في الوجهة لا يتطابق مع المصدر بالبايت!"
-    print("✓ تم النقل بأمان مع التحقق الدقيق من الحجم بالبايت.")
+    print("✓ تم النسخ بأمان مع الحفاظ التام على الملف الأصلي والتحقق من الحجم بالبايت.")
 
     # فحص السجل والتراجع (Rollback) في بيئة معزولة
     history = file_manager.get_transfer_history(base_path=dest_dir)
@@ -223,10 +223,9 @@ def test_media_scanner_and_rollback():
 
     undo_ok = file_manager.undo_transfer(rec_id, base_path=dest_dir)
     assert undo_ok, "فشلت عملية التراجع عن النقل!"
-    assert file1.exists(), "الملف لم يعد إلى مكانه الأصلي بعد التراجع!"
-    assert not dest_file.exists(), "الملف المنقول لم يُحذف من الوجهة بعد التراجع!"
-    assert file1.stat().st_size == size_before, "حجم الملف المستعاد غير مطابق!"
-    print(f"✓ تم التراجع بنجاح وإعادة الملف لمكانه الأصلي بدقة 100% (ID: {rec_id}).")
+    assert file1.exists(), "الملف الأصلي يجب أن يظل في مكانه دون مساس!"
+    assert not dest_file.exists(), "النسخة المفرزة لم تُحذف من الوجهة بعد التراجع!"
+    print(f"✓ تم التراجع بنجاح وحذف النسخة بدقة 100% مع بقاء الأصل (ID: {rec_id}).")
 
     # تنظيف
     shutil.rmtree(sandbox)

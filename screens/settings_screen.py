@@ -221,7 +221,7 @@ class SettingsScreen(Screen):
             theme_text_color="Primary"
         )
         cat_label = MDLabel(
-            text=ar(f"نُقل إلى: {category}"),
+            text=ar(f"نُسخ إلى: {category}"),
             font_size="10sp",
             halign="right",
             theme_text_color="Custom",
@@ -235,19 +235,36 @@ class SettingsScreen(Screen):
         return card
 
     def undo_record(self, record_id: int) -> None:
-        """التراجع عن عملية نقل معينة"""
+        """التراجع عن عملية نسخ معينة وإلغاء تصنيفها"""
         success = file_manager.undo_transfer(record_id)
         if success:
             self.refresh_history()
             _ = show_app_dialog(
                 title="تم التراجع",
-                text="تمت إعادة الملف بنجاح إلى مكانه الأصلي وإلغاء النقل."
+                text="تم حذف النسخة بنجاح من مجلد التصنيف، وملفك الأصلي باقٍ في مكانه دون أي مساس."
             )
         else:
             _ = show_app_dialog(
                 title="تعذر التراجع",
-                text="تعذر العثور على الملف المنقول أو ربما تم حذفه مسبقاً."
+                text="تعذر العثور على النسخة أو ربما تم حذفها مسبقاً."
             )
+
+    def undo_all_records(self) -> None:
+        """التراجع عن كافة عمليات الفرز والنسخ بنقرة واحدة"""
+        history = file_manager.get_transfer_history()
+        if not history:
+            _ = show_app_dialog(
+                title="السجل فارغ",
+                text="لا توجد أي عمليات حالية للتراجع عنها."
+            )
+            return
+
+        count = file_manager.undo_all_transfers()
+        self.refresh_history()
+        _ = show_app_dialog(
+            title="تم التراجع الشامل",
+            text=f"تم التراجع عن {count} ملف بنجاح وإلغاء نسخها، وملفاتك الأصلية بأمان تام في أماكنها."
+        )
 
     def go_back(self) -> None:
         app = self.get_app()

@@ -97,6 +97,38 @@ def record_processed_file(file_path: str, file_size: int, mtime: float, category
         print("خطأ أثناء تسجيل الملف المفحوص:", e)
 
 
+def unrecord_processed_file(file_path: str, dest_path: str | None = None) -> None:
+    """إزالة الملف من قاعدة بيانات التتبع عند التراجع عنه لإتاحة فحصه مجدداً"""
+    try:
+        db_path = get_cache_db_path()
+        if not db_path.exists():
+            return
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM scanned_files WHERE file_path = ?", (file_path,))
+        if dest_path:
+            cursor.execute("DELETE FROM scanned_files WHERE file_path = ?", (dest_path,))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def clear_all_cache() -> None:
+    """مسح كامل سجل التتبع المؤقت لتمكين إعادة الفحص الشامل"""
+    try:
+        db_path = get_cache_db_path()
+        if not db_path.exists():
+            return
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM scanned_files")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def scan_storage_roots() -> list[Path]:
     """
     استكشاف جميع جذور التخزين القابلة للفحص:
@@ -361,11 +393,12 @@ def process_one_file(file_path: str | Path, api_key: str | None = None) -> dict[
         target_category = v_cat
         detected_details = f"تصنيف فيديو: {v_cat}"
 
-    # =========================================================================
-    # تنفيذ النقل الفعلي المحمي مع التحقق الصارم من الحجم
+    # تنفيذ النسخ الآمن المحمي مع الحفاظ على الملف الأصلي والتحقق الصارم من الحجم
     # =========================================================================
     try:
         dest_path = file_manager.move_to_category(p, target_category)
+        # تسجيل مسار الملف الأصلي ومسار النسخة لمنع تكرار النسخ في الفحوصات اللاحقة
+        record_processed_file(str(p), orig_size, orig_mtime, target_category)
         record_processed_file(str(dest_path), orig_size, orig_mtime, target_category)
         return {
             "success": True,
@@ -375,7 +408,7 @@ def process_one_file(file_path: str | Path, api_key: str | None = None) -> dict[
             "details": detected_details
         }
     except Exception as e:
-        print(f"فشل نقل الملف {p}:", e)
+        print(f"فشل نسخ الملف {p}:", e)
         return {
             "success": False,
             "source": str(p),

@@ -206,6 +206,22 @@
                             id: refresh_history_text
                             text: app.ar("تحديث")
 
+                    MDButton:
+                        style: "text"
+                        size_hint_y: 1
+                        on_release: root.undo_all_records()
+
+                        MDButtonIcon:
+                            icon: "undo-variant"
+                            theme_icon_color: "Custom"
+                            icon_color: 0.85, 0.25, 0.2, 1
+
+                        MDButtonText:
+                            id: undo_all_text
+                            text: app.ar("تراجع عن الكل")
+                            theme_text_color: "Custom"
+                            text_color: 0.85, 0.25, 0.2, 1
+
                     Widget:
 
                     MDLabel:
