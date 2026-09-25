@@ -151,13 +151,14 @@ def test_face_classifier():
     assert abs(sim_self - 1.0) < 1e-4, f"تشابه الوجه مع نفسه يجب أن يكون 1.0 ولكن وجد: {sim_self}"
     print("✓ تم التحقق من حساب جيب التمام بنجاح (تشابه تام = 1.0).")
 
-    # 3. فحص إنشاء وحفظ وتحديث الملف الشخصي
-    profile = face_classifier.build_and_save_profile([emb1, emb1], profile_path=profile_path)
+    # 3. فحص إنشاء وحفظ وتحديث الملف الشخصي من صورة واحدة (Single Image Enrollment)
+    profile = face_classifier.build_and_save_profile([emb1], profile_path=profile_path)
     assert profile is not None and "mean_embedding" in profile
+    assert profile["sample_count"] == 1, "يجب أن يدعم التدريب من صورة واحدة مرجعية!"
     assert profile_path.exists(), "لم يتم حفظ ملف البصمة!"
     loaded_profile = face_classifier.load_user_face_profile(profile_path=profile_path)
-    assert loaded_profile is not None
-    print("✓ تم حفظ وتحميل ملف البصمة بنجاح.")
+    assert loaded_profile is not None and loaded_profile.get("sample_count") == 1
+    print("✓ تم بنجاح إنشاء واعتماد بصمة الوجه من صورة واحدة مرجعية (Single-Photo Enrollment).")
 
     # تنظيف
     shutil.rmtree(sandbox)

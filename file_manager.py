@@ -401,26 +401,42 @@ def open_folder_native(folder_path: str) -> bool:
 # =========================================================================
 
 def get_media_sorter_base_path() -> Path:
-    """تحديد المسار الأساسي الموحد لجميع مجلدات مُنظّم الوسائط (MediaSorter) مع دعم بطاقات الذاكرة الخارجية SD Card"""
+    """تحديد المسار الأساسي الموحد لجميع مجلدات مُنظّم الوسائط (MediaSorter) على الذاكرة الخارجية SD Card أولاً"""
     try:
         from kivy.utils import platform
         if platform == "android":
             # 1. التحقق أولاً من وجود بطاقة ذاكرة خارجية MicroSD متاحة وقابلة للكتابة
-            storage_dir = Path("/storage")
-            if storage_dir.exists():
-                for item in storage_dir.iterdir():
-                    if item.is_dir() and item.name not in ("emulated", "self", "knox"):
-                        candidate = item / "MediaSorter"
-                        try:
-                            candidate.mkdir(parents=True, exist_ok=True)
-                            test_file = candidate / ".write_test"
-                            test_file.touch()
-                            test_file.unlink()
-                            return candidate
-                        except (PermissionError, OSError):
-                            pass
+            search_roots = [Path("/storage"), Path("/mnt/media_rw")]
+            for s_dir in search_roots:
+                if s_dir.exists() and s_dir.is_dir():
+                    try:
+                        for item in s_dir.iterdir():
+                            # استبعاد الذاكرة الداخلية ومجلدات النظام
+                            if item.is_dir() and item.name not in ("emulated", "self", "knox", "sdcard0"):
+                                candidate = item / "MediaSorter"
+                                try:
+                                    candidate.mkdir(parents=True, exist_ok=True)
+                                    test_file = candidate / ".write_test"
+                                    test_file.touch()
+                                    test_file.unlink()
+                                    return candidate
+                                except (PermissionError, OSError):
+                                    pass
+                    except (PermissionError, OSError):
+                        pass
 
-            # 2. المسار الأساسي في وحدة التخزين المشتركة
+            # 2. فحص مسار بطاقة الذاكرة الخارجية الشائع sdcard1
+            sdcard1 = Path("/storage/sdcard1/MediaSorter")
+            try:
+                sdcard1.mkdir(parents=True, exist_ok=True)
+                test_file = sdcard1 / ".write_test"
+                test_file.touch()
+                test_file.unlink()
+                return sdcard1
+            except (PermissionError, OSError):
+                pass
+
+            # 3. في حال عدم توفر بطاقة ذاكرة خارجية، يتم الحفظ في الذاكرة المشتركة كخيار بديل آمن
             base = Path("/storage/emulated/0/MediaSorter")
             base.mkdir(parents=True, exist_ok=True)
             return base

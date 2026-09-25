@@ -44,9 +44,9 @@ class PeopleSetupScreen(Screen):
             if "header_title" in self.ids:
                 self.ids.header_title.text = ar("التعرف على صاحب الجهاز")
             if "header_subtitle" in self.ids:
-                self.ids.header_subtitle.text = ar("أضف 3 إلى 5 صور واضحة لوجهك في ظروف إضاءة وزوايا مختلفة لتمييز صورك عن صور الزملاء.")
+                self.ids.header_subtitle.text = ar("أضف صورة أو أكثر (1 إلى 5 صور) واضحة لوجهك لتمييز صورك عن صور الإخوة والأصدقاء.")
             if "photos_section_title" in self.ids:
-                self.ids.photos_section_title.text = ar("صور وجهك المرجعية (3 - 5 صور)")
+                self.ids.photos_section_title.text = ar("صور وجهك المرجعية (1 - 5 صور)")
             if "btn_gallery_text" in self.ids:
                 self.ids.btn_gallery_text.text = ar("من المعرض")
             if "btn_camera_text" in self.ids:
@@ -101,7 +101,7 @@ class PeopleSetupScreen(Screen):
             root_tk.withdraw()
             root_tk.attributes("-topmost", True)
             paths = filedialog.askopenfilenames(
-                title="اختر صوراً لوجهك (3 إلى 5)",
+                title="اختر صوراً لوجهك (1 إلى 5)",
                 filetypes=[("Image files", "*.jpg;*.jpeg;*.png;*.webp"), ("All files", "*.*")]
             )
             root_tk.destroy()
@@ -161,10 +161,10 @@ class PeopleSetupScreen(Screen):
 
     def train_and_save(self):
         """تدريب وحفظ بصمة الوجه المرجعية مع العتبة المحددة"""
-        if len(self.selected_paths) < 3:
+        if len(self.selected_paths) < 1:
             show_app_dialog(
                 title="تنبيه",
-                text="يشترط اختيار أو التقاط 3 صور واضحة لوجهك على الأقل (ويفضل 3-5 صور بزوايا وإضاءات مختلفة) لتكوين بصمة دقيقة."
+                text="يرجى اختيار أو التقاط صورة واحدة على الأقل لوجهك (ويمكنك إضافة حتى 5 صور لزيادة دقة التعرف)."
             )
             return
 

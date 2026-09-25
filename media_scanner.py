@@ -131,25 +131,18 @@ def clear_all_cache() -> None:
 
 def scan_storage_roots() -> list[Path]:
     """
-    استكشاف جميع جذور التخزين القابلة للفحص:
-    - على أندرويد: الذاكرة الداخلية المشتركة (/storage/emulated/0) وبطاقات الذاكرة الخارجية SD.
+    استكشاف جذور التخزين القابلة للفحص:
+    - على أندرويد: الذاكرة الداخلية المشتركة فقط (/storage/emulated/0) طبقاً لشرط الفحص الصارم.
     - على الحاسوب: مجلدات المستخدم الافتراضية للوسائط ومجلد اختباري للمشروع.
     """
     roots: list[Path] = []
     try:
         from kivy.utils import platform
         if platform == "android":
-            # 1. الذاكرة الداخلية المشتركة
+            # فحص ملفات الذاكرة الداخلية فقط حسب شرط المستخدم الدقيق
             internal_root = Path("/storage/emulated/0")
             if internal_root.exists():
                 roots.append(internal_root)
-
-            # 2. فحص بطاقات الذاكرة الخارجية في /storage
-            storage_dir = Path("/storage")
-            if storage_dir.exists():
-                for item in storage_dir.iterdir():
-                    if item.is_dir() and item.name not in ("emulated", "self", "knox"):
-                        roots.append(item)
             return roots
     except Exception:
         pass

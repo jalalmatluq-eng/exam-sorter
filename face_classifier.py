@@ -22,6 +22,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from typing import Any
 
 import cv2
 import numpy as np
@@ -53,7 +54,7 @@ def get_profile_path() -> Path:
     return profile_dir / PROFILE_FILENAME
 
 
-def _load_cascade(xml_name: str) -> cv2.CascadeClassifier | None:
+def _load_cascade(xml_name: str) -> Any | None:
     """تحميل مصنف Haar Cascade من مسارات OpenCV المدمجة بأمان فائق"""
     try:
         if not hasattr(cv2, "CascadeClassifier"):
@@ -281,11 +282,11 @@ def save_user_face_profile(image_paths: list[str], threshold: float = DEFAULT_SI
             emb_list: list[float] = [float(x) for x in emb.tolist()]
             valid_embeddings.append(emb_list)
 
-    if len(valid_embeddings) < 3:
+    if len(valid_embeddings) < 1:
         return {
             "success": False,
-            "count": len(valid_embeddings),
-            "message": f"تم كشف {len(valid_embeddings)} وجه واضح فقط من الصور المحددة. يشترط كشف 3 وجوه واضحة على الأقل (ويفضل 3-5) بزوايا وإضاءات مختلفة لتدريب بصمة دقيقة."
+            "count": 0,
+            "message": "لم يتم كشف أي وجه بشري واضح في الصور المحددة. يرجى اختيار أو التقاط صورة واضحة لوجهك."
         }
 
     # حساب المتوسط التراكمي (Centroid) للبصمات المرجعية
@@ -308,10 +309,16 @@ def save_user_face_profile(image_paths: list[str], threshold: float = DEFAULT_SI
     with open(target_file, "w", encoding="utf-8") as f:
         json.dump(profile_data, f, ensure_ascii=False, indent=2)
 
+    success_msg = (
+        f"تم حفظ بصمة وجهك بنجاح من {len(valid_embeddings)} صور مرجعية!"
+        if len(valid_embeddings) > 1
+        else "تم حفظ بصمة وجهك بنجاح من صورتك المرجعية!"
+    )
+
     return {
         "success": True,
         "count": len(valid_embeddings),
-        "message": f"تم حفظ بصمة وجهك بنجاح من {len(valid_embeddings)} صور مرجعية!"
+        "message": success_msg
     }
 
 
