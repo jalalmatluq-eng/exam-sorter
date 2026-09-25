@@ -1,15 +1,35 @@
-﻿# -*- coding: utf-8 -*-
+from __future__ import annotations
+
 import hashlib
 import sqlite3
 from pathlib import Path
+from typing import TypedDict
+
 import file_manager
 
 MEDIA_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"}
 
 
-def get_storage_stats(base_path=None):
+class CategoryInfo(TypedDict):
+    count: int
+    size_mb: float
+
+
+class StorageStats(TypedDict):
+    total_files: int
+    total_size_mb: float
+    categories: dict[str, CategoryInfo]
+    last_scan_time: float | None
+
+
+def get_storage_stats(base_path: Path | None = None) -> StorageStats:
     base = base_path or file_manager.get_media_sorter_base_path()
-    stats = {"total_files": 0, "total_size_mb": 0.0, "categories": {}, "last_scan_time": None}
+    stats: StorageStats = {
+        "total_files": 0,
+        "total_size_mb": 0.0,
+        "categories": {},
+        "last_scan_time": None,
+    }
     if not base.exists():
         return stats
     total_bytes = 0
@@ -27,7 +47,10 @@ def get_storage_stats(base_path=None):
                 except OSError:
                     continue
         if cat_count > 0:
-            stats["categories"][cat_dir.name] = {"count": cat_count, "size_mb": round(cat_bytes / 1048576, 2)}
+            stats["categories"][cat_dir.name] = {
+                "count": cat_count,
+                "size_mb": round(cat_bytes / 1048576, 2),
+            }
     stats["total_files"] = sum(c["count"] for c in stats["categories"].values())
     stats["total_size_mb"] = round(total_bytes / 1048576, 2)
     try:
@@ -38,14 +61,14 @@ def get_storage_stats(base_path=None):
             conn.close()
             if row and row[0]:
                 stats["last_scan_time"] = float(row[0])
-    except Exception:
+    except (sqlite3.Error, OSError, ValueError):
         pass
     return stats
 
 
-def find_duplicate_files(base_path=None):
+def find_duplicate_files(base_path: Path | None = None) -> list[list[str]]:
     base = base_path or file_manager.get_media_sorter_base_path()
-    hash_map = {}
+    hash_map: dict[str, list[str]] = {}
     if not base.exists():
         return []
     for f in base.rglob("*"):
@@ -58,9 +81,9 @@ def find_duplicate_files(base_path=None):
             with open(f, "rb") as fp:
                 h.update(fp.read(chunk))
                 if sz > 131072:
-                    fp.seek(-chunk, 2)
+                    _ = fp.seek(-chunk, 2)
                     h.update(fp.read(chunk))
-            key = str(sz) + "_" + h.hexdigest()
+            key = f"{sz}_{h.hexdigest()}"
             if key not in hash_map:
                 hash_map[key] = []
             hash_map[key].append(str(f))

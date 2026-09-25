@@ -15,6 +15,11 @@
     "test_media_input",
     "امثلة*"
   ],
+  "ignore": [
+    ".venv",
+    "**/.venv/**",
+    "**/site-packages/**"
+  ],
   "reportMissingTypeStubs": false,
   "reportUnknownMemberType": false,
   "reportUnknownArgumentType": false,

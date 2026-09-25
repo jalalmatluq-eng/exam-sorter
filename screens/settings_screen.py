@@ -139,26 +139,28 @@ class SettingsScreen(Screen):
         total = result.get("total_unprocessed_found", 0)
 
         # احضر إحصائيات التخزين الحديثة بعد الفحص
+        stats_text = ""
         try:
             import storage_utils
             stats = storage_utils.get_storage_stats()
+            cats_count = len(stats["categories"])
             stats_text = (
                 f"\n\n📊 إحصائيات التخزين:\n"
                 f"- الملفات المنظمة: {stats['total_files']} ملف\n"
                 f"- الحجم الكلي: {stats['total_size_mb']} MB\n"
-                f"- الأقسام النشطة: {len(stats['categories'])}"
+                f"- الأقسام النشطة: {cats_count}"
             )
-        except Exception:
+        except (KeyError, ValueError, OSError, RuntimeError):
             stats_text = ""
 
+        result_message = (
+            f"اكتملت دورة الفحص بنجاح!\n\n"
+            f"- الملفات الجديدة المصنفة: {processed}\n"
+            f"- إجمالي الملفات المعالجة: {total}{stats_text}"
+        )
         _ = show_app_dialog(
             title="اكتمل الفحص الشامل",
-            text=(
-                f"اكتملت دورة الفحص بنجاح!\n\n"
-                f"- الملفات الجديدة المصنفة: {processed}\n"
-                f"- إجمالي الملفات المعالجة: {total}"
-                + stats_text
-            )
+            text=result_message
         )
 
     def refresh_history(self) -> None:
@@ -298,7 +300,7 @@ class SettingsScreen(Screen):
                     msg += f"• {Path(group[0]).name}\n"
                 msg += "\nيمكنك حذفها يدوياً لتوفير المساحة."
                 _ = show_app_dialog(title="ملفات مكررة مكتشفة", text=msg)
-        except Exception as e:
+        except (OSError, RuntimeError, ValueError) as e:
             _ = show_app_dialog(title="خطأ", text=f"تعذر فحص المكررات: {e}")
 
     def show_storage_stats(self) -> None:
@@ -306,16 +308,21 @@ class SettingsScreen(Screen):
         try:
             import storage_utils
             stats = storage_utils.get_storage_stats()
-            cats = stats.get("categories", {})
+            cats = stats["categories"]
             lines = [f"📁 الملفات المنظمة: {stats['total_files']} ملف"]
             lines.append(f"💾 الحجم الكلي: {stats['total_size_mb']} MB")
             lines.append(f"📂 الأقسام: {len(cats)}")
             if cats:
                 lines.append("")
-                for name, info in sorted(cats.items(), key=lambda x: x[1]['count'], reverse=True)[:6]:
+                sorted_cats = sorted(
+                    cats.items(),
+                    key=lambda item: item[1]["count"],
+                    reverse=True,
+                )[:6]
+                for name, info in sorted_cats:
                     lines.append(f"  • {name}: {info['count']} ملف ({info['size_mb']} MB)")
             _ = show_app_dialog(title="إحصائيات التخزين الذكي", text="\n".join(lines))
-        except Exception as e:
+        except (KeyError, ValueError, OSError, RuntimeError) as e:
             _ = show_app_dialog(title="خطأ", text=f"تعذر جلب الإحصائيات: {e}")
 
     def go_back(self) -> None:
