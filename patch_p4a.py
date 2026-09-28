@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import shutil
 from pathlib import Path
 
 p4a_dir = Path("/root/build_wasaet/.buildozer/android/platform/python-for-android")
@@ -64,22 +65,15 @@ if build_py_path.exists():
         print("Patched build.py to keep venv intact and avoid pip corruption")
 
 # Ensure arabic_reshaper config is compatible
-import shutil
 for base_sp in [
     Path("/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/build/python-installs/wasaetdhakiyah/arm64-v8a"),
     Path("/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/wasaetdhakiyah/_python_bundle__arm64-v8a/_python_bundle/site-packages")
 ]:
     if base_sp.exists():
         for bad_so in base_sp.glob("**/bidi.so"):
-            try:
-                bad_so.unlink()
-            except Exception:
-                pass
+            bad_so.unlink(missing_ok=True)
         for bad_myc in base_sp.glob("**/7cf47097c39cf1afcee8*"):
-            try:
-                bad_myc.unlink()
-            except Exception:
-                pass
+            bad_myc.unlink(missing_ok=True)
 
         reshaper_cfg = base_sp / "arabic_reshaper" / "reshaper_config.py"
         if reshaper_cfg.exists():
@@ -93,7 +87,7 @@ for base_sp in [
         if venv_bidi.exists() and not (target_bidi / "algorithm.py").exists():
             if target_bidi.exists():
                 shutil.rmtree(target_bidi)
-            shutil.copytree(venv_bidi, target_bidi)
+            _ = shutil.copytree(venv_bidi, target_bidi)
 
 # Patch AndroidManifest files for Android 14 Foreground Service requirement
 manifest_paths = [
