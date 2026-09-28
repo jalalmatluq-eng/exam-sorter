@@ -135,12 +135,19 @@ class ExamSorterApp(MDApp):
 
         return sm
 
-    def on_hardware_back_key(self, window, key, scancode, codepoint, modifier):
+    def on_hardware_back_key(self, window, key, *args):
         """التعامل الذكي مع زر الرجوع بأندرويد (مفتاح 27)"""
         if key == 27:
             if hasattr(self, "root") and self.root and hasattr(self.root, "current"):
                 if self.root.current != "home_screen":
-                    self.root.current = "home_screen"
+                    try:
+                        cur_screen = self.root.get_screen(self.root.current)
+                        if hasattr(cur_screen, "go_back"):
+                            cur_screen.go_back()
+                        else:
+                            self.root.current = "home_screen"
+                    except Exception:
+                        self.root.current = "home_screen"
                     return True  # استهلاك الحدث لمنع خروج التطبيق
         return False
 

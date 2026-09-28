@@ -64,23 +64,58 @@ if build_py_path.exists():
         print("Patched build.py to keep venv intact and avoid pip corruption")
 
 # Ensure arabic_reshaper config is compatible
-target_sp = Path("/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/build/python-installs/wasaetdhakiyah/arm64-v8a")
-reshaper_cfg = target_sp / "arabic_reshaper" / "reshaper_config.py"
-if reshaper_cfg.exists():
-    cfg_text = reshaper_cfg.read_text(encoding="utf-8")
-    cfg_text = cfg_text.replace("configuration: dict | None = None", "configuration = None")
-    cfg_text = cfg_text.replace("configuration_file: str | None = None", "configuration_file = None")
-    _ = reshaper_cfg.write_text(cfg_text, encoding="utf-8")
-    print("Patched arabic_reshaper config for Python compatibility")
+import shutil
+for base_sp in [
+    Path("/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/build/python-installs/wasaetdhakiyah/arm64-v8a"),
+    Path("/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/wasaetdhakiyah/_python_bundle__arm64-v8a/_python_bundle/site-packages")
+]:
+    if base_sp.exists():
+        for bad_so in base_sp.glob("**/bidi.so"):
+            try:
+                bad_so.unlink()
+            except Exception:
+                pass
+        for bad_myc in base_sp.glob("**/7cf47097c39cf1afcee8*"):
+            try:
+                bad_myc.unlink()
+            except Exception:
+                pass
 
-# Ensure pure python bidi is in target
-venv_bidi = Path("/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/build/venv/lib/python3.11/site-packages/bidi")
-target_bidi = target_sp / "bidi"
-if venv_bidi.exists() and not (target_bidi / "algorithm.py").exists():
-    import shutil
-    if target_bidi.exists():
-        shutil.rmtree(target_bidi)
-    shutil.copytree(venv_bidi, target_bidi)
-    print("Copied pure python bidi to target site-packages")
+        reshaper_cfg = base_sp / "arabic_reshaper" / "reshaper_config.py"
+        if reshaper_cfg.exists():
+            cfg_text = reshaper_cfg.read_text(encoding="utf-8")
+            cfg_text = cfg_text.replace("configuration: dict | None = None", "configuration = None")
+            cfg_text = cfg_text.replace("configuration_file: str | None = None", "configuration_file = None")
+            _ = reshaper_cfg.write_text(cfg_text, encoding="utf-8")
 
-print("All recipes patched successfully!")
+        target_bidi = base_sp / "bidi"
+        venv_bidi = Path("/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/build/venv/lib/python3.11/site-packages/bidi")
+        if venv_bidi.exists() and not (target_bidi / "algorithm.py").exists():
+            if target_bidi.exists():
+                shutil.rmtree(target_bidi)
+            shutil.copytree(venv_bidi, target_bidi)
+
+# Patch AndroidManifest files for Android 14 Foreground Service requirement
+manifest_paths = [
+    Path("/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/wasaetdhakiyah/src/main/AndroidManifest.xml"),
+    Path("/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/wasaetdhakiyah/templates/AndroidManifest.tmpl.xml"),
+    Path("/root/build_wasaet/.buildozer/android/platform/python-for-android/pythonforandroid/bootstraps/_sdl_common/build/templates/AndroidManifest.tmpl.xml"),
+]
+for mp in manifest_paths:
+    if mp.exists():
+        m_text = mp.read_text(encoding="utf-8")
+        if "FOREGROUND_SERVICE" in m_text and "FOREGROUND_SERVICE_DATA_SYNC" not in m_text:
+            m_text = m_text.replace(
+                '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />',
+                '<uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />'
+            )
+        if "ServiceMediawatcher" in m_text and "android:foregroundServiceType" not in m_text:
+            m_text = m_text.replace(
+                '<service android:name="com.wasaet.smart.wasaetdhakiyah.ServiceMediawatcher"',
+                '<service android:name="com.wasaet.smart.wasaetdhakiyah.ServiceMediawatcher"\n                 android:foregroundServiceType="dataSync"'
+            )
+        _ = mp.write_text(m_text, encoding="utf-8")
+        print(f"Patched AndroidManifest at {mp}")
+
+print("All recipes, Arabic packages, and manifests patched successfully!")
+
