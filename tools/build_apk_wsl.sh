@@ -32,6 +32,7 @@ rsync -a \
   /mnt/d/exam-sorter/ "$BUILD_DIR/"
 
 cd "$BUILD_DIR"
+rm -f bin/*.apk
 
 echo "تأكيد توافق إصدار بايثون 3.11 مع حزم المشروع..."
 python3 /mnt/d/exam-sorter/tools/patch_p4a.py
