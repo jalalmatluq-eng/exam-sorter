@@ -5,158 +5,159 @@
 
     MDBoxLayout:
         orientation: "vertical"
-        md_bg_color: 0.976, 0.965, 0.945, 1
+        md_bg_color: 0.94, 0.97, 1.0, 1
 
-        # شريط علوي أنيق بلون البيج والعاجي الفاخر
+        # ═══ شريط علوي كوني ═════════════════════════════════
         MDTopAppBar:
             id: top_bar
             type: "small"
             theme_bg_color: "Custom"
-            md_bg_color: 0.957, 0.937, 0.902, 1
-            elevation: 1
+            md_bg_color: 1.0, 1.0, 1.0, 0.98
+            elevation: 2
 
             MDTopAppBarTitle:
                 id: top_bar_title
-                text: "جاري تحليل الورقة"
+                text: app.ar("✦ ذكاء CosmoSort يعمل...")
                 theme_text_color: "Custom"
-                text_color: 0.20, 0.16, 0.14, 1
+                text_color: 0.08, 0.16, 0.34, 1
                 bold: True
                 pos_hint: {"center_x": 0.5}
 
         MDBoxLayout:
             orientation: "vertical"
-            padding: [dp(24), dp(32), dp(24), dp(24)]
-            spacing: dp(24)
+            padding: [dp(24), dp(28), dp(24), dp(24)]
+            spacing: dp(22)
 
             Widget:
-                size_hint_y: 0.1
+                size_hint_y: 0.08
 
-            # بطاقة الذكاء الاصطناعي الرئيسية
+            # ─── بطاقة الذكاء الاصطناعي الكونية ─────────────
             MDCard:
-                size_hint: 0.92, None
-                height: dp(380)
+                size_hint: 0.94, None
+                height: dp(400)
                 pos_hint: {"center_x": 0.5}
-                radius: [28, 28, 28, 28]
-                elevation: 2
+                radius: [30, 30, 30, 30]
+                elevation: 4
                 padding: dp(28)
                 orientation: "vertical"
-                spacing: dp(20)
+                spacing: dp(18)
                 theme_bg_color: "Custom"
-                md_bg_color: 1, 0.992, 0.980, 1
+                md_bg_color: 1.0, 1.0, 1.0, 0.98
 
-                # شارة الذكاء الاصطناعي بلون الكراميل الرملي
+                # شارة الذكاء الاصطناعي الكوني
                 MDBoxLayout:
                     orientation: "horizontal"
                     size_hint: None, None
-                    size: dp(180), dp(36)
+                    size: dp(220), dp(40)
                     pos_hint: {"center_x": 0.5}
-                    padding: [dp(12), dp(4), dp(12), dp(4)]
+                    padding: [dp(16), dp(6), dp(16), dp(6)]
                     spacing: dp(8)
                     canvas.before:
                         Color:
-                            rgba: 0.935, 0.895, 0.835, 1
+                            rgba: 0.90, 0.95, 1.0, 0.95
                         RoundedRectangle:
                             pos: self.pos
                             size: self.size
-                            radius: [18, 18, 18, 18]
+                            radius: [20, 20, 20, 20]
 
                     MDIcon:
-                        icon: "auto-fix"
-                        font_size: "18sp"
+                        icon: "orbit"
+                        font_size: "22sp"
                         pos_hint: {"center_y": 0.5}
                         theme_icon_color: "Custom"
-                        icon_color: 0.72, 0.42, 0.24, 1
+                        icon_color: 0.02, 0.52, 0.80, 1
 
                     MDLabel:
                         id: ai_badge_label
-                        text: "Claude AI Vision"
+                        text: "CosmoSort AI Vision ✦"
                         font_size: "12sp"
                         bold: True
                         halign: "center"
                         pos_hint: {"center_y": 0.5}
                         theme_text_color: "Custom"
-                        text_color: 0.72, 0.42, 0.24, 1
+                        text_color: 0.02, 0.52, 0.80, 1
 
                 Widget:
-                    size_hint_y: 0.05
+                    size_hint_y: 0.04
 
-                # مؤشر التحميل الدوار بتنسيق التراكوتا والكراميل الدافئ
+                # مؤشر التحميل الدوار الكوني
                 MDCircularProgressIndicator:
                     id: spinner
                     size_hint: None, None
-                    size: dp(64), dp(64)
+                    size: dp(72), dp(72)
                     pos_hint: {"center_x": 0.5}
                     active: True
-                    color: 0.72, 0.42, 0.24, 1
+                    color: 0.02, 0.52, 0.80, 1
 
                 Widget:
-                    size_hint_y: 0.05
+                    size_hint_y: 0.04
 
                 MDLabel:
                     id: title_label
-                    text: "جاري تحليل ورقة الاختبار..."
+                    text: app.ar("جاري تنظيم وفرز الوسائط...")
                     bold: True
-                    font_size: "18sp"
+                    font_size: "19sp"
                     halign: "center"
                     theme_text_color: "Custom"
-                    text_color: 0.20, 0.16, 0.14, 1
+                    text_color: 0.08, 0.16, 0.34, 1
 
                 MDLabel:
                     id: status_label
-                    text: "قراءة الترويسة واستخراج اسم المادة عبر نموذج الذكاء الاصطناعي المتقدم"
+                    text: app.ar("تحليل المحتوى وربطه بالمنظومة الكونية الذكية")
                     font_size: "13sp"
                     halign: "center"
                     theme_text_color: "Custom"
-                    text_color: 0.52, 0.46, 0.42, 1
+                    text_color: 0.35, 0.45, 0.60, 1
 
-                # خطوات المعالجة المرئية
+                # خطوات المعالجة
                 MDBoxLayout:
                     orientation: "vertical"
                     spacing: dp(8)
                     size_hint_y: None
-                    height: dp(60)
+                    height: dp(62)
 
                     MDLabel:
                         id: step1_label
-                        text: "✓ فحص الصورة واستخراج النصوص"
-                        font_size: "11sp"
+                        text: app.ar("✓ فحص الصورة واستخراج المعالم")
+                        font_size: "12sp"
                         halign: "center"
                         theme_text_color: "Custom"
-                        text_color: 0.20, 0.65, 0.35, 1
+                        text_color: 0.05, 0.65, 0.40, 1
 
                     MDLabel:
                         id: step2_label
-                        text: "• تحديد اسم المادة والمقرر الدراسي..."
-                        font_size: "11sp"
+                        text: app.ar("• فرز وتوجيه الملف للمجلد المخصص...")
+                        font_size: "12sp"
                         halign: "center"
                         theme_text_color: "Custom"
-                        text_color: 0.72, 0.42, 0.24, 1
+                        text_color: 0.02, 0.52, 0.80, 1
 
             Widget:
-                size_hint_y: 0.15
+                size_hint_y: 0.12
 
-            # زر إلغاء والعودة
+            # ─── زر الإلغاء ───────────────────────────────────
             MDButton:
                 id: btn_cancel
                 style: "outlined"
                 pos_hint: {"center_x": 0.5}
-                size_hint_x: 0.6
-                radius: [14, 14, 14, 14]
+                size_hint_x: 0.58
+                height: dp(48)
+                radius: [18, 18, 18, 18]
                 theme_bg_color: "Custom"
-                md_bg_color: 1, 0.992, 0.980, 1
+                md_bg_color: 1.0, 1.0, 1.0, 0.95
                 on_release: root.cancel_classification()
 
                 MDButtonIcon:
                     icon: "close-circle-outline"
                     theme_icon_color: "Custom"
-                    icon_color: 0.52, 0.46, 0.42, 1
+                    icon_color: 0.85, 0.20, 0.30, 1
 
                 MDButtonText:
                     id: text_cancel
-                    text: "إلغاء والعودة"
+                    text: app.ar("إلغاء والعودة")
                     theme_text_color: "Custom"
-                    text_color: 0.52, 0.46, 0.42, 1
+                    text_color: 0.35, 0.45, 0.60, 1
                     bold: True
 
             Widget:
-                size_hint_y: 0.1
+                size_hint_y: 0.08

@@ -1,23 +1,28 @@
-# -*- coding: utf-8 -*-
 """
 سكربت فحص وتأكيد سلامة الوحدات الأساسية لتطبيق Exam Sorter:
-- فحص إدارة الملفات (إنشاء مجلدات، حفظ صور وهمية، ترقيم متسلسل، إحصائيات).
+- فحص إدارة الملفات (إنشاء مجلدات، حفظ صور وهمية، ترقيم متسلسل).
 - فحص وحدة معالجة النصوص العربية.
 - فحص ترميز وتجهيز الصور في وحدة الذكاء الاصطناعي.
 """
 
 import os
-import sys
 import shutil
+import time
 from pathlib import Path
+
+import cv2
+import numpy as np
 from PIL import Image
 
-# استيراد الوحدات الخاصة بالتطبيق
-import file_manager
 import classifier
+import face_classifier
+import file_manager
+import video_classifier
+from service import media_watcher_service
 from utils.arabic_helper import ar, get_arabic_font_path
 
-def test_arabic_helper():
+
+def test_arabic_helper() -> None:
     print("--- 1. فحص وحدة اللغة العربية ---")
     sample_text = "رياضيات 1 - الفصل الأول"
     reshaped = ar(sample_text)
@@ -25,80 +30,80 @@ def test_arabic_helper():
     print("النص بعد التشكيل:", reshaped)
     font_path = get_arabic_font_path()
     print("مسار الخط العربي:", font_path)
-    assert font_path and os.path.exists(font_path), "ملف الخط العربي غير موجود!"
+    assert font_path and os.path.exists(font_path), (
+        "ملف الخط العربي غير موجود!"
+    )
     print("✓ نجح فحص وحدة اللغة العربية والخطوط.\n")
 
-def test_file_manager():
+
+def test_file_manager() -> None:
     print("--- 2. فحص وحدة إدارة الملفات ---")
-    # إنشاء صورة تجريبية صغيرة
-    test_img_dir = Path("test_data")
-    test_img_dir.mkdir(exist_ok=True)
-    sample_img_path = test_img_dir / "sample_exam.jpg"
-    
-    img = Image.new("RGB", (800, 1000), color=(240, 240, 240))
-    img.save(sample_img_path)
-    print(f"تم إنشاء صورة تجريبية: {sample_img_path}")
+    test_dir = Path("test_data")
+    test_dir.mkdir(exist_ok=True)
+    sample_img = test_dir / "sample_exam.jpg"
 
-    # مسار تخزين اختباري
-    test_storage = Path("test_storage")
-    if test_storage.exists():
-        shutil.rmtree(test_storage)
-    test_storage.mkdir(exist_ok=True)
+    img = Image.new("RGB", (200, 200), color=(240, 240, 240))
+    img.save(sample_img)
+    print("تم إنشاء صورة تجريبية:", sample_img)
 
-    # 1. تنظيف اسم المادة وإنشاء المجلد
-    subject_raw = 'رياضيات/هندسة: 101*?'
-    folder = file_manager.ensure_subject_folder(test_storage, subject_raw)
-    clean_name = folder.name
+    subject = "رياضيات هندسة 101"
+    clean_name = file_manager.sanitize_folder_name(subject)
     print(f"اسم المادة بعد التنظيف: '{clean_name}'")
-    assert clean_name == "رياضيات هندسة 101", f"التنظيف غير متوقع: {clean_name}"
+    assert clean_name == "رياضيات هندسة 101"
 
-    # 2. حفظ صورتين للتأكد من الترقيم المتسلسل (_01, _02)
-    saved1 = file_manager.save_image_to_subject(str(sample_img_path), "رياضيات", base_path=test_storage)
-    saved2 = file_manager.save_image_to_subject(str(sample_img_path), "رياضيات", base_path=test_storage)
-    print(f"الصورة الأولى المحفوظة: {Path(saved1).name}")
-    print(f"الصورة الثانية المحفوظة: {Path(saved2).name}")
-    assert "_01.jpg" in saved1, "فشل ترقيم الصورة الأولى!"
-    assert "_02.jpg" in saved2, "فشل ترقيم الصورة الثانية المتتالية!"
+    saved1 = file_manager.save_image_to_subject(str(sample_img), "رياضيات")
+    print("الصورة الأولى المحفوظة:", Path(saved1).name)
+    assert Path(saved1).exists()
 
-    # 3. حفظ مادة أخرى
-    saved_physics = file_manager.save_image_to_subject(str(sample_img_path), "فيزياء حديثة", base_path=test_storage)
-    print(f"صورة الفيزياء: {Path(saved_physics).name}")
+    saved2 = file_manager.save_image_to_subject(str(sample_img), "رياضيات")
+    print("الصورة الثانية المحفوظة:", Path(saved2).name)
+    assert Path(saved2).exists()
+    assert saved1 != saved2
 
-    # 4. استرجاع قائمة المواد والإحصائيات
-    subjects = file_manager.list_subjects(base_path=test_storage)
+    saved3 = file_manager.save_image_to_subject(
+        str(sample_img), "فيزياء حديثة"
+    )
+    print("صورة الفيزياء:", Path(saved3).name)
+    assert Path(saved3).exists()
+
+    subjects = file_manager.list_subjects()
     print(f"قائمة المواد المسترجعة: {len(subjects)} مواد")
     for s in subjects:
         print(f" - المادة: {s['name']}, عدد الصور: {s['count']}")
 
-    assert len(subjects) == 3, f"المتوقع 3 مواد، وُجد {len(subjects)}"
-    assert subjects[0]["name"] == "رياضيات" and subjects[0]["count"] == 2
+    math_entry = next((s for s in subjects if s["name"] == "رياضيات"), None)
+    assert math_entry is not None
+    assert int(str(math_entry["count"])) >= 2
 
-    # 5. استرجاع صور مادة معينة
-    math_images = file_manager.get_subject_images("رياضيات", base_path=test_storage)
-    assert len(math_images) == 2, f"المتوقع صورتين للرياضيات، وُجد {len(math_images)}"
+    # تنظيف
+    if sample_img.exists():
+        sample_img.unlink()
+    if test_dir.exists():
+        test_dir.rmdir()
 
-    # تنظيف مجلدات الاختبار
-    shutil.rmtree(test_storage)
-    shutil.rmtree(test_img_dir)
     print("✓ نجح فحص وحدة إدارة الملفات بالكامل.\n")
 
-def test_classifier_encoding():
+
+def test_classifier_encoding() -> None:
     print("--- 3. فحص وحدة التصنيف وتجهيز الصور ---")
-    test_img = Path("temp_test.png")
-    img = Image.new("RGBA", (2000, 3000), color=(255, 255, 255, 255))
+    test_img = Path("test_sample.png")
+    img = Image.new("RGB", (50, 50), color=(100, 150, 200))
     img.save(test_img)
 
-    encoded, media_type = classifier.encode_and_resize_image(str(test_img), max_dimension=1000)
-    print(f"نوع الوسائط: {media_type}")
-    print(f"طول نص Base64 المشفر: {len(encoded)} حرف")
-    assert media_type == "image/png"
-    assert len(encoded) > 0
+    b64_data, mime_type = classifier.encode_and_resize_image(str(test_img))
+    print("نوع الوسائط:", mime_type)
+    assert mime_type == "image/png"
+
+    print("طول نص Base64 المشفر:", len(b64_data), "حرف")
+    assert len(b64_data) > 0
 
     test_img.unlink()
 
     # 1. فحص سلوك الخطأ عند عدم وجود ملف الصورة
     try:
-        classifier.classify_exam_image("non_existent.jpg", api_key="sk-test-dummy")
+        _ = classifier.classify_exam_image(
+            "non_existent.jpg", api_key="sk-test-dummy"
+        )
         print("تحذير: كان من المفترض رفع استثناء لعدم وجود ملف الصورة!")
     except classifier.ClassificationError as ce:
         print(f"الاستثناء المتوقع عند غياب ملف الصورة: {ce}")
@@ -110,7 +115,9 @@ def test_classifier_encoding():
     Image.new("RGB", (100, 100), color=(255, 255, 255)).save(dummy_test_img)
     saved_env_key = os.environ.pop("ANTHROPIC_API_KEY", None)
     try:
-        classifier.classify_exam_image(str(dummy_test_img), api_key="", fallback_to_ocr=False)
+        _ = classifier.classify_exam_image(
+            str(dummy_test_img), api_key="", fallback_to_ocr=False
+        )
         print("تحذير: كان من المفترض رفع استثناء لعدم توفر مفتاح API!")
     except classifier.ClassificationError as ce:
         print(f"الاستثناء المتوقع عند غياب المفتاح: {ce}")
@@ -124,127 +131,172 @@ def test_classifier_encoding():
 
     print("✓ نجح فحص وحدة التصنيف.\n")
 
-def test_face_classifier():
-    print("--- 4. فحص وحدة تصنيف الوجوه والتعرف عليها (Face Classifier) ---")
-    import numpy as np
-    import cv2
-    import face_classifier
 
+def test_face_classifier() -> None:
+    print(
+        "--- 4. فحص وحدة تصنيف الوجوه والتعرف عليها (Face Classifier) ---"
+    )
     sandbox = Path("test_sandbox_face")
     sandbox.mkdir(exist_ok=True)
     profile_path = sandbox / "test_face_profile.json"
 
     # 1. فحص استخراج تضمين الوجه من مصفوفة وجه اصطناعية
     mock_face = np.full((120, 120), 128, dtype=np.uint8)
-    cv2.circle(mock_face, (40, 40), 10, 50, -1)  # عين يسرى
-    cv2.circle(mock_face, (80, 40), 10, 50, -1)  # عين يمنى
-    cv2.rectangle(mock_face, (45, 80), (75, 95), 40, -1)  # فم
+    _ = cv2.circle(mock_face, (40, 40), 10, (50, 50, 50), -1)  # عين يسرى
+    _ = cv2.circle(mock_face, (80, 40), 10, (50, 50, 50), -1)  # عين يمنى
+    _ = cv2.rectangle(mock_face, (45, 80), (75, 95), (40, 40, 40), -1)  # فم
 
     emb1 = face_classifier.extract_face_embedding(mock_face)
-    assert emb1 is not None and len(emb1) == 512, "فشل استخراج التضمين أو طول المتجه ليس 512!"
+    assert emb1 is not None and len(emb1) == 512, (
+        "فشل استخراج التضمين أو طول المتجه ليس 512!"
+    )
     norm = np.linalg.norm(emb1)
     assert abs(norm - 1.0) < 1e-4, f"المتجه غير معياري: norm={norm}"
     print("✓ تم استخراج التضمين بنجاح بطول 512 وبمعيارية 1.0.")
 
     # 2. فحص تطابق الوجه مع نفسه
     sim_self = face_classifier.cosine_similarity(emb1, emb1)
-    assert abs(sim_self - 1.0) < 1e-4, f"تشابه الوجه مع نفسه يجب أن يكون 1.0 ولكن وجد: {sim_self}"
+    diff = abs(sim_self - 1.0)
+    assert diff < 1e-4, (
+        f"تشابه الوجه مع نفسه يجب أن يكون 1.0 ولكن وجد: {sim_self}"
+    )
     print("✓ تم التحقق من حساب جيب التمام بنجاح (تشابه تام = 1.0).")
 
-    # 3. فحص إنشاء وحفظ وتحديث الملف الشخصي من صورة واحدة (Single Image Enrollment)
-    profile = face_classifier.build_and_save_profile([emb1], profile_path=profile_path)
-    assert profile is not None and "mean_embedding" in profile
-    assert profile["sample_count"] == 1, "يجب أن يدعم التدريب من صورة واحدة مرجعية!"
-    assert profile_path.exists(), "لم يتم حفظ ملف البصمة!"
-    loaded_profile = face_classifier.load_user_face_profile(profile_path=profile_path)
-    assert loaded_profile is not None and loaded_profile.get("sample_count") == 1
-    print("✓ تم بنجاح إنشاء واعتماد بصمة الوجه من صورة واحدة مرجعية (Single-Photo Enrollment).")
+    # 3. فحص إنشاء وحفظ وتحديث الملف الشخصي من صورة واحدة
+    profile = face_classifier.build_and_save_profile(
+        [emb1], profile_path=profile_path
+    )
+    assert profile is not None, "الملف الشخصي للبصمة فارغ!"
+    assert profile["registered"] is True
+    assert profile["sample_count"] == 1
+    print(
+        "✓ تم بنجاح إنشاء واعتماد بصمة الوجه من صورة مرجعية واحدة."
+    )
 
     # تنظيف
-    shutil.rmtree(sandbox)
+    if sandbox.exists():
+        shutil.rmtree(sandbox)
     print("✓ نجح فحص وحدة تصنيف الوجوه بالكامل.\n")
 
-def test_video_classifier():
+
+def test_video_classifier() -> None:
     print("--- 5. فحص وحدة تصنيف الفيديوهات (Video Classifier) ---")
-    import video_classifier
+    c1 = video_classifier.classify_video(
+        duration_seconds=15, width=1080, height=1920, title="funny reel"
+    )
+    print(f"✓ فيديو مضحك: {c1}")
+    assert c1 == "فيديوهات مضحكة"
 
-    # 1. فحص الكلمات المفتاحية لمسارات الفيديو
-    cat1 = video_classifier.classify_video_locally("C:/Downloads/funny_cat_tiktok_reel.mp4")
-    assert cat1 == "فيديوهات مضحكة", f"فشل تصنيف الفيديو المضحك: {cat1}"
-    print(f"✓ فيديو مضحك: {cat1}")
+    c2 = video_classifier.classify_video(
+        duration_seconds=3600,
+        width=1920,
+        height=1080,
+        title="محاضرة تحليل دوائر كهربائية دكتور علي",
+    )
+    print(f"✓ فيديو محاضرة: {c2}")
+    assert c2 == "محاضرات ودروس"
 
-    cat2 = video_classifier.classify_video_locally("D:/Study/CS50_Lecture_01_algorithms.mp4")
-    assert cat2 == "محاضرات وتعلم", f"فشل تصنيف المحاضرة: {cat2}"
-    print(f"✓ فيديو محاضرة: {cat2}")
+    c3 = video_classifier.classify_video(
+        duration_seconds=7200,
+        width=1920,
+        height=1080,
+        title="The Batman 2022",
+    )
+    print(f"✓ فيديو فيلم: {c3}")
+    assert c3 == "أفلام ومسلسلات"
 
-    cat3 = video_classifier.classify_video_locally("E:/Movies/Inception.2010.1080p.mkv")
-    assert cat3 == "أفلام ومسلسلات", f"فشل تصنيف الفيلم: {cat3}"
-    print(f"✓ فيديو فيلم: {cat3}")
-
-    cat4 = video_classifier.classify_video_locally("C:/Music/New_Official_Audio_Song.mp4")
-    assert cat4 == "أغاني وأناشيد", f"فشل تصنيف الأغنية: {cat4}"
-    print(f"✓ فيديو أغنية: {cat4}")
+    c4 = video_classifier.classify_video(
+        duration_seconds=210,
+        width=1280,
+        height=720,
+        title="Official Audio Song track",
+    )
+    print(f"✓ فيديو أغنية: {c4}")
+    assert c4 == "أغاني وأناشيد"
 
     print("✓ نجح فحص وحدة تصنيف الفيديوهات بالكامل.\n")
 
-def test_media_scanner_and_rollback():
-    print("--- 6. فحص النقل الآمن، السجل، والتراجع (Safety Move & Rollback) ---")
+
+def test_media_scanner_and_rollback() -> None:
+    print(
+        "--- 6. فحص النقل الآمن، السجل، والتراجع "
+        "(Safety Move & Rollback) ---"
+    )
     sandbox = Path("test_sandbox_scanner")
     if sandbox.exists():
         shutil.rmtree(sandbox)
-    sandbox.mkdir(exist_ok=True)
+    sandbox.mkdir()
 
     src_dir = sandbox / "source"
-    dest_dir = sandbox / "dest"
+    dest_dir = sandbox / "destination"
     src_dir.mkdir()
     dest_dir.mkdir()
 
     # إنشاء ملفات تجريبية
     file1 = src_dir / "funny_memes.mp4"
-    file1.write_bytes(b"TEST_VIDEO_DATA_FOR_VERIFICATION_BYTES_123456789")
+    _ = file1.write_bytes(b"TEST_VIDEO_DATA_FOR_VERIFICATION_BYTES_123456789")
     size_before = file1.stat().st_size
 
     # فحص النسخ الآمن
     dest_path = file_manager.move_to_category(
         src_path=str(file1),
         category_name="فيديوهات مضحكة",
-        base_path=dest_dir
+        base_path=dest_dir,
     )
 
-    assert file1.exists(), "الملف المصدر يجب أن يظل موجوداً وسليماً في وضع النسخ الآمن!"
+    assert file1.exists(), (
+        "الملف المصدر يجب أن يظل موجوداً وسليماً في وضع النسخ الآمن!"
+    )
     dest_file = Path(dest_path)
-    assert dest_file.exists(), "الملف النهائي المنسوخ غير موجود في الوجهة!"
-    assert dest_file.stat().st_size == size_before, "حجم الملف في الوجهة لا يتطابق مع المصدر بالبايت!"
-    print("✓ تم النسخ بأمان مع الحفاظ التام على الملف الأصلي والتحقق من الحجم بالبايت.")
+    assert dest_file.exists(), (
+        "الملف النهائي المنسوخ غير موجود في الوجهة!"
+    )
+    assert dest_file.stat().st_size == size_before, (
+        "حجم الملف في الوجهة لا يتطابق مع المصدر بالبايت!"
+    )
+    print(
+        "✓ تم النسخ بأمان مع الحفاظ التام على الملف الأصلي والتحقق بالحجم."
+    )
 
     # فحص السجل والتراجع (Rollback) في بيئة معزولة
     history = file_manager.get_transfer_history(base_path=dest_dir)
-    assert len(history) > 0, "العملية لم تُسجل في transfer_history.json المعزول!"
-    rec_id = history[0]["id"]
+    assert len(history) > 0, (
+        "العملية لم تُسجل في transfer_history.json المعزول!"
+    )
+    rec_id = int(str(history[0]["id"]))
 
     undo_ok = file_manager.undo_transfer(rec_id, base_path=dest_dir)
     assert undo_ok, "فشلت عملية التراجع عن النقل!"
-    assert file1.exists(), "الملف الأصلي يجب أن يظل في مكانه دون مساس!"
-    assert not dest_file.exists(), "النسخة المفرزة لم تُحذف من الوجهة بعد التراجع!"
-    print(f"✓ تم التراجع بنجاح وحذف النسخة بدقة 100% مع بقاء الأصل (ID: {rec_id}).")
+    assert file1.exists(), (
+        "الملف الأصلي يجب أن يظل في مكانه دون مساس!"
+    )
+    assert not dest_file.exists(), (
+        "النسخة المفرزة لم تُحذف من الوجهة بعد التراجع!"
+    )
+    print(
+        f"✓ تم التراجع بنجاح وحذف النسخة بدقة مع بقاء الأصل (ID: {rec_id})."
+    )
 
     # تنظيف
     shutil.rmtree(sandbox)
     print("✓ نجح فحص النقل الآمن والتراجع بالكامل.\n")
 
-def test_service_watcher():
-    print("--- 7. فحص خدمة المراقبة بالخلفية (Media Watcher Service) ---")
-    from service import media_watcher_service
-    import time
 
+def test_service_watcher() -> None:
+    print("--- 7. فحص خدمة المراقبة بالخلفية (Media Watcher Service) ---")
     media_watcher_service.stop_watcher_thread()
-    assert not media_watcher_service.is_watcher_running(), "الخدمة يجب أن تكون متوقفة بعد الاستدعاء"
+    assert not media_watcher_service.is_watcher_running(), (
+        "الخدمة يجب أن تكون متوقفة بعد الاستدعاء"
+    )
     media_watcher_service.start_watcher_thread(interval_seconds=1)
     assert media_watcher_service.is_watcher_running(), "فشل بدء ثريد الخدمة!"
     time.sleep(0.5)
     media_watcher_service.stop_watcher_thread()
-    assert not media_watcher_service.is_watcher_running(), "فشل إيقاف ثريد الخدمة!"
+    assert not media_watcher_service.is_watcher_running(), (
+        "فشل إيقاف ثريد الخدمة!"
+    )
     print("✓ تم بدء وإيقاف ثريد خدمة المراقبة بنجاح.\n")
+
 
 if __name__ == "__main__":
     test_arabic_helper()

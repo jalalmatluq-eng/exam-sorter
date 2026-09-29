@@ -5,156 +5,155 @@
 
     MDBoxLayout:
         orientation: "vertical"
-        md_bg_color: 0.976, 0.965, 0.945, 1
+        md_bg_color: 0.94, 0.97, 1.0, 1
 
-        # شريط التطبيق العلوي بالبيج والعاجي الفاخر
+        # ═══ شريط علوي كوني ═════════════════════════════════
         MDTopAppBar:
             id: top_bar
             type: "small"
             theme_bg_color: "Custom"
-            md_bg_color: 0.957, 0.937, 0.902, 1
-            elevation: 1
+            md_bg_color: 1.0, 1.0, 1.0, 0.98
+            elevation: 2
 
             MDTopAppBarLeadingButtonContainer:
                 MDActionTopAppBarButton:
-                    icon: "arrow-left"
+                    icon: "arrow-left-circle-outline"
                     theme_icon_color: "Custom"
-                    icon_color: 0.72, 0.42, 0.24, 1
+                    icon_color: 0.02, 0.52, 0.80, 1
                     on_release: root.go_back()
 
             MDTopAppBarTitle:
                 id: top_bar_title
-                text: app.ar("إضافة ورقة اختبار")
+                text: app.ar("✦ إضافة ورقة | CosmoSort")
                 theme_text_color: "Custom"
-                text_color: 0.20, 0.16, 0.14, 1
+                text_color: 0.08, 0.16, 0.34, 1
                 bold: True
 
         MDBoxLayout:
             orientation: "vertical"
-            padding: dp(20)
-            spacing: dp(16)
+            padding: dp(18)
+            spacing: dp(14)
 
-            # منطقة معاينة الصورة المختارة (إطار فخم وبسيط)
+            # ─── منطقة المعاينة الكونية ──────────────────────
             MDCard:
                 id: preview_card
                 size_hint: 1, 0.62
-                radius: [20, 20, 20, 20]
-                elevation: 1
+                radius: [26, 26, 26, 26]
+                elevation: 4
                 theme_bg_color: "Custom"
-                md_bg_color: 1, 0.992, 0.980, 1
-                padding: dp(10)
+                md_bg_color: 1.0, 1.0, 1.0, 0.98
+                padding: dp(12)
 
                 FloatLayout:
-                    # صورة المعاينة عند اختيار ملف
+
                     Image:
                         id: image_preview
                         pos_hint: {"center_x": 0.5, "center_y": 0.5}
                         opacity: 0
 
-                    # مؤشر الفراغ قبل اختيار صورة
                     MDBoxLayout:
                         id: placeholder_box
                         orientation: "vertical"
                         spacing: dp(10)
                         pos_hint: {"center_x": 0.5, "center_y": 0.5}
                         size_hint: 0.9, None
-                        height: dp(160)
+                        height: dp(170)
 
                         MDIcon:
-                            icon: "camera-iris"
-                            font_size: "68sp"
+                            icon: "file-image-plus-outline"
+                            font_size: "72sp"
                             halign: "center"
                             theme_icon_color: "Custom"
-                            icon_color: 0.72, 0.42, 0.24, 0.7
+                            icon_color: 0.02, 0.52, 0.80, 0.85
 
                         MDLabel:
                             id: placeholder_label
                             text: app.ar("لم يتم اختيار صورة بعد")
                             halign: "center"
                             bold: True
-                            font_size: "16sp"
+                            font_size: "17sp"
                             theme_text_color: "Custom"
-                            text_color: 0.20, 0.16, 0.14, 1
+                            text_color: 0.08, 0.16, 0.34, 1
 
                         MDLabel:
                             id: placeholder_hint
-                            text: app.ar("اختر صورة واضحة لورقة الاختبار تحتوي على الترويسة")
+                            text: app.ar("اختر صورة واضحة لورقة الاختبار أو المستند")
                             halign: "center"
                             font_size: "12sp"
                             theme_text_color: "Custom"
-                            text_color: 0.52, 0.46, 0.42, 1
+                            text_color: 0.35, 0.45, 0.60, 1
 
-            # أزرار الإجراءات (كاميرا / معرض) بتصميم متناسق
+            # ─── أزرار الالتقاط الكونية ──────────────────────
             MDGridLayout:
                 cols: 2
-                spacing: dp(14)
+                spacing: dp(12)
                 size_hint_y: None
-                height: dp(54)
+                height: dp(56)
 
                 MDButton:
                     id: btn_camera
-                    style: "outlined"
+                    style: "filled"
                     size_hint_x: 0.5
-                    radius: [14, 14, 14, 14]
+                    radius: [18, 18, 18, 18]
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 0.992, 0.980, 1
+                    md_bg_color: 0.48, 0.22, 0.85, 1
                     on_release: root.capture_from_camera()
 
                     MDButtonIcon:
-                        icon: "camera"
+                        icon: "camera-enhance-outline"
                         theme_icon_color: "Custom"
-                        icon_color: 0.72, 0.42, 0.24, 1
+                        icon_color: 1.0, 1.0, 1.0, 1
 
                     MDButtonText:
                         id: text_camera
-                        text: app.ar("التقاط بالكاميرا")
+                        text: app.ar("الكاميرا")
                         bold: True
                         theme_text_color: "Custom"
-                        text_color: 0.20, 0.16, 0.14, 1
+                        text_color: 1, 1, 1, 1
 
                 MDButton:
                     id: btn_gallery
-                    style: "outlined"
+                    style: "filled"
                     size_hint_x: 0.5
-                    radius: [14, 14, 14, 14]
+                    radius: [18, 18, 18, 18]
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 0.992, 0.980, 1
+                    md_bg_color: 0.02, 0.52, 0.80, 1
                     on_release: root.pick_from_gallery()
 
                     MDButtonIcon:
-                        icon: "image-multiple"
+                        icon: "image-multiple-outline"
                         theme_icon_color: "Custom"
-                        icon_color: 0.72, 0.42, 0.24, 1
+                        icon_color: 1.0, 1.0, 1.0, 1
 
                     MDButtonText:
                         id: text_gallery
-                        text: app.ar("اختيار من المعرض")
+                        text: app.ar("المعرض")
                         bold: True
                         theme_text_color: "Custom"
-                        text_color: 0.20, 0.16, 0.14, 1
+                        text_color: 1, 1, 1, 1
 
-            # زر المتابعة إلى التصنيف
+            # ─── زر التحليل بالذكاء الاصطناعي ────────────────
             MDButton:
                 id: btn_proceed
                 style: "filled"
                 size_hint_y: None
-                height: dp(52)
+                height: dp(56)
                 size_hint_x: 1
-                radius: [16, 16, 16, 16]
+                radius: [20, 20, 20, 20]
                 disabled: True
                 pos_hint: {"center_x": 0.5}
                 theme_bg_color: "Custom"
-                md_bg_color: 0.72, 0.42, 0.24, 1
+                md_bg_color: 0.02, 0.52, 0.80, 1
                 on_release: root.proceed_to_classify()
 
                 MDButtonIcon:
-                    icon: "creation"
+                    icon: "brain"
                     theme_icon_color: "Custom"
-                    icon_color: 1, 1, 1, 1
+                    icon_color: 1.0, 0.95, 0.45, 1
 
                 MDButtonText:
                     id: text_proceed
-                    text: app.ar("تحليل وتصنيف بالذكاء الاصطناعي")
+                    text: app.ar("تحليل وتصنيف بالذكاء الاصطناعي ✦")
                     bold: True
                     theme_text_color: "Custom"
                     text_color: 1, 1, 1, 1

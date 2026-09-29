@@ -5,28 +5,28 @@
 
     MDBoxLayout:
         orientation: "vertical"
-        md_bg_color: 0.976, 0.965, 0.945, 1
+        md_bg_color: 0.94, 0.97, 1.0, 1
 
-        # شريط علوي أنيق بلون البيج والعاجي الفاخر
+        # ═══ شريط علوي كوني ═════════════════════════════════
         MDTopAppBar:
             id: top_bar
             type: "small"
             theme_bg_color: "Custom"
-            md_bg_color: 0.957, 0.937, 0.902, 1
-            elevation: 1
+            md_bg_color: 1.0, 1.0, 1.0, 0.98
+            elevation: 2
 
             MDTopAppBarLeadingButtonContainer:
                 MDActionTopAppBarButton:
-                    icon: "arrow-left"
+                    icon: "arrow-left-circle-outline"
                     theme_icon_color: "Custom"
-                    icon_color: 0.72, 0.42, 0.24, 1
+                    icon_color: 0.02, 0.52, 0.80, 1
                     on_release: root.go_back()
 
             MDTopAppBarTitle:
                 id: top_bar_title
-                text: "تفاصيل المادة"
+                text: app.ar("✦ محتويات القسم | CosmoSort")
                 theme_text_color: "Custom"
-                text_color: 0.20, 0.16, 0.14, 1
+                text_color: 0.08, 0.16, 0.34, 1
                 bold: True
                 pos_hint: {"center_x": 0.5}
 
@@ -34,23 +34,23 @@
                 MDActionTopAppBarButton:
                     icon: "folder-open-outline"
                     theme_icon_color: "Custom"
-                    icon_color: 0.52, 0.40, 0.30, 1
+                    icon_color: 0.02, 0.52, 0.80, 1
                     on_release: root.open_in_explorer()
 
                 MDActionTopAppBarButton:
                     icon: "trash-can-outline"
                     theme_icon_color: "Custom"
-                    icon_color: 0.85, 0.35, 0.25, 1
+                    icon_color: 0.85, 0.20, 0.30, 1
                     on_release: root.confirm_delete_subject()
 
-        # شريط معلومات وإحصائيات المادة بالبيج الدافئ
+        # ─── شريط الإحصاء السريع ────────────────────────────
         MDBoxLayout:
             size_hint_y: None
-            height: dp(48)
-            padding: [dp(20), dp(6), dp(20), dp(6)]
+            height: dp(50)
+            padding: [dp(18), dp(6), dp(18), dp(6)]
             orientation: "horizontal"
             theme_bg_color: "Custom"
-            md_bg_color: 0.935, 0.895, 0.835, 1
+            md_bg_color: 0.90, 0.95, 1.0, 0.95
 
             MDButton:
                 style: "text"
@@ -61,30 +61,31 @@
                 MDButtonIcon:
                     icon: "plus-circle-outline"
                     theme_icon_color: "Custom"
-                    icon_color: 0.72, 0.42, 0.24, 1
+                    icon_color: 0.02, 0.52, 0.80, 1
 
                 MDButtonText:
                     id: add_exam_btn_text
-                    text: "إضافة ورقة"
+                    text: app.ar("إضافة ورقة")
                     theme_text_color: "Custom"
-                    text_color: 0.72, 0.42, 0.24, 1
+                    text_color: 0.02, 0.52, 0.80, 1
                     bold: True
 
             Widget:
 
             MDLabel:
                 id: info_label
-                text: "إجمالي الأوراق: 0"
+                text: app.ar("إجمالي الأوراق: 0")
                 bold: True
                 font_size: "13sp"
                 halign: "right"
                 pos_hint: {"center_y": 0.5}
                 theme_text_color: "Custom"
-                text_color: 0.22, 0.17, 0.14, 1
+                text_color: 0.08, 0.16, 0.34, 1
 
-        # منطقة عرض شبكة الصور
+        # ─── شبكة الصور + حالة فارغة ────────────────────────
         FloatLayout:
-            # حالة عدم وجود صور
+
+            # حالة فارغة كونية
             MDCard:
                 id: empty_box
                 orientation: "vertical"
@@ -92,49 +93,50 @@
                 padding: dp(24)
                 pos_hint: {"center_x": 0.5, "center_y": 0.5}
                 size_hint: 0.88, None
-                height: dp(220)
-                radius: [24, 24, 24, 24]
-                elevation: 1
+                height: dp(230)
+                radius: [28, 28, 28, 28]
+                elevation: 4
                 theme_bg_color: "Custom"
-                md_bg_color: 1, 0.992, 0.980, 1
+                md_bg_color: 1.0, 1.0, 1.0, 0.98
                 opacity: 0
 
                 MDIcon:
                     icon: "file-document-alert-outline"
-                    font_size: "52sp"
+                    font_size: "58sp"
                     pos_hint: {"center_x": 0.5}
                     theme_icon_color: "Custom"
-                    icon_color: 0.72, 0.42, 0.24, 0.8
+                    icon_color: 0.02, 0.52, 0.80, 0.85
 
                 MDLabel:
                     id: empty_label
-                    text: "لا توجد أوراق اختبار في هذه المادة بعد"
+                    text: app.ar("لا توجد أوراق أو ملفات في هذا القسم بعد")
                     halign: "center"
                     bold: True
                     font_size: "16sp"
                     theme_text_color: "Custom"
-                    text_color: 0.20, 0.16, 0.14, 1
+                    text_color: 0.08, 0.16, 0.34, 1
 
                 MDButton:
                     style: "filled"
                     pos_hint: {"center_x": 0.5}
+                    radius: [16, 16, 16, 16]
                     theme_bg_color: "Custom"
-                    md_bg_color: 0.72, 0.42, 0.24, 1
+                    md_bg_color: 0.02, 0.52, 0.80, 1
                     on_release: root.add_new_exam()
 
                     MDButtonIcon:
-                        icon: "camera-plus"
+                        icon: "camera-plus-outline"
                         theme_icon_color: "Custom"
-                        icon_color: 1, 1, 1, 1
+                        icon_color: 1.0, 1.0, 1.0, 1
 
                     MDButtonText:
                         id: empty_action_text
-                        text: "التقط ورقة اختبار لهذه المادة"
+                        text: app.ar("إضافة ملف جديد لهذا القسم")
                         bold: True
                         theme_text_color: "Custom"
                         text_color: 1, 1, 1, 1
 
-            # شبكة التمرير لعرض الصور (Grid)
+            # شبكة الصور
             ScrollView:
                 id: scroll_grid
                 do_scroll_x: False
@@ -143,5 +145,5 @@
                     id: images_grid
                     cols: 2
                     adaptive_height: True
-                    padding: dp(14)
-                    spacing: dp(14)
+                    padding: dp(12)
+                    spacing: dp(12)

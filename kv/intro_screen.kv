@@ -1,0 +1,93 @@
+#:kivy 2.0.0
+
+<IntroScreen>:
+    name: "intro_screen"
+
+    MDBoxLayout:
+        orientation: "vertical"
+        md_bg_color: 0.93, 0.96, 1.0, 1.0
+
+        FloatLayout:
+            id: main_intro_layout
+
+            # ─── حلقة المدار الكوني الهادئة ─────────────────
+            canvas.before:
+                Color:
+                    rgba: 0.70, 0.85, 0.98, 0.45
+                Line:
+                    circle: (self.center_x, self.center_y + dp(35), dp(130))
+                    width: 1.2
+                Color:
+                    rgba: 0.55, 0.78, 0.96, 0.25
+                Line:
+                    circle: (self.center_x, self.center_y + dp(35), dp(150))
+                    width: 1.0
+
+            # ─── حاوية العناصر المدارية (الصور والفيديوهات والملفات) ─
+            FloatLayout:
+                id: orbit_container
+                pos_hint: {"center_x": 0.5, "center_y": 0.55}
+
+            # ─── الشكل الكوني البارز في المركز ──────────────
+            MDCard:
+                id: central_cosmos
+                size_hint: None, None
+                size: dp(96) * root.center_pulse, dp(96) * root.center_pulse
+                pos_hint: {"center_x": 0.5, "center_y": 0.55}
+                radius: [self.height / 2, self.height / 2, self.height / 2, self.height / 2]
+                elevation: 10
+                theme_bg_color: "Custom"
+                md_bg_color: 0.02, 0.55, 0.88, 1
+
+                canvas.before:
+                    Color:
+                        rgba: 0.35, 0.75, 1.0, 0.35 * root.center_pulse
+                    Ellipse:
+                        pos: (self.center_x - (self.width * 1.35) / 2, self.center_y - (self.height * 1.35) / 2)
+                        size: (self.width * 1.35, self.height * 1.35)
+
+                MDBoxLayout:
+                    orientation: "vertical"
+                    pos_hint: {"center_x": 0.5, "center_y": 0.5}
+
+                    MDIcon:
+                        icon: "orbit"
+                        font_size: "48sp"
+                        halign: "center"
+                        theme_icon_color: "Custom"
+                        icon_color: 1.0, 1.0, 1.0, 1
+
+            # ─── نصوص الهوية والتعريف المعبر تحت الكون ──────
+            MDBoxLayout:
+                orientation: "vertical"
+                size_hint_x: 0.9
+                size_hint_y: None
+                height: dp(120)
+                pos_hint: {"center_x": 0.5, "center_y": 0.22}
+                spacing: dp(8)
+                opacity: root.text_alpha
+
+                MDLabel:
+                    id: app_title
+                    text: app.ar("CosmoSort ✦ كوزمو سورت")
+                    font_size: "24sp"
+                    bold: True
+                    halign: "center"
+                    theme_text_color: "Custom"
+                    text_color: 0.08, 0.16, 0.34, 1
+
+                MDLabel:
+                    id: app_tagline
+                    text: app.ar("دليلك المفضل والذكي لتنظيم وترتيب ملفاتك في فضاء واحد")
+                    font_size: "13sp"
+                    bold: True
+                    halign: "center"
+                    theme_text_color: "Custom"
+                    text_color: 0.25, 0.40, 0.58, 1
+
+                MDLabel:
+                    text: app.ar("✦ جاري الدخول إلى فضاء الملفات... (انقر للتخطي)")
+                    font_size: "10sp"
+                    halign: "center"
+                    theme_text_color: "Custom"
+                    text_color: 0.02, 0.55, 0.85, 0.75

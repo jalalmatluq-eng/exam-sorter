@@ -45,13 +45,31 @@ temp/
 # Application Storage & Outputs (generated at runtime)
 ExamSorter/
 MediaSorter/
+الملفات المنظمة/
+الملفات_المنظمة/
+*الملفات*المنظمة*/
 my_face_profile.json
 scanned_media_cache.db
 transfer_history.json
 service_control.json
+sorter_prefs.json
 test_data/
 test_storage/
+test_media_input/
 test_sandbox_*/
 امثلة*/
 bin/
 .buildozer/
+
+# Large Packages & Build Outputs
+*--no-deps*
+*.apk
+*.aab
+
+# Root Screenshots & Test Media (exclude root pngs, preserve assets/)
+/*.png
+/*.jpg
+/*.jpeg
+/*.mp4
+docs/screenshots/
+

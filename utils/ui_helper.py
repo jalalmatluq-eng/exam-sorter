@@ -1,16 +1,11 @@
 """
 وحدة مساعدة للواجهة (UI Helper)
-توفر مكونات جاهزة وعصرية متوافقة تماماً مع إطار عمل KivyMD 2.0 (Material Design 3).
+توفر مكونات جاهزة وعصرية متوافقة تماماً مع إطار عمل KivyMD 2.0.
 """
 
-from utils.arabic_helper import ar
-from kivymd.uix.list import (
-    MDListItem,
-    MDListItemHeadlineText,
-    MDListItemLeadingIcon,
-    MDListItemSupportingText,
-    MDListItemTrailingIcon,
-)
+from collections.abc import Callable
+
+from kivy.uix.widget import Widget
 from kivymd.uix.button import MDButton, MDButtonIcon, MDButtonText
 from kivymd.uix.dialog import (
     MDDialog,
@@ -18,32 +13,84 @@ from kivymd.uix.dialog import (
     MDDialogHeadlineText,
     MDDialogSupportingText,
 )
+from kivymd.uix.list import (
+    MDListItem,
+    MDListItemHeadlineText,
+    MDListItemLeadingIcon,
+    MDListItemSupportingText,
+    MDListItemTrailingIcon,
+)
+
+from utils.arabic_helper import ar
+
+ColorTuple = tuple[float, float, float, float]
 
 
-def get_category_icon_and_unit(name: str) -> tuple[str, tuple[float, float, float, float], str]:
-    """تحديد الأيقونة واللون ونوع المحتوى بذكاء بناءً على اسم المجلد"""
+def get_category_icon_and_unit(
+    name: str
+) -> tuple[str, ColorTuple, str]:
+    """تحديد الأيقونة واللون ونوع المحتوى بذكاء وجمالية حديثة فائقة"""
     clean = name.strip()
     if "فيديو" in clean or "مضحك" in clean:
-        return "emoticon-happy-outline", (0.82, 0.48, 0.22, 1), "مقطع فيديو مضحك"
-    elif "محاضر" in clean or "تعلم" in clean:
-        return "school-outline", (0.72, 0.44, 0.26, 1), "محاضرة تعليمية"
+        return (
+            "emoticon-excited-outline",
+            (0.98, 0.72, 0.12, 1),
+            "مقطع فيديو مضحك",
+        )
+    elif "محاضر" in clean or "تعلم" in clean or "دروس" in clean:
+        return (
+            "school-outline",
+            (0.06, 0.78, 0.90, 1),
+            "محاضرة ودرس تعليمي",
+        )
     elif "فيلم" in clean or "مسلسل" in clean or "افلام" in clean:
-        return "movie-open-outline", (0.78, 0.40, 0.25, 1), "فيلم / مسلسل"
+        return (
+            "movie-open-star-outline",
+            (0.96, 0.32, 0.42, 1),
+            "فيلم ومسلسل",
+        )
     elif "أغاني" in clean or "اغاني" in clean or "اناشيد" in clean:
-        return "music-note-outline", (0.75, 0.48, 0.30, 1), "مقطع صوتي / أغنية"
+        return (
+            "music-circle-outline",
+            (0.12, 0.82, 0.55, 1),
+            "أغاني وأناشيد",
+        )
     elif "صوري" in clean:
-        return "account-heart-outline", (0.80, 0.42, 0.26, 1), "صورة شخصية"
-    elif "اصدقاء" in clean or "أصدقاء" in clean:
-        return "account-multiple-outline", (0.70, 0.45, 0.32, 1), "صورة للأصدقاء والإخوة"
+        return (
+            "account-star-outline",
+            (0.78, 0.42, 0.98, 1),
+            "صورة شخصية خاصة",
+        )
+    elif any(
+        k in clean
+        for k in ("اصدقاء", "أصدقاء", "اخوتي", "زملاء")
+    ):
+        return (
+            "account-group-outline",
+            (0.22, 0.65, 0.98, 1),
+            "صور الإخوة والزملاء",
+        )
     elif "اختبار" in clean:
-        return "file-document-outline", (0.74, 0.42, 0.24, 1), "ورقة اختبار ومستند"
+        return (
+            "book-education-outline",
+            (0.58, 0.40, 0.98, 1),
+            "ورقة اختبار ومستند",
+        )
     else:
         # مادة دراسية جامعية (رياضيات، فيزياء، برمجة، إلخ)
-        return "book-open-page-variant-outline", (0.72, 0.44, 0.26, 1), "ورقة اختبار مسجلة"
+        return (
+            "file-document-check-outline",
+            (0.62, 0.42, 0.98, 1),
+            "ورقة اختبار مادة مسجلة",
+        )
 
 
-def create_subject_list_item(name: str, count: int, on_release_callback):
-    """إنشاء بطاقة مادة/مجلد حديثة وفخمة بتنسيق البيج الدافئ"""
+def create_subject_list_item(
+    name: str,
+    count: int,
+    on_release_callback: Callable[[object], None] | None = None,
+) -> MDListItem:
+    """إنشاء بطاقة مادة/مجلد حديثة ومزخرفة بتنسيق الزجاج الليلي الفاخر"""
     icon, color, unit = get_category_icon_and_unit(name)
     if count == 1:
         sub_text = f"1 {unit}"
@@ -64,56 +111,216 @@ def create_subject_list_item(name: str, count: int, on_release_callback):
             text=ar(name),
             bold=True,
             theme_text_color="Custom",
-            text_color=(0.20, 0.16, 0.14, 1),
+            text_color=(0.08, 0.16, 0.34, 1),
         ),
         MDListItemSupportingText(
             text=ar(sub_text),
             theme_text_color="Custom",
-            text_color=(0.52, 0.45, 0.39, 1),
+            text_color=(0.35, 0.45, 0.60, 1),
         ),
         MDListItemTrailingIcon(
             icon="chevron-left",
             theme_icon_color="Custom",
-            icon_color=(0.70, 0.62, 0.54, 1),
+            icon_color=(0.50, 0.60, 0.75, 1),
         ),
-        radius=[18, 18, 18, 18],
+        radius=[20, 20, 20, 20],
         theme_bg_color="Custom",
-        md_bg_color=(1, 0.992, 0.980, 1),
+        md_bg_color=(1.0, 1.0, 1.0, 0.98),
         on_release=on_release_callback,
     )
     return item
 
 
-def create_action_button(text: str, on_release_callback, style: str = "filled", icon: str | None = None):
+def create_action_button(
+    text: str,
+    on_release_callback: Callable[[object], None] | None = None,
+    style: str = "filled",
+    icon: str | None = None,
+) -> MDButton:
     """إنشاء زر متوافق مع المظهر الحديث"""
-    btn_children = []
+    btn_children: list[Widget] = []
     if icon:
         btn_children.append(MDButtonIcon(icon=icon))
     btn_children.append(MDButtonText(text=ar(text)))
-    return MDButton(*btn_children, style=style, on_release=on_release_callback)
+    return MDButton(
+        *btn_children, style=style, on_release=on_release_callback
+    )
 
 
-def show_app_dialog(title: str, text: str, on_confirm=None, confirm_text: str = "حسناً"):
-    """عرض نافذة تنبيه أو نجاح متوافقة عبر KivyMD 2 Dialogs"""
-    dialog = None
+def show_app_dialog(
+    title: str,
+    text: str,
+    on_confirm: Callable[[], None] | None = None,
+    confirm_text: str = "حسناً",
+) -> MDDialog:
+    """عرض نافذة تنبيه أو نجاح عصرية متوافقة مع KivyMD 2 Dialogs"""
+    dialog: MDDialog | None = None
 
-    def handle_click(x):
+    def handle_click(_x: object) -> None:
         if dialog:
             dialog.dismiss()
         if on_confirm:
             on_confirm()
 
+    btn_confirm = MDButton(
+        MDButtonText(
+            text=ar(confirm_text),
+            bold=True,
+            theme_text_color="Custom",
+            text_color=(1, 1, 1, 1),
+        ),
+        style="filled",
+        theme_bg_color="Custom",
+        md_bg_color=(0.02, 0.52, 0.80, 1),
+        on_release=handle_click,
+    )
+
     dialog = MDDialog(
-        MDDialogHeadlineText(text=ar(title)),
-        MDDialogSupportingText(text=ar(text)),
+        MDDialogHeadlineText(
+            text=ar(title),
+            bold=True,
+            theme_text_color="Custom",
+            text_color=(0.08, 0.16, 0.34, 1),
+        ),
+        MDDialogSupportingText(
+            text=ar(text),
+            theme_text_color="Custom",
+            text_color=(0.35, 0.45, 0.60, 1),
+        ),
         MDDialogButtonContainer(
-            MDButton(
-                MDButtonText(text=ar(confirm_text)),
-                style="filled",
-                on_release=handle_click,
-            ),
+            btn_confirm,
             spacing="8dp",
         ),
+        theme_bg_color="Custom",
+        md_bg_color=(1.0, 1.0, 1.0, 0.98),
+        radius=[24, 24, 24, 24],
     )
     dialog.open()
     return dialog
+
+
+def show_confirm_dialog(
+    title: str,
+    text: str,
+    on_confirm: Callable[[], None] | None = None,
+    on_cancel: Callable[[], None] | None = None,
+    confirm_text: str = "تأكيد",
+    cancel_text: str = "إلغاء",
+) -> MDDialog:
+    """عرض نافذة تأكيد ثنائية الخيارات (تأكيد / إلغاء) متوافقة مع KivyMD 2"""
+    dialog: MDDialog | None = None
+
+    def handle_confirm(_x: object) -> None:
+        if dialog:
+            dialog.dismiss()
+        if on_confirm:
+            on_confirm()
+
+    def handle_cancel(_x: object) -> None:
+        if dialog:
+            dialog.dismiss()
+        if on_cancel:
+            on_cancel()
+
+    btn_cancel = MDButton(
+        MDButtonText(
+            text=ar(cancel_text),
+            bold=True,
+            theme_text_color="Custom",
+            text_color=(0.35, 0.45, 0.60, 1),
+        ),
+        style="outlined",
+        on_release=handle_cancel,
+    )
+    btn_confirm = MDButton(
+        MDButtonText(
+            text=ar(confirm_text),
+            bold=True,
+            theme_text_color="Custom",
+            text_color=(1, 1, 1, 1),
+        ),
+        style="filled",
+        theme_bg_color="Custom",
+        md_bg_color=(0.02, 0.52, 0.80, 1),
+        on_release=handle_confirm,
+    )
+
+    dialog = MDDialog(
+        MDDialogHeadlineText(
+            text=ar(title),
+            bold=True,
+            theme_text_color="Custom",
+            text_color=(0.08, 0.16, 0.34, 1),
+        ),
+        MDDialogSupportingText(
+            text=ar(text),
+            theme_text_color="Custom",
+            text_color=(0.35, 0.45, 0.60, 1),
+        ),
+        MDDialogButtonContainer(
+            btn_cancel,
+            btn_confirm,
+            spacing="10dp",
+        ),
+        theme_bg_color="Custom",
+        md_bg_color=(1.0, 1.0, 1.0, 0.98),
+        radius=[24, 24, 24, 24],
+    )
+    dialog.open()
+    return dialog
+
+
+def show_modern_notification(
+    title: str,
+    message: str,
+    icon: str = "check-circle",
+    notif_type: str = "success",
+) -> None:
+    """عرض إشعار جميل فاخر داخل التطبيق بنمط الكبسولة العصرية العائمة"""
+    _ = icon
+    from kivymd.uix.snackbar import (
+        MDSnackbar,
+        MDSnackbarCloseButton,
+        MDSnackbarSupportingText,
+        MDSnackbarText,
+    )
+
+    color_map = {
+        "success": (0.05, 0.65, 0.40, 1),
+        "info": (0.02, 0.52, 0.80, 1),
+        "warning": (0.85, 0.55, 0.05, 1),
+        "magic": (0.48, 0.22, 0.85, 1),
+        "error": (0.85, 0.20, 0.30, 1),
+    }
+    accent = color_map.get(notif_type, (0.48, 0.22, 0.85, 1))
+
+    try:
+        snackbar = MDSnackbar(
+            MDSnackbarText(
+                text=ar(f"✦ {title}"),
+                bold=True,
+                theme_text_color="Custom",
+                text_color=accent,
+            ),
+            MDSnackbarSupportingText(
+                text=ar(message),
+                theme_text_color="Custom",
+                text_color=(0.25, 0.35, 0.50, 1),
+            ),
+            MDSnackbarCloseButton(
+                icon="close-circle-outline",
+                theme_icon_color="Custom",
+                icon_color=(0.50, 0.60, 0.75, 1),
+            ),
+            y="28dp",
+            pos_hint={"center_x": 0.5},
+            size_hint_x=0.94,
+            radius=[22, 22, 22, 22],
+            theme_bg_color="Custom",
+            md_bg_color=(1.0, 1.0, 1.0, 0.98),
+            duration=3.8,
+        )
+        snackbar.open()
+    except Exception:
+        # إذا تعذر الـ Snackbar (مثل نقص دعم FBO في بعض المعالجات) نفتح Dialog لطيف
+        _ = show_app_dialog(title=title, text=message)

@@ -5,28 +5,28 @@
 
     MDBoxLayout:
         orientation: "vertical"
-        md_bg_color: 0.976, 0.965, 0.945, 1
+        md_bg_color: 0.94, 0.97, 1.0, 1
 
-        # شريط علوي أنيق بلون البيج والعاجي الفاخر
+        # ═══ شريط علوي كوني ══════════════════════════════════
         MDTopAppBar:
             id: top_bar
             type: "small"
             theme_bg_color: "Custom"
-            md_bg_color: 0.957, 0.937, 0.902, 1
-            elevation: 1
+            md_bg_color: 1.0, 1.0, 1.0, 0.98
+            elevation: 2
 
             MDTopAppBarLeadingButtonContainer:
                 MDActionTopAppBarButton:
-                    icon: "arrow-left"
+                    icon: "arrow-left-circle-outline"
                     theme_icon_color: "Custom"
-                    icon_color: 0.72, 0.42, 0.24, 1
+                    icon_color: 0.02, 0.52, 0.80, 1
                     on_release: root.go_back()
 
             MDTopAppBarTitle:
                 id: top_bar_title
-                text: app.ar("الإعدادات ومنظّم الوسائط")
+                text: app.ar("الإعدادات ✦ CosmoSort")
                 theme_text_color: "Custom"
-                text_color: 0.20, 0.16, 0.14, 1
+                text_color: 0.08, 0.16, 0.34, 1
                 bold: True
 
         ScrollView:
@@ -34,30 +34,557 @@
 
             MDBoxLayout:
                 orientation: "vertical"
-                padding: [dp(16), dp(16), dp(16), dp(24)]
-                spacing: dp(14)
+                padding: [dp(14), dp(14), dp(14), dp(28)]
+                spacing: dp(12)
                 size_hint_y: None
                 height: self.minimum_height
 
-                # بطاقة حالة خدمة المراقبة التلقائية
+                # ──────────────────────────────────────────────
+                # 1. مصدر الفحص
+                # ──────────────────────────────────────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(100)
-                    radius: [20, 20, 20, 20]
-                    padding: dp(16)
-                    elevation: 1
+                    height: dp(178)
+                    radius: [24, 24, 24, 24]
+                    padding: dp(14)
+                    elevation: 3
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 0.992, 0.980, 1
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
+                    orientation: "vertical"
+                    spacing: dp(8)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(28)
+
+                        MDLabel:
+                            id: storage_source_title
+                            text: app.ar("✦ مصدر الفحص وسحب الملفات")
+                            bold: True
+                            font_size: "14sp"
+                            halign: "right"
+                            theme_text_color: "Custom"
+                            text_color: 0.08, 0.16, 0.34, 1
+
+                        MDIcon:
+                            icon: "folder-search-outline"
+                            font_size: "26sp"
+                            size_hint_x: None
+                            width: dp(30)
+                            theme_icon_color: "Custom"
+                            icon_color: 0.02, 0.52, 0.80, 1
+
+                    MDLabel:
+                        id: storage_source_desc_label
+                        text: app.ar("حدد الذاكرة المراد سحب وسائطها")
+                        font_size: "11sp"
+                        shorten: True
+                        shorten_from: "left"
+                        halign: "right"
+                        size_hint_y: None
+                        height: dp(20)
+                        theme_text_color: "Custom"
+                        text_color: 0.35, 0.45, 0.60, 1
+
+                    # أزرار المصدر
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(6)
+                        size_hint_y: None
+                        height: dp(44)
+
+                        MDButton:
+                            id: btn_src_internal
+                            style: "filled"
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.02, 0.52, 0.80, 1
+                            size_hint_x: 0.33
+                            radius: [16, 16, 16, 16]
+                            on_release: root.select_storage_source("internal")
+
+                            MDButtonIcon:
+                                id: icon_src_internal
+                                icon: "cellphone-check"
+                                theme_icon_color: "Custom"
+                                icon_color: 1, 1, 1, 1
+
+                            MDButtonText:
+                                id: text_src_internal
+                                text: app.ar("الداخلية")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 1, 1, 1, 1
+                                font_size: "11sp"
+
+                        MDButton:
+                            id: btn_src_sdcard
+                            style: "outlined"
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.92, 0.95, 1.0, 0.95
+                            size_hint_x: 0.33
+                            radius: [16, 16, 16, 16]
+                            on_release: root.select_storage_source("sdcard")
+
+                            MDButtonIcon:
+                                id: icon_src_sdcard
+                                icon: "micro-sd"
+                                theme_icon_color: "Custom"
+                                icon_color: 0.48, 0.22, 0.85, 1
+
+                            MDButtonText:
+                                id: text_src_sdcard
+                                text: app.ar("كرت SD")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 0.35, 0.45, 0.60, 1
+                                font_size: "11sp"
+
+                        MDButton:
+                            id: btn_src_both
+                            style: "outlined"
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.92, 0.95, 1.0, 0.95
+                            size_hint_x: 0.34
+                            radius: [16, 16, 16, 16]
+                            on_release: root.select_storage_source("both")
+
+                            MDButtonIcon:
+                                id: icon_src_both
+                                icon: "database-outline"
+                                theme_icon_color: "Custom"
+                                icon_color: 0.48, 0.22, 0.85, 1
+
+                            MDButtonText:
+                                id: text_src_both
+                                text: app.ar("كلاهما")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 0.35, 0.45, 0.60, 1
+                                font_size: "11sp"
+
+                # ──────────────────────────────────────────────
+                # 2. وجهة الحفظ
+                # ──────────────────────────────────────────────
+                MDCard:
+                    size_hint_y: None
+                    height: dp(180)
+                    radius: [24, 24, 24, 24]
+                    padding: dp(14)
+                    elevation: 3
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
+                    orientation: "vertical"
+                    spacing: dp(8)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(28)
+
+                        MDLabel:
+                            id: storage_dest_title
+                            text: app.ar("✦ وجهة حفظ الملفات المنظمة")
+                            bold: True
+                            font_size: "14sp"
+                            halign: "right"
+                            theme_text_color: "Custom"
+                            text_color: 0.08, 0.16, 0.34, 1
+
+                        MDIcon:
+                            icon: "folder-arrow-down-outline"
+                            font_size: "26sp"
+                            size_hint_x: None
+                            width: dp(30)
+                            theme_icon_color: "Custom"
+                            icon_color: 0.02, 0.52, 0.80, 1
+
+                    MDLabel:
+                        id: storage_current_path_label
+                        text: app.ar("المسار النشط: ...")
+                        font_size: "11sp"
+                        shorten: True
+                        shorten_from: "left"
+                        halign: "right"
+                        size_hint_y: None
+                        height: dp(20)
+                        theme_text_color: "Custom"
+                        text_color: 0.35, 0.45, 0.60, 1
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(44)
+
+                        MDButton:
+                            id: btn_dest_internal
+                            style: "filled"
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.02, 0.52, 0.80, 1
+                            size_hint_x: 0.5
+                            radius: [16, 16, 16, 16]
+                            on_release: root.select_storage_destination("internal")
+
+                            MDButtonIcon:
+                                id: icon_dest_internal
+                                icon: "cellphone-check"
+                                theme_icon_color: "Custom"
+                                icon_color: 1, 1, 1, 1
+
+                            MDButtonText:
+                                id: text_dest_internal
+                                text: app.ar("الذاكرة الداخلية")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 1, 1, 1, 1
+                                font_size: "11sp"
+
+                        MDButton:
+                            id: btn_dest_sdcard
+                            style: "outlined"
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.92, 0.95, 1.0, 0.95
+                            size_hint_x: 0.5
+                            radius: [16, 16, 16, 16]
+                            on_release: root.select_storage_destination("sdcard")
+
+                            MDButtonIcon:
+                                id: icon_dest_sdcard
+                                icon: "micro-sd"
+                                theme_icon_color: "Custom"
+                                icon_color: 0.02, 0.52, 0.80, 1
+
+                            MDButtonText:
+                                id: text_dest_sdcard
+                                text: app.ar("كرت SD الخارجي")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 0.35, 0.45, 0.60, 1
+                                font_size: "11sp"
+
+                    MDButton:
+                        style: "text"
+                        size_hint_y: None
+                        height: dp(32)
+                        pos_hint: {"right": 1}
+                        on_release: root.open_current_media_folder()
+
+                        MDButtonIcon:
+                            icon: "folder-open-outline"
+                            theme_icon_color: "Custom"
+                            icon_color: 0.02, 0.52, 0.80, 1
+
+                        MDButtonText:
+                            id: text_open_folder_btn
+                            text: app.ar("فتح مجلد الملفات المنظمة")
+                            font_size: "11sp"
+                            bold: True
+                            theme_text_color: "Custom"
+                            text_color: 0.02, 0.52, 0.80, 1
+
+                # ──────────────────────────────────────────────
+                # 3. صلاحية الوصول
+                # ──────────────────────────────────────────────
+                MDCard:
+                    id: permission_card
+                    size_hint_y: None
+                    height: dp(130)
+                    radius: [24, 24, 24, 24]
+                    padding: dp(14)
+                    elevation: 3
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
+                    orientation: "vertical"
+                    spacing: dp(6)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(26)
+
+                        MDLabel:
+                            id: perm_title
+                            text: app.ar("✦ صلاحية الوصول الشامل")
+                            bold: True
+                            font_size: "13sp"
+                            halign: "right"
+                            theme_text_color: "Custom"
+                            text_color: 0.08, 0.16, 0.34, 1
+
+                        MDIcon:
+                            id: perm_icon
+                            icon: "shield-check-outline"
+                            font_size: "24sp"
+                            size_hint_x: None
+                            width: dp(28)
+                            theme_icon_color: "Custom"
+                            icon_color: 0.05, 0.65, 0.40, 1
+
+                    MDLabel:
+                        id: perm_desc_label
+                        text: app.ar("الحالة: جاري التحقق...")
+                        font_size: "11sp"
+                        halign: "right"
+                        size_hint_y: None
+                        height: dp(20)
+                        theme_text_color: "Custom"
+                        text_color: 0.35, 0.45, 0.60, 1
+
+                    MDButton:
+                        id: btn_request_permission
+                        style: "filled"
+                        size_hint_y: None
+                        height: dp(40)
+                        radius: [16, 16, 16, 16]
+                        theme_bg_color: "Custom"
+                        md_bg_color: 0.05, 0.65, 0.40, 1
+                        on_release: root.request_all_files_permission()
+
+                        MDButtonIcon:
+                            icon: "shield-account-outline"
+                            theme_icon_color: "Custom"
+                            icon_color: 1, 1, 1, 1
+
+                        MDButtonText:
+                            id: btn_permission_text
+                            text: app.ar("منح الصلاحية من إعدادات الهاتف")
+                            font_size: "11sp"
+                            bold: True
+                            theme_text_color: "Custom"
+                            text_color: 1, 1, 1, 1
+
+                # ──────────────────────────────────────────────
+                # 4. نمط النسخ/النقل
+                # ──────────────────────────────────────────────
+                MDCard:
+                    size_hint_y: None
+                    height: dp(148)
+                    radius: [24, 24, 24, 24]
+                    padding: dp(14)
+                    elevation: 3
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
+                    orientation: "vertical"
+                    spacing: dp(8)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(26)
+
+                        MDLabel:
+                            id: mode_card_title
+                            text: app.ar("✦ طريقة فرز الملفات")
+                            bold: True
+                            font_size: "13sp"
+                            halign: "right"
+                            theme_text_color: "Custom"
+                            text_color: 0.08, 0.16, 0.34, 1
+
+                        MDIcon:
+                            icon: "arrow-decision-outline"
+                            font_size: "24sp"
+                            size_hint_x: None
+                            width: dp(28)
+                            theme_icon_color: "Custom"
+                            icon_color: 0.85, 0.55, 0.05, 1
+
+                    MDLabel:
+                        id: mode_desc_label
+                        text: app.ar("نسخ آمن (الأصل يبقى) أو نقل كامل (توفير مساحة)")
+                        font_size: "11sp"
+                        halign: "right"
+                        size_hint_y: None
+                        height: dp(20)
+                        theme_text_color: "Custom"
+                        text_color: 0.35, 0.45, 0.60, 1
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(44)
+
+                        MDButton:
+                            id: btn_mode_copy
+                            style: "filled"
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.02, 0.52, 0.80, 1
+                            size_hint_x: 0.5
+                            radius: [16, 16, 16, 16]
+                            on_release: root.select_operation_mode("copy")
+
+                            MDButtonIcon:
+                                id: icon_mode_copy
+                                icon: "content-copy"
+                                theme_icon_color: "Custom"
+                                icon_color: 1, 1, 1, 1
+
+                            MDButtonText:
+                                id: text_mode_copy
+                                text: app.ar("نسخ آمن")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 1, 1, 1, 1
+                                font_size: "11sp"
+
+                        MDButton:
+                            id: btn_mode_move
+                            style: "outlined"
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.92, 0.95, 1.0, 0.95
+                            size_hint_x: 0.5
+                            radius: [16, 16, 16, 16]
+                            on_release: root.select_operation_mode("move")
+
+                            MDButtonIcon:
+                                id: icon_mode_move
+                                icon: "file-move-outline"
+                                theme_icon_color: "Custom"
+                                icon_color: 0.48, 0.22, 0.85, 1
+
+                            MDButtonText:
+                                id: text_mode_move
+                                text: app.ar("نقل كامل")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 0.35, 0.45, 0.60, 1
+                                font_size: "11sp"
+
+                # ──────────────────────────────────────────────
+                # 5. الفرز الشامل
+                # ──────────────────────────────────────────────
+                MDCard:
+                    size_hint_y: None
+                    height: dp(192)
+                    radius: [24, 24, 24, 24]
+                    padding: dp(16)
+                    elevation: 3
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
+                    orientation: "vertical"
+                    spacing: dp(8)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(26)
+
+                        MDLabel:
+                            id: continuous_scan_title
+                            text: app.ar("✦ الفرز الشامل لجميع الوسائط")
+                            bold: True
+                            font_size: "14sp"
+                            theme_text_color: "Custom"
+                            text_color: 0.08, 0.16, 0.34, 1
+                            halign: "right"
+
+                        MDIcon:
+                            icon: "infinity"
+                            theme_icon_color: "Custom"
+                            icon_color: 0.85, 0.55, 0.05, 1
+                            font_size: "26sp"
+                            size_hint_x: None
+                            width: dp(30)
+
+                    MDLabel:
+                        id: continuous_progress_label
+                        text: app.ar("فرز مستمر لكافة الوسائط حتى اكتمال 100%")
+                        font_size: "11sp"
+                        halign: "right"
+                        theme_text_color: "Custom"
+                        text_color: 0.35, 0.45, 0.60, 1
+                        size_hint_y: None
+                        height: dp(22)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(44)
+
+                        MDButton:
+                            id: btn_continuous_scan
+                            style: "filled"
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.85, 0.55, 0.05, 1
+                            size_hint_x: 0.65
+                            radius: [16, 16, 16, 16]
+                            on_release: root.toggle_continuous_scan()
+
+                            MDButtonIcon:
+                                id: icon_continuous_scan
+                                icon: "play-circle-outline"
+                                theme_icon_color: "Custom"
+                                icon_color: 1.0, 1.0, 1.0, 1
+
+                            MDButtonText:
+                                id: text_continuous_scan
+                                text: app.ar("فرز شامل حتى النهاية")
+                                bold: True
+                                font_size: "11sp"
+                                theme_text_color: "Custom"
+                                text_color: 1, 1, 1, 1
+
+                        MDButton:
+                            id: btn_single_batch_scan
+                            style: "outlined"
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.92, 0.95, 1.0, 0.95
+                            size_hint_x: 0.35
+                            radius: [16, 16, 16, 16]
+                            on_release: root.start_manual_scan()
+
+                            MDButtonText:
+                                id: text_single_batch_scan
+                                text: app.ar("دفعة 40")
+                                bold: True
+                                font_size: "11sp"
+                                theme_text_color: "Custom"
+                                text_color: 0.35, 0.45, 0.60, 1
+
+                    MDButton:
+                        style: "text"
+                        size_hint_y: None
+                        height: dp(32)
+                        pos_hint: {"right": 1}
+                        on_release: root.confirm_clear_cache()
+
+                        MDButtonIcon:
+                            icon: "refresh-auto"
+                            theme_icon_color: "Custom"
+                            icon_color: 0.85, 0.20, 0.30, 1
+
+                        MDButtonText:
+                            id: text_clear_cache_btn
+                            text: app.ar("إعادة فحص كل شيء من الصفر")
+                            font_size: "11sp"
+                            bold: True
+                            theme_text_color: "Custom"
+                            text_color: 0.85, 0.20, 0.30, 1
+
+                # ──────────────────────────────────────────────
+                # 6. خدمة المراقبة
+                # ──────────────────────────────────────────────
+                MDCard:
+                    size_hint_y: None
+                    height: dp(102)
+                    radius: [24, 24, 24, 24]
+                    padding: dp(16)
+                    elevation: 3
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
                     orientation: "horizontal"
                     spacing: dp(12)
 
                     MDIcon:
                         id: service_icon
-                        icon: "radar"
-                        font_size: "32sp"
+                        icon: "satellite-variant"
+                        font_size: "34sp"
                         pos_hint: {"center_y": 0.5}
                         theme_icon_color: "Custom"
-                        icon_color: 0.72, 0.42, 0.24, 1
+                        icon_color: 0.05, 0.65, 0.40, 1
 
                     MDBoxLayout:
                         orientation: "vertical"
@@ -66,29 +593,30 @@
 
                         MDLabel:
                             id: service_title
-                            text: app.ar("خدمة المراقبة التلقائية اللحظية")
+                            text: app.ar("خدمة المراقبة التلقائية")
                             bold: True
                             font_size: "14sp"
                             halign: "right"
                             theme_text_color: "Custom"
-                            text_color: 0.20, 0.16, 0.14, 1
+                            text_color: 0.08, 0.16, 0.34, 1
 
                         MDLabel:
                             id: service_desc
-                            text: app.ar("فرز ونقل أي صورة أو فيديو جديد فور التقاطه أو تنزيله")
+                            text: app.ar("فرز أي ملف جديد فور التقاطه أو تنزيله")
                             font_size: "11sp"
                             halign: "right"
                             theme_text_color: "Custom"
-                            text_color: 0.52, 0.46, 0.42, 1
+                            text_color: 0.35, 0.45, 0.60, 1
 
                     MDButton:
                         id: btn_service_toggle
                         style: "filled"
                         size_hint: None, None
-                        size: dp(90), dp(40)
+                        size: dp(92), dp(42)
+                        radius: [16, 16, 16, 16]
                         pos_hint: {"center_y": 0.5}
                         theme_bg_color: "Custom"
-                        md_bg_color: 0.72, 0.42, 0.24, 1
+                        md_bg_color: 0.05, 0.65, 0.40, 1
                         on_release: root.toggle_service()
 
                         MDButtonText:
@@ -98,76 +626,159 @@
                             theme_text_color: "Custom"
                             text_color: 1, 1, 1, 1
 
-                # بطاقة الفحص اليدوي الفوري (Scan Now) بلون البيج الكراميلي الفاخر
+                # ──────────────────────────────────────────────
+                # 7. أدوات التخزين الذكية وشاشة البداية
+                # ──────────────────────────────────────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(115)
-                    radius: [20, 20, 20, 20]
-                    padding: dp(16)
-                    elevation: 2
+                    height: dp(148)
+                    radius: [24, 24, 24, 24]
+                    padding: [dp(16), dp(12), dp(16), dp(12)]
+                    elevation: 3
                     theme_bg_color: "Custom"
-                    md_bg_color: 0.925, 0.885, 0.825, 1
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
                     orientation: "vertical"
                     spacing: dp(10)
 
                     MDBoxLayout:
                         orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(26)
 
                         MDLabel:
-                            id: manual_scan_title
-                            text: app.ar("فحص وتصنيف الذاكرة يدوياً الآن")
+                            text: app.ar("✦ أدوات التخزين وشاشة البداية")
                             bold: True
-                            font_size: "14sp"
-                            theme_text_color: "Custom"
-                            text_color: 0.22, 0.17, 0.14, 1
+                            font_size: "13sp"
                             halign: "right"
+                            theme_text_color: "Custom"
+                            text_color: 0.08, 0.16, 0.34, 1
 
                         MDIcon:
-                            icon: "folder-sync-outline"
-                            theme_icon_color: "Custom"
-                            icon_color: 0.85, 0.52, 0.15, 1
+                            icon: "auto-fix"
                             font_size: "22sp"
                             size_hint_x: None
                             width: dp(26)
-
-                    MDButton:
-                        style: "filled"
-                        theme_bg_color: "Custom"
-                        md_bg_color: 0.72, 0.42, 0.24, 1
-                        size_hint_y: None
-                        height: dp(42)
-                        on_release: root.start_manual_scan()
-
-                        MDButtonIcon:
-                            icon: "play-circle"
                             theme_icon_color: "Custom"
-                            icon_color: 1, 1, 1, 1
+                            icon_color: 0.02, 0.52, 0.85, 1
 
-                        MDButtonText:
-                            id: btn_scan_text
-                            text: app.ar("بدء الفحص الشامل للوسائط")
-                            bold: True
-                            theme_text_color: "Custom"
-                            text_color: 1, 1, 1, 1
+                    # أزرار تنظيف المكرر والإحصائيات
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(40)
 
-                # بطاقة إدارة بصمة الوجه لصاحب الجهاز
+                        MDButton:
+                            style: "filled"
+                            size_hint_x: 0.5
+                            radius: [14, 14, 14, 14]
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.02, 0.52, 0.80, 1
+                            on_release: root.show_storage_stats()
+
+                            MDButtonIcon:
+                                icon: "chart-pie"
+                                theme_icon_color: "Custom"
+                                icon_color: 1, 1, 1, 1
+
+                            MDButtonText:
+                                text: app.ar("المساحات")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 1, 1, 1, 1
+                                font_size: "11sp"
+
+                        MDButton:
+                            style: "filled"
+                            size_hint_x: 0.5
+                            radius: [14, 14, 14, 14]
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.85, 0.35, 0.20, 1
+                            on_release: root.find_duplicates_action()
+
+                            MDButtonIcon:
+                                icon: "broom"
+                                theme_icon_color: "Custom"
+                                icon_color: 1, 1, 1, 1
+
+                            MDButtonText:
+                                text: app.ar("تنظيف المكرر")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 1, 1, 1, 1
+                                font_size: "11sp"
+
+                    # أزرار شاشة البداية الكونية
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(40)
+
+                        MDButton:
+                            id: btn_replay_intro
+                            style: "outlined"
+                            size_hint_x: 0.45
+                            radius: [14, 14, 14, 14]
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.94, 0.92, 1.0, 0.95
+                            on_release: root.replay_intro()
+
+                            MDButtonIcon:
+                                icon: "orbit"
+                                theme_icon_color: "Custom"
+                                icon_color: 0.50, 0.22, 0.85, 1
+
+                            MDButtonText:
+                                text: app.ar("عرض البداية")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 0.50, 0.22, 0.85, 1
+                                font_size: "10sp"
+
+                        MDButton:
+                            id: btn_skip_intro
+                            style: "outlined"
+                            size_hint_x: 0.55
+                            radius: [14, 14, 14, 14]
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.92, 0.95, 1.0, 0.95
+                            on_release: root.toggle_skip_intro()
+
+                            MDButtonIcon:
+                                id: icon_skip_intro
+                                icon: "skip-next-circle-outline"
+                                theme_icon_color: "Custom"
+                                icon_color: 0.02, 0.52, 0.80, 1
+
+                            MDButtonText:
+                                id: text_skip_intro
+                                text: app.ar("تخطي البداية: معطل")
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 0.25, 0.40, 0.58, 1
+                                font_size: "10sp"
+
+                # ──────────────────────────────────────────────
+                # 8. بصمة الوجه
+                # ──────────────────────────────────────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(84)
-                    radius: [18, 18, 18, 18]
+                    height: dp(90)
+                    radius: [24, 24, 24, 24]
                     padding: [dp(16), dp(10), dp(16), dp(10)]
-                    elevation: 1
+                    elevation: 3
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 0.992, 0.980, 1
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
                     orientation: "horizontal"
                     spacing: dp(12)
 
                     MDIcon:
-                        icon: "account-box-multiple"
-                        font_size: "28sp"
+                        icon: "face-recognition"
+                        font_size: "30sp"
                         pos_hint: {"center_y": 0.5}
                         theme_icon_color: "Custom"
-                        icon_color: 0.72, 0.42, 0.24, 1
+                        icon_color: 0.48, 0.22, 0.85, 1
 
                     MDBoxLayout:
                         orientation: "vertical"
@@ -180,7 +791,7 @@
                             font_size: "13sp"
                             halign: "right"
                             theme_text_color: "Custom"
-                            text_color: 0.20, 0.16, 0.14, 1
+                            text_color: 0.08, 0.16, 0.34, 1
 
                         MDLabel:
                             id: face_card_status
@@ -188,27 +799,30 @@
                             font_size: "11sp"
                             halign: "right"
                             theme_text_color: "Custom"
-                            text_color: 0.52, 0.46, 0.42, 1
+                            text_color: 0.35, 0.45, 0.60, 1
 
                     MDButton:
                         style: "outlined"
                         size_hint: None, None
-                        size: dp(100), dp(38)
+                        size: dp(102), dp(40)
+                        radius: [16, 16, 16, 16]
                         pos_hint: {"center_y": 0.5}
                         theme_bg_color: "Custom"
-                        md_bg_color: 1, 0.992, 0.980, 1
+                        md_bg_color: 0.92, 0.95, 1.0, 0.95
                         on_release: root.open_people_setup()
 
                         MDButtonText:
                             id: btn_edit_face_text
                             text: app.ar("تعديل البصمة")
                             theme_text_color: "Custom"
-                            text_color: 0.72, 0.42, 0.24, 1
+                            text_color: 0.48, 0.22, 0.85, 1
 
-                # عنوان قسم سجل عمليات النقل الأخيرة
+                # ──────────────────────────────────────────────
+                # 8. سجل العمليات
+                # ──────────────────────────────────────────────
                 MDBoxLayout:
                     size_hint_y: None
-                    height: dp(28)
+                    height: dp(30)
                     orientation: "horizontal"
 
                     MDButton:
@@ -217,15 +831,15 @@
                         on_release: root.refresh_history()
 
                         MDButtonIcon:
-                            icon: "refresh"
+                            icon: "refresh-circle"
                             theme_icon_color: "Custom"
-                            icon_color: 0.52, 0.40, 0.30, 1
+                            icon_color: 0.02, 0.52, 0.80, 1
 
                         MDButtonText:
                             id: refresh_history_text
                             text: app.ar("تحديث")
                             theme_text_color: "Custom"
-                            text_color: 0.52, 0.40, 0.30, 1
+                            text_color: 0.02, 0.52, 0.80, 1
 
                     MDButton:
                         style: "text"
@@ -235,32 +849,32 @@
                         MDButtonIcon:
                             icon: "undo-variant"
                             theme_icon_color: "Custom"
-                            icon_color: 0.85, 0.35, 0.25, 1
+                            icon_color: 0.85, 0.20, 0.30, 1
 
                         MDButtonText:
                             id: undo_all_text
                             text: app.ar("تراجع عن الكل")
                             theme_text_color: "Custom"
-                            text_color: 0.85, 0.35, 0.25, 1
+                            text_color: 0.85, 0.20, 0.30, 1
 
                     Widget:
 
                     MDLabel:
                         id: history_section_title
-                        text: app.ar("سجل عمليات النقل الأخيرة والتراجع")
+                        text: app.ar("✦ سجل عمليات النقل")
                         bold: True
                         font_size: "13sp"
                         halign: "right"
                         theme_text_color: "Custom"
-                        text_color: 0.20, 0.16, 0.14, 1
+                        text_color: 0.08, 0.16, 0.34, 1
 
                     MDIcon:
-                        icon: "history"
-                        font_size: "20sp"
+                        icon: "timeline-clock-outline"
+                        font_size: "22sp"
                         size_hint_x: None
-                        width: dp(24)
+                        width: dp(26)
                         theme_icon_color: "Custom"
-                        icon_color: 0.72, 0.42, 0.24, 1
+                        icon_color: 0.48, 0.22, 0.85, 1
 
                 # قائمة سجل العمليات
                 MDList:

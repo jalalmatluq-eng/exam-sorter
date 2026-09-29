@@ -1,0 +1,30 @@
+[tool.basedpyright]
+typeCheckingMode = "basic"
+reportMissingTypeStubs = false
+reportMissingImports = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportUnknownVariableType = false
+reportUnknownParameterType = false
+reportUnknownLambdaType = false
+reportAny = false
+reportExplicitAny = false
+reportImplicitOverride = false
+reportUnannotatedClassAttribute = false
+reportImplicitStringConcatenation = false
+reportUnusedCallResult = false
+reportMissingParameterType = false
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+ignore = [
+    "BLE001", # Do not catch blind exception
+    "S110",   # try-except-pass
+    "RUF012", # Mutable default value for class attribute
+    "SIM102", # nested if statements
+    "DTZ005", # datetime.now without tz
+    "B007",   # Loop control variable not used
+]

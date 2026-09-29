@@ -7,7 +7,10 @@ from typing import TypedDict
 
 import file_manager
 
-MEDIA_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"}
+MEDIA_EXTS = {
+    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif",
+    ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm", ".m4v", ".flv"
+}
 
 
 class CategoryInfo(TypedDict):
@@ -51,13 +54,17 @@ def get_storage_stats(base_path: Path | None = None) -> StorageStats:
                 "count": cat_count,
                 "size_mb": round(cat_bytes / 1048576, 2),
             }
-    stats["total_files"] = sum(c["count"] for c in stats["categories"].values())
+    stats["total_files"] = sum(
+        c["count"] for c in stats["categories"].values()
+    )
     stats["total_size_mb"] = round(total_bytes / 1048576, 2)
     try:
         db_path = base / "scanned_media_cache.db"
         if db_path.exists():
             conn = sqlite3.connect(str(db_path))
-            row = conn.execute("SELECT MAX(processed_at) FROM scanned_files").fetchone()
+            row = conn.execute(
+                "SELECT MAX(processed_at) FROM scanned_files"
+            ).fetchone()
             conn.close()
             if row and row[0]:
                 stats["last_scan_time"] = float(row[0])
@@ -90,3 +97,28 @@ def find_duplicate_files(base_path: Path | None = None) -> list[list[str]]:
         except OSError:
             continue
     return [v for v in hash_map.values() if len(v) > 1]
+
+
+def remove_duplicate_files(duplicates: list[list[str]]) -> tuple[int, int]:
+    """
+    حذف النسخ المكررة بأمان مع الحفاظ التام على النسخة الأصلية (الملف الأول) من كل مجموعة.
+
+    تعيد زوجاً من: (عدد الملفات المحذوفة, إجمالي البايتات المحررة)
+    """
+    deleted_count = 0
+    freed_bytes = 0
+    for group in duplicates:
+        if len(group) <= 1:
+            continue
+        # الإبقاء على الملف الأول، وحذف النسخ الإضافية المكررة
+        for file_path in group[1:]:
+            p = Path(file_path)
+            try:
+                if p.is_file():
+                    sz = p.stat().st_size
+                    p.unlink()
+                    deleted_count += 1
+                    freed_bytes += sz
+            except OSError:
+                continue
+    return deleted_count, freed_bytes

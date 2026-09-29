@@ -1,57 +1,58 @@
-# -*- coding: utf-8 -*-
 """
-نقطة انطلاق تطبيق مصنّف صور الاختبارات الجامعية (Exam Sorter).
+تطبيق CosmoSort (كوزمو سورت): منظّم الوسائط الكوني والذكي لفرز الصور والفيديوهات والاختبارات.
 - تهيئة إطار العمل KivyMD وضبط الثيم والخطوط العربية.
-- تحميل ملفات التصميم (.kv) وتسجيل الشاشات الخمس.
-- طلب صلاحيات نظام Android (الكاميرا ووحدات التخزين) تلقائياً عند التشغيل.
-- إدارة الانتقال بين الشاشات وحفظ مفتاح API.
+- تحميل ملفات التصميم (.kv) وتسجيل الشاشات.
+- إدارة أذونات الأجهزة والخدمات بالخلفية والانتقال بين الشاشات.
 """
 
+import logging
 import os
 from pathlib import Path
-from dotenv import load_dotenv
+from typing import override
 
+from dotenv import load_dotenv
+from kivy.clock import Clock
+from kivy.core.text import LabelBase
 from kivy.core.window import Window
 from kivy.lang import Builder
-from kivy.uix.screenmanager import ScreenManager, FadeTransition
-from kivy.core.text import LabelBase
+from kivy.uix.screenmanager import FadeTransition, ScreenManager
 from kivy.utils import platform
-
 from kivymd.app import MDApp
 
-# تحسين الاستقرار ومنع انهيار معالجات الرسوميات (Adreno GPUs) عند الضغط على الأزرار
-try:
-    from kivymd.uix.behaviors.ripple_behavior import CommonRipple, M3CommonRipple
-    CommonRipple.call_ripple_animation_methods = lambda *args, **kwargs: None
-    M3CommonRipple.call_ripple_animation_methods = lambda *args, **kwargs: None
-    CommonRipple.lay_canvas_instructions = lambda *args, **kwargs: None
-    M3CommonRipple.lay_canvas_instructions = lambda *args, **kwargs: None
-except Exception:
-    pass
+import file_manager
+from screens.capture_screen import CaptureScreen
+from screens.classifying_screen import ClassifyingScreen
+from screens.confirm_screen import ConfirmScreen
+from screens.home_screen import HomeScreen
+from screens.intro_screen import IntroScreen
+from screens.people_setup_screen import PeopleSetupScreen
+from screens.settings_screen import SettingsScreen
+from screens.subject_detail_screen import SubjectDetailScreen
+from service import media_watcher_service
+from utils.arabic_helper import ar, get_arabic_font_path
+
+logger = logging.getLogger("CosmoSortApp")
 
 # تحميل المتغيرات من .env بأمان
 try:
     dotenv_file = Path(__file__).resolve().parent / ".env"
     if dotenv_file.exists():
-        load_dotenv(dotenv_path=str(dotenv_file))
-except Exception:
-    pass
-
-# استيراد الشاشات
-from screens.home_screen import HomeScreen
-from screens.capture_screen import CaptureScreen
-from screens.classifying_screen import ClassifyingScreen
-from screens.confirm_screen import ConfirmScreen
-from screens.subject_detail_screen import SubjectDetailScreen
-from screens.people_setup_screen import PeopleSetupScreen
-from screens.settings_screen import SettingsScreen
-
+        _ = load_dotenv(dotenv_path=str(dotenv_file))
+except OSError as e:
+    logger.debug("Failed to load .env: %s", e)
 
 # 1. تسجيل الخط العربي على مستوى المحرك بالكامل قبل تحميل أي واجهات
-from utils.arabic_helper import get_arabic_font_path, ar
 font_path = get_arabic_font_path()
 if font_path and os.path.exists(font_path):
-    for f_name in ("Roboto", "RobotoMedium", "RobotoLight", "RobotoThin", "RobotoBlack", "ArabicFont"):
+    font_names = (
+        "Roboto",
+        "RobotoMedium",
+        "RobotoLight",
+        "RobotoThin",
+        "RobotoBlack",
+        "ArabicFont",
+    )
+    for f_name in font_names:
         try:
             LabelBase.register(
                 name=f_name,
@@ -60,14 +61,19 @@ if font_path and os.path.exists(font_path):
                 fn_italic=font_path,
                 fn_bolditalic=font_path,
             )
-        except Exception as e:
-            print(f"تنبيه أثناء تسجيل الخط {f_name}:", e)
+        except OSError as e:
+            logger.warning("تنبيه أثناء تسجيل الخط %s: %s", f_name, e)
 
 
-class ExamSorterApp(MDApp):
-    def __init__(self, **kwargs):
+class CosmoSortApp(MDApp):
+    title: str = "CosmoSort ✦ جامع العوالم الذكي"
+    api_key: str = ""
+    arabic_font: str = ""
+    batch_queue: list[object]
+
+    def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self.title = "وسائط ذكية - AI Media Organizer"
+        self.title = "CosmoSort ✦ جامع العوالم الذكي"
         self.api_key = os.getenv("ANTHROPIC_API_KEY", "")
         self.arabic_font = font_path or "Roboto"
         self.batch_queue = []
@@ -76,19 +82,21 @@ class ExamSorterApp(MDApp):
         """مساعد عام لتشكيل وعكس النصوص العربية في ملفات KV"""
         return ar(text)
 
-    def build(self):
+    @override
+    def build(self) -> ScreenManager:
         """بناء التطبيق وضبط الواجهة والشاشات"""
-        # ضبط مظهر Material Design 3 العصري بالبيج والعاجي الفاخر
-        self.theme_cls.primary_palette = "Brown"
+        # ضبط نمط سمائي كوني فاتح ومضيء (Light Celestial Sky)
+        self.theme_cls.primary_palette = "#0284C7"
         self.theme_cls.theme_style = "Light"
-        Window.clearcolor = (0.976, 0.965, 0.945, 1)
+        if Window is not None:
+            # خلفية سماء فاتحة كونية ناصعة ومريحة للعين
+            Window.clearcolor = (0.94, 0.97, 1.0, 1.0)
 
         # تنظيف الملفات المؤقتة القديمة عند بدء التشغيل
-        import file_manager
-        file_manager.cleanup_temp_files()
+        _ = file_manager.cleanup_temp_files()
 
         # إعداد الحجم المريح والملائم على الحاسوب وشاشات الويب
-        if platform not in ("android", "ios"):
+        if Window is not None and platform not in ("android", "ios"):
             Window.size = (420, 760)
             Window.minimum_width = 340
             Window.minimum_height = 500
@@ -100,6 +108,7 @@ class ExamSorterApp(MDApp):
         # تحميل ملفات التصميم .kv
         kv_dir = Path(__file__).resolve().parent / "kv"
         for kv_file in [
+            "intro_screen.kv",
             "home_screen.kv",
             "capture_screen.kv",
             "classifying_screen.kv",
@@ -110,10 +119,11 @@ class ExamSorterApp(MDApp):
         ]:
             file_path = kv_dir / kv_file
             if file_path.exists():
-                Builder.load_file(str(file_path))
+                _ = Builder.load_file(str(file_path))
 
         # إنشاء مدير الشاشات وإضافة الشاشات
-        sm = ScreenManager(transition=FadeTransition(duration=0.15))
+        sm = ScreenManager(transition=FadeTransition(duration=0.25))
+        sm.add_widget(IntroScreen(name="intro_screen"))
         sm.add_widget(HomeScreen(name="home_screen"))
         sm.add_widget(CaptureScreen(name="capture_screen"))
         sm.add_widget(ClassifyingScreen(name="classifying_screen"))
@@ -122,39 +132,57 @@ class ExamSorterApp(MDApp):
         sm.add_widget(PeopleSetupScreen(name="people_setup_screen"))
         sm.add_widget(SettingsScreen(name="settings_screen"))
 
-        sm.current = "home_screen"
+        # فحص تفضيل تخطي شاشة البداية بعد أول تشغيل
+        prefs = file_manager.get_sorter_preferences()
+        if prefs.get("skip_intro", False):
+            sm.current = "home_screen"
+        else:
+            sm.current = "intro_screen"
 
-        # ربط زر الرجوع الفعلي للجوال للعودة للشاشة الرئيسية بدلاً من إغلاق التطبيق
-        Window.bind(on_keyboard=self.on_hardware_back_key)
+        # ربط زر الرجوع الفعلي للجوال للعودة للرئيسية بدلاً من الخروج
+        if Window is not None:
+            Window.bind(on_keyboard=self.on_hardware_back_key)
 
         # بدء تشغيل خدمة المراقبة بالخلفية إذا كانت مفعلة برغبة المستخدم
-        from kivy.clock import Clock
-        from service import media_watcher_service
         if media_watcher_service.is_service_desired_running():
-            Clock.schedule_once(lambda dt: media_watcher_service.start_system_service(), 2.0)
+            def _delayed_service_start(_dt: float) -> None:
+                media_watcher_service.start_system_service()
+
+            Clock.schedule_once(_delayed_service_start, 2.0)
 
         return sm
 
-    def on_hardware_back_key(self, window, key, *args):
+    def on_hardware_back_key(
+        self, _window: object, key: int, *_args: object
+    ) -> bool:
         """التعامل الذكي مع زر الرجوع بأندرويد (مفتاح 27)"""
-        if key == 27:
-            if hasattr(self, "root") and self.root and hasattr(self.root, "current"):
-                if self.root.current != "home_screen":
-                    try:
-                        cur_screen = self.root.get_screen(self.root.current)
-                        if hasattr(cur_screen, "go_back"):
-                            cur_screen.go_back()
-                        else:
-                            self.root.current = "home_screen"
-                    except Exception:
-                        self.root.current = "home_screen"
-                    return True  # استهلاك الحدث لمنع خروج التطبيق
+        if (
+            key == 27
+            and hasattr(self, "root")
+            and self.root
+            and hasattr(self.root, "current")
+            and self.root.current not in ("home_screen", "intro_screen")
+        ):
+            try:
+                cur_screen = self.root.get_screen(self.root.current)
+                if hasattr(cur_screen, "go_back"):
+                    cur_screen.go_back()
+                else:
+                    self.root.current = "home_screen"
+            except (AttributeError, KeyError, RuntimeError) as e:
+                logger.debug("خطأ أثناء الرجوع بالزر الخلفي: %s", e)
+                self.root.current = "home_screen"
+            return True  # استهلاك الحدث لمنع خروج التطبيق
         return False
 
-    def request_android_permissions(self):
+    def request_android_permissions(self) -> None:
         """طلب صلاحيات الكاميرا والتخزين على أجهزة أندرويد"""
         try:
-            from android.permissions import request_permissions, Permission
+            from android.permissions import (  # type: ignore
+                Permission,
+                request_permissions,
+            )
+
             perms = [
                 Permission.CAMERA,
                 Permission.READ_EXTERNAL_STORAGE,
@@ -167,35 +195,43 @@ class ExamSorterApp(MDApp):
             if hasattr(Permission, "POST_NOTIFICATIONS"):
                 perms.append(Permission.POST_NOTIFICATIONS)
             request_permissions(perms)
-        except Exception as e:
-            print("تنبيه: تعذر استدعاء مكتبة صلاحيات أندرويد:", e)
+        except (ImportError, AttributeError, RuntimeError) as e:
+            logger.warning("تنبيه: تعذر استدعاء مكتبة صلاحيات أندرويد: %s", e)
 
         self.check_and_request_all_files_permission()
 
-    def check_and_request_all_files_permission(self):
-        """طلب إذن الوصول الكامل لكافة الملفات (MANAGE_EXTERNAL_STORAGE) على أندرويد 11+"""
+    def check_and_request_all_files_permission(self) -> None:
+        """طلب إذن الوصول الكامل لكافة الملفات على أندرويد 11+"""
         if platform != "android":
             return
         try:
-            from jnius import autoclass
-            from android import mActivity
+            from android import mActivity  # type: ignore
+            from jnius import autoclass  # type: ignore
 
             Environment = autoclass("android.os.Environment")
             BuildVersion = autoclass("android.os.Build$VERSION")
 
-            if BuildVersion.SDK_INT >= 30:  # Android 11+
-                if not Environment.isExternalStorageManager():
-                    Intent = autoclass("android.content.Intent")
-                    Settings = autoclass("android.provider.Settings")
-                    Uri = autoclass("android.net.Uri")
+            sdk_ver = int(BuildVersion.SDK_INT)
+            is_mgr = bool(Environment.isExternalStorageManager())
+            if sdk_ver >= 30 and not is_mgr:
+                Intent = autoclass("android.content.Intent")
+                Settings = autoclass("android.provider.Settings")
+                Uri = autoclass("android.net.Uri")
 
-                    intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-                    uri = Uri.fromParts("package", mActivity.getPackageName(), None)
-                    intent.setData(uri)
-                    mActivity.startActivity(intent)
-        except Exception as e:
-            print("تنبيه: تعذر فتح إعدادات إذن الوصول لكافة الملفات:", e)
+                action = Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
+                intent = Intent(action)
+                pkg_name = str(mActivity.getPackageName())
+                uri = Uri.fromParts("package", pkg_name, None)
+                intent.setData(uri)
+                mActivity.startActivity(intent)
+        except (ImportError, AttributeError, RuntimeError) as e:
+            logger.warning(
+                "تنبيه: تعذر فتح إعدادات إذن الوصول لكافة الملفات: %s", e
+            )
 
+
+# التوافق مع أي استدعاءات خارجية سابقة
+ExamSorterApp = CosmoSortApp
 
 if __name__ == "__main__":
-    ExamSorterApp().run()
+    CosmoSortApp().run()

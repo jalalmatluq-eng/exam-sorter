@@ -5,28 +5,28 @@
 
     MDBoxLayout:
         orientation: "vertical"
-        md_bg_color: 0.976, 0.965, 0.945, 1
+        md_bg_color: 0.94, 0.97, 1.0, 1
 
-        # شريط علوي أنيق بلون البيج والعاجي الفاخر
+        # ═══ شريط علوي كوني ═════════════════════════════════
         MDTopAppBar:
             id: top_bar
             type: "small"
             theme_bg_color: "Custom"
-            md_bg_color: 0.957, 0.937, 0.902, 1
-            elevation: 1
+            md_bg_color: 1.0, 1.0, 1.0, 0.98
+            elevation: 2
 
             MDTopAppBarLeadingButtonContainer:
                 MDActionTopAppBarButton:
-                    icon: "arrow-left"
+                    icon: "arrow-left-circle-outline"
                     theme_icon_color: "Custom"
-                    icon_color: 0.72, 0.42, 0.24, 1
+                    icon_color: 0.02, 0.52, 0.80, 1
                     on_release: root.go_back()
 
             MDTopAppBarTitle:
                 id: top_bar_title
-                text: "تأكيد تصنيف المادة"
+                text: app.ar("✦ تأكيد وتوجيه الوسائط | CosmoSort")
                 theme_text_color: "Custom"
-                text_color: 0.20, 0.16, 0.14, 1
+                text_color: 0.08, 0.16, 0.34, 1
                 bold: True
                 pos_hint: {"center_x": 0.5}
 
@@ -35,108 +35,107 @@
 
             MDBoxLayout:
                 orientation: "vertical"
-                padding: dp(20)
-                spacing: dp(16)
+                padding: dp(16)
+                spacing: dp(14)
                 size_hint_y: None
                 height: self.minimum_height
 
-                # بطاقة الصورة المصغرة وحالة التحليل
+                # ─── بطاقة الصورة وحالة التحليل ───────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(190)
-                    radius: [20, 20, 20, 20]
-                    elevation: 1
-                    padding: dp(12)
+                    height: dp(192)
+                    radius: [26, 26, 26, 26]
+                    elevation: 4
+                    padding: dp(14)
                     spacing: dp(14)
                     orientation: "horizontal"
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 0.992, 0.980, 1
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
 
                     # إطار الصورة المصغرة
                     MDCard:
                         size_hint: 0.38, 1
-                        radius: [14, 14, 14, 14]
+                        radius: [16, 16, 16, 16]
                         elevation: 0
                         padding: dp(2)
                         theme_bg_color: "Custom"
-                        md_bg_color: 0.93, 0.89, 0.83, 1
+                        md_bg_color: 0.90, 0.94, 0.98, 1
 
                         Image:
                             id: image_thumbnail
                             allow_stretch: True
                             keep_ratio: True
 
-                    # تفاصيل الحالة والذكاء الاصطناعي
+                    # تفاصيل الحالة
                     MDBoxLayout:
                         orientation: "vertical"
                         size_hint_x: 0.62
                         spacing: dp(8)
                         pos_hint: {"center_y": 0.5}
 
-                        # شارة الحالة
                         MDBoxLayout:
                             orientation: "horizontal"
                             size_hint_y: None
-                            height: dp(28)
+                            height: dp(30)
                             spacing: dp(6)
 
                             MDIcon:
-                                icon: "creation"
-                                font_size: "18sp"
+                                icon: "check-decagram"
+                                font_size: "22sp"
                                 pos_hint: {"center_y": 0.5}
                                 theme_icon_color: "Custom"
-                                icon_color: 0.85, 0.52, 0.15, 1
+                                icon_color: 0.02, 0.52, 0.80, 1
 
                             MDLabel:
                                 id: status_badge
-                                text: "تم التعرف بالذكاء الاصطناعي"
+                                text: app.ar("تم الفرز بالذكاء الاصطناعي")
                                 bold: True
                                 font_size: "13sp"
                                 theme_text_color: "Custom"
-                                text_color: 0.72, 0.42, 0.24, 1
+                                text_color: 0.02, 0.52, 0.80, 1
                                 halign: "right"
                                 pos_hint: {"center_y": 0.5}
 
                         MDLabel:
                             id: status_details
-                            text: "يمكنك اعتماد هذا الاسم أو تعديله أدناه قبل الحفظ النهائي"
+                            text: app.ar("يمكنك اعتماد هذا المجلد أو تعديله بحرية")
                             font_size: "12sp"
                             theme_text_color: "Custom"
-                            text_color: 0.52, 0.46, 0.42, 1
+                            text_color: 0.35, 0.45, 0.60, 1
                             halign: "right"
 
-                # بطاقة إدخال وتعديل اسم المقرر
+                # ─── بطاقة إدخال اسم المادة / القسم ──────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(140)
-                    radius: [20, 20, 20, 20]
-                    elevation: 1
+                    height: dp(142)
+                    radius: [24, 24, 24, 24]
+                    elevation: 3
                     padding: dp(18)
                     orientation: "vertical"
                     spacing: dp(10)
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 0.992, 0.980, 1
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
 
                     MDBoxLayout:
                         orientation: "horizontal"
                         size_hint_y: None
-                        height: dp(24)
+                        height: dp(26)
                         spacing: dp(8)
 
                         MDIcon:
                             icon: "folder-edit-outline"
-                            font_size: "20sp"
+                            font_size: "24sp"
                             theme_icon_color: "Custom"
-                            icon_color: 0.72, 0.42, 0.24, 1
+                            icon_color: 0.02, 0.52, 0.80, 1
 
                         MDLabel:
                             id: input_header
-                            text: "اسم المادة الدراسية (المجلد):"
+                            text: app.ar("اسم القسم أو المجلد:")
                             bold: True
                             font_size: "14sp"
                             halign: "right"
                             theme_text_color: "Custom"
-                            text_color: 0.20, 0.16, 0.14, 1
+                            text_color: 0.08, 0.16, 0.34, 1
 
                     MDTextField:
                         id: subject_field
@@ -145,34 +144,34 @@
 
                         MDTextFieldHintText:
                             id: subject_hint
-                            text: "اكتب اسم المادة هنا"
+                            text: app.ar("اكتب اسم المادة أو القسم هنا")
 
-                # قائمة مقترحات سريعة للمواد
+                # ─── اقتراحات سريعة ───────────────────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(110)
-                    radius: [20, 20, 20, 20]
-                    elevation: 1
+                    height: dp(118)
+                    radius: [24, 24, 24, 24]
+                    elevation: 3
                     padding: dp(14)
                     orientation: "vertical"
                     spacing: dp(8)
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 0.992, 0.980, 1
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
 
                     MDLabel:
                         id: suggestions_label
-                        text: "أو اختر مادة بنقرة سريعة:"
+                        text: app.ar("أو اختر مجلداً بنقرة سريعة:")
                         bold: True
                         font_size: "12sp"
                         halign: "right"
                         theme_text_color: "Custom"
-                        text_color: 0.52, 0.46, 0.42, 1
+                        text_color: 0.35, 0.45, 0.60, 1
 
                     ScrollView:
                         do_scroll_y: False
                         do_scroll_x: True
                         size_hint_y: None
-                        height: dp(46)
+                        height: dp(48)
 
                         MDBoxLayout:
                             id: chips_box
@@ -182,75 +181,75 @@
                             width: self.minimum_width
                             padding: [dp(2), 0, dp(2), 0]
 
-                # بطاقة مسار الحفظ المتوقع
+                # ─── مسار الحفظ المتوقع ───────────────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(72)
-                    radius: [16, 16, 16, 16]
-                    elevation: 0
+                    height: dp(74)
+                    radius: [18, 18, 18, 18]
+                    elevation: 2
                     padding: [dp(16), dp(10), dp(16), dp(10)]
                     theme_bg_color: "Custom"
-                    md_bg_color: 0.935, 0.895, 0.835, 1
+                    md_bg_color: 0.90, 0.95, 1.0, 0.95
                     orientation: "horizontal"
                     spacing: dp(12)
 
                     MDIcon:
-                        icon: "folder-check"
-                        font_size: "26sp"
+                        icon: "folder-check-outline"
+                        font_size: "28sp"
                         theme_icon_color: "Custom"
-                        icon_color: 0.72, 0.42, 0.24, 1
+                        icon_color: 0.05, 0.65, 0.40, 1
                         pos_hint: {"center_y": 0.5}
 
                     MDLabel:
                         id: target_path_label
-                        text: "سيتم الحفظ في: ExamSorter/..."
+                        text: app.ar("سيتم الحفظ في: ...")
                         font_size: "12sp"
                         halign: "right"
                         pos_hint: {"center_y": 0.5}
                         theme_text_color: "Custom"
-                        text_color: 0.22, 0.17, 0.14, 1
+                        text_color: 0.08, 0.45, 0.35, 1
 
-                # أزرار الحفظ والإلغاء
+                # ─── أزرار الحفظ/الإلغاء ──────────────────────
                 MDBoxLayout:
                     orientation: "horizontal"
-                    spacing: dp(14)
+                    spacing: dp(12)
                     size_hint_y: None
-                    height: dp(54)
+                    height: dp(56)
                     padding: [0, dp(4), 0, 0]
 
                     MDButton:
                         id: btn_cancel
                         style: "outlined"
-                        size_hint_x: 0.35
-                        radius: [14, 14, 14, 14]
+                        size_hint_x: 0.33
+                        radius: [18, 18, 18, 18]
                         theme_bg_color: "Custom"
-                        md_bg_color: 1, 0.992, 0.980, 1
+                        md_bg_color: 1.0, 1.0, 1.0, 0.95
                         on_release: root.go_back()
 
                         MDButtonText:
                             id: text_cancel
-                            text: "إلغاء"
+                            text: app.ar("إلغاء")
                             theme_text_color: "Custom"
-                            text_color: 0.52, 0.46, 0.42, 1
+                            text_color: 0.35, 0.45, 0.60, 1
                             bold: True
 
                     MDButton:
                         id: btn_save
                         style: "filled"
-                        size_hint_x: 0.65
-                        radius: [14, 14, 14, 14]
+                        size_hint_x: 0.67
+                        radius: [18, 18, 18, 18]
                         theme_bg_color: "Custom"
-                        md_bg_color: 0.72, 0.42, 0.24, 1
+                        md_bg_color: 0.02, 0.52, 0.80, 1
                         on_release: root.save_and_finish()
 
                         MDButtonIcon:
-                            icon: "content-save-check"
+                            icon: "archive-arrow-down-outline"
                             theme_icon_color: "Custom"
-                            icon_color: 1, 1, 1, 1
+                            icon_color: 1.0, 1.0, 1.0, 1
 
                         MDButtonText:
                             id: text_save
-                            text: "حفظ وأرشفة الورقة"
+                            text: app.ar("✦ حفظ وأرشفة في المنظومة")
                             bold: True
                             theme_text_color: "Custom"
                             text_color: 1, 1, 1, 1

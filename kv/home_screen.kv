@@ -5,98 +5,119 @@
 
     MDBoxLayout:
         orientation: "vertical"
-        md_bg_color: 0.976, 0.965, 0.945, 1
+        md_bg_color: 0.94, 0.97, 1.0, 1.0
 
-        # شريط التطبيق العلوي الحديث بالبيج والعاجي الفاخر
+        # ═══════════════════════════════════════════════════════
+        # شريط التطبيق العلوي — سماء كونية فاتحة ومضيئة
+        # ═══════════════════════════════════════════════════════
         MDTopAppBar:
             id: top_bar
             type: "small"
             theme_bg_color: "Custom"
-            md_bg_color: 0.957, 0.937, 0.902, 1
-            elevation: 1
+            md_bg_color: 1.0, 1.0, 1.0, 0.98
+            elevation: 2
 
             MDTopAppBarLeadingButtonContainer:
                 MDActionTopAppBarButton:
-                    icon: "folder-star-outline"
+                    icon: "orbit"
                     theme_icon_color: "Custom"
-                    icon_color: 0.72, 0.42, 0.24, 1
+                    icon_color: 0.02, 0.55, 0.85, 1
 
             MDTopAppBarTitle:
                 id: top_bar_title
-                text: app.ar("منظّم الوسائط الذكي")
+                text: app.ar("CosmoSort ✦ كوزمو سورت")
                 theme_text_color: "Custom"
-                text_color: 0.20, 0.16, 0.14, 1
+                text_color: 0.08, 0.16, 0.34, 1
                 bold: True
 
             MDTopAppBarTrailingButtonContainer:
                 MDActionTopAppBarButton:
-                    icon: "refresh"
+                    icon: "refresh-circle"
                     theme_icon_color: "Custom"
-                    icon_color: 0.52, 0.40, 0.30, 1
+                    icon_color: 0.02, 0.55, 0.85, 1
                     on_release: root.refresh_subjects()
 
                 MDActionTopAppBarButton:
-                    icon: "cog-outline"
+                    icon: "tune-variant"
                     theme_icon_color: "Custom"
-                    icon_color: 0.52, 0.40, 0.30, 1
+                    icon_color: 0.90, 0.52, 0.05, 1
                     on_release: root.open_settings_screen()
 
-        # المساحة التفاعلية الرئيسية المتجاوبة لكافة الشاشات
+        # ═══════════════════════════════════════════════════════
+        # المنطقة الرئيسية
+        # ═══════════════════════════════════════════════════════
         MDBoxLayout:
             orientation: "vertical"
-            padding: [dp(16), dp(12), dp(16), dp(8)]
+            padding: [dp(14), dp(10), dp(14), dp(6)]
             spacing: dp(10)
 
-            # بطاقة الإحصائيات الفخمة (Dashboard Card) بلون البيج الرملي الدافئ
+            # ─── بطاقة الداشبورد الكونية السماوية الفاتحة ───────
             MDCard:
                 id: hero_card
                 size_hint_y: None
-                height: dp(120)
-                radius: [20, 20, 20, 20]
-                padding: dp(12)
-                elevation: 2
+                height: dp(146)
+                radius: [26, 26, 26, 26]
+                padding: dp(14)
+                elevation: 6
                 theme_bg_color: "Custom"
-                md_bg_color: 0.925, 0.885, 0.825, 1
+                md_bg_color: root.hero_card_color
+
+                canvas.before:
+                    Color:
+                        rgba: root.cosmic_glow_color
+                    Line:
+                        rounded_rectangle: [self.x, self.y, self.width, self.height, 26]
+                        width: 1.5
 
                 MDBoxLayout:
                     orientation: "vertical"
-                    spacing: dp(8)
+                    spacing: dp(6)
 
                     MDBoxLayout:
                         orientation: "horizontal"
                         size_hint_y: None
-                        height: dp(24)
+                        height: dp(26)
 
                         MDLabel:
                             id: hero_title
-                            text: app.ar("لوحة الفرز والتحكم الذكي")
+                            text: app.ar("✦ جامع وسائط العالم | CosmoHub")
                             theme_text_color: "Custom"
-                            text_color: 0.22, 0.17, 0.14, 1
-                            font_size: "13sp"
+                            text_color: 0.08, 0.16, 0.34, 1
+                            font_size: "14sp"
                             bold: True
                             halign: "right"
                             valign: "middle"
 
                         MDIcon:
-                            icon: "creation"
+                            icon: "star-four-points"
                             theme_icon_color: "Custom"
-                            icon_color: 0.85, 0.52, 0.15, 1
-                            font_size: "18sp"
+                            icon_color: 0.90, 0.55, 0.05, 1
+                            font_size: "22sp"
                             size_hint_x: None
-                            width: dp(24)
+                            width: dp(28)
 
-                    # كبسولات الإحصائيات العاجية
+                    MDLabel:
+                        id: hero_sub
+                        text: app.ar("يلم كل وسائط العالم وينظمها بذكاء اصطناعي")
+                        theme_text_color: "Custom"
+                        text_color: 0.25, 0.40, 0.58, 1
+                        font_size: "10sp"
+                        halign: "right"
+                        size_hint_y: None
+                        height: dp(16)
+
+                    # كبسولات الإحصاء الكونية
                     MDBoxLayout:
                         orientation: "horizontal"
                         spacing: dp(10)
 
-                        # كبسولة عدد المجلدات
+                        # مجلدات
                         MDCard:
-                            radius: [14, 14, 14, 14]
-                            padding: [dp(8), dp(4)]
-                            elevation: 1
+                            radius: [18, 18, 18, 18]
+                            padding: [dp(8), dp(6)]
+                            elevation: 2
                             theme_bg_color: "Custom"
-                            md_bg_color: 1.0, 0.992, 0.980, 0.92
+                            md_bg_color: 0.93, 0.91, 1.0, 0.95
 
                             MDBoxLayout:
                                 orientation: "vertical"
@@ -106,26 +127,26 @@
                                     id: stats_count
                                     text: app.ar("0 مجلد")
                                     theme_text_color: "Custom"
-                                    text_color: 0.72, 0.42, 0.24, 1
+                                    text_color: 0.45, 0.18, 0.80, 1
                                     bold: True
-                                    font_size: "17sp"
+                                    font_size: "20sp"
                                     halign: "center"
 
                                 MDLabel:
                                     id: stats_title
                                     text: app.ar("المجلدات المنظمة")
                                     theme_text_color: "Custom"
-                                    text_color: 0.48, 0.42, 0.38, 1
-                                    font_size: "11sp"
+                                    text_color: 0.35, 0.30, 0.55, 1
+                                    font_size: "10sp"
                                     halign: "center"
 
-                        # كبسولة إجمالي الملفات
+                        # ملفات
                         MDCard:
-                            radius: [14, 14, 14, 14]
-                            padding: [dp(8), dp(4)]
-                            elevation: 1
+                            radius: [18, 18, 18, 18]
+                            padding: [dp(8), dp(6)]
+                            elevation: 2
                             theme_bg_color: "Custom"
-                            md_bg_color: 1.0, 0.992, 0.980, 0.92
+                            md_bg_color: 0.88, 0.96, 1.0, 0.95
 
                             MDBoxLayout:
                                 orientation: "vertical"
@@ -135,25 +156,25 @@
                                     id: stats_exams_count
                                     text: app.ar("0 ملف")
                                     theme_text_color: "Custom"
-                                    text_color: 0.72, 0.42, 0.24, 1
+                                    text_color: 0.02, 0.52, 0.85, 1
                                     bold: True
-                                    font_size: "17sp"
+                                    font_size: "20sp"
                                     halign: "center"
 
                                 MDLabel:
                                     id: stats_exams_title
                                     text: app.ar("إجمالي الملفات")
                                     theme_text_color: "Custom"
-                                    text_color: 0.48, 0.42, 0.38, 1
-                                    font_size: "11sp"
+                                    text_color: 0.20, 0.45, 0.65, 1
+                                    font_size: "10sp"
                                     halign: "center"
 
-            # شريط الأزرار التفاعلية السريعة مع شريط تمرير أفقي سلس
+            # ─── شريط أزرار الكبسولات الكونية ─────────────────
             MDScrollView:
                 do_scroll_x: True
                 do_scroll_y: False
                 size_hint_y: None
-                height: dp(44)
+                height: dp(50)
                 bar_width: 0
 
                 MDBoxLayout:
@@ -163,200 +184,207 @@
                     width: self.minimum_width
                     padding: [dp(2), 0, dp(2), 0]
 
+                    # بصمة وجهي
                     MDButton:
-                        style: "outlined"
+                        style: "filled"
                         size_hint_x: None
-                        width: dp(125)
-                        radius: [14, 14, 14, 14]
+                        width: dp(136)
+                        radius: [18, 18, 18, 18]
                         theme_bg_color: "Custom"
-                        md_bg_color: 1, 0.992, 0.980, 1
+                        md_bg_color: 0.50, 0.22, 0.85, 1
                         on_release: root.open_people_setup()
 
                         MDButtonIcon:
-                            icon: "account-box-multiple"
+                            icon: "face-recognition"
                             theme_icon_color: "Custom"
-                            icon_color: 0.72, 0.42, 0.24, 1
+                            icon_color: 1.0, 1.0, 1.0, 1
 
                         MDButtonText:
                             id: btn_quick_face_text
                             text: app.ar("بصمة وجهي")
                             theme_text_color: "Custom"
-                            text_color: 0.24, 0.18, 0.15, 1
+                            text_color: 1, 1, 1, 1
                             font_size: "11sp"
                             bold: True
 
+                    # فحص فوري
                     MDButton:
-                        style: "outlined"
+                        style: "filled"
                         size_hint_x: None
-                        width: dp(120)
-                        radius: [14, 14, 14, 14]
+                        width: dp(128)
+                        radius: [18, 18, 18, 18]
                         theme_bg_color: "Custom"
-                        md_bg_color: 1, 0.992, 0.980, 1
+                        md_bg_color: 0.90, 0.52, 0.05, 1
                         on_release: root.run_instant_scan()
 
                         MDButtonIcon:
-                            icon: "lightning-bolt-outline"
+                            icon: "lightning-bolt-circle"
                             theme_icon_color: "Custom"
-                            icon_color: 0.85, 0.52, 0.15, 1
+                            icon_color: 1.0, 1.0, 1.0, 1
 
                         MDButtonText:
                             id: btn_quick_scan_text
                             text: app.ar("فحص فوري")
                             theme_text_color: "Custom"
-                            text_color: 0.24, 0.18, 0.15, 1
+                            text_color: 1, 1, 1, 1
                             font_size: "11sp"
                             bold: True
 
+                    # المجلد
                     MDButton:
-                        style: "outlined"
+                        style: "filled"
                         size_hint_x: None
-                        width: dp(115)
-                        radius: [14, 14, 14, 14]
+                        width: dp(118)
+                        radius: [18, 18, 18, 18]
                         theme_bg_color: "Custom"
-                        md_bg_color: 1, 0.992, 0.980, 1
+                        md_bg_color: 0.02, 0.55, 0.85, 1
                         on_release: root.open_storage_folder()
 
                         MDButtonIcon:
                             icon: "folder-open-outline"
                             theme_icon_color: "Custom"
-                            icon_color: 0.72, 0.42, 0.24, 1
+                            icon_color: 1.0, 1.0, 1.0, 1
 
                         MDButtonText:
                             id: btn_quick_folder_text
                             text: app.ar("المجلد")
                             theme_text_color: "Custom"
-                            text_color: 0.24, 0.18, 0.15, 1
+                            text_color: 1, 1, 1, 1
                             font_size: "11sp"
                             bold: True
 
+                    # تنظيف
                     MDButton:
-                        style: "outlined"
+                        style: "filled"
                         size_hint_x: None
-                        width: dp(115)
-                        radius: [14, 14, 14, 14]
+                        width: dp(118)
+                        radius: [18, 18, 18, 18]
                         theme_bg_color: "Custom"
-                        md_bg_color: 1, 0.992, 0.980, 1
+                        md_bg_color: 0.05, 0.65, 0.48, 1
                         on_release: root.clean_empty_folders()
 
                         MDButtonIcon:
                             icon: "broom"
                             theme_icon_color: "Custom"
-                            icon_color: 0.72, 0.42, 0.24, 1
+                            icon_color: 1.0, 1.0, 1.0, 1
 
                         MDButtonText:
                             id: btn_quick_clean_text
                             text: app.ar("تنظيف")
                             theme_text_color: "Custom"
-                            text_color: 0.24, 0.18, 0.15, 1
+                            text_color: 1, 1, 1, 1
                             font_size: "11sp"
                             bold: True
 
-            # شريط البحث السريع عن المجلدات والمواد
+            # ─── شريط البحث الكوني السماوي الفاتح ────────────────
             MDCard:
                 size_hint_y: None
-                height: dp(46)
-                radius: [16, 16, 16, 16]
-                padding: [dp(12), dp(2), dp(12), dp(2)]
-                elevation: 1
+                height: dp(50)
+                radius: [20, 20, 20, 20]
+                padding: [dp(14), dp(4), dp(14), dp(4)]
+                elevation: 3
                 theme_bg_color: "Custom"
-                md_bg_color: 1, 0.992, 0.980, 1
+                md_bg_color: 1.0, 1.0, 1.0, 0.98
                 orientation: "horizontal"
-                spacing: dp(8)
+                spacing: dp(10)
 
                 MDIcon:
-                    icon: "magnify"
+                    icon: "line-scan"
                     pos_hint: {"center_y": 0.5}
                     theme_icon_color: "Custom"
-                    icon_color: 0.72, 0.44, 0.26, 1
+                    icon_color: 0.02, 0.55, 0.85, 1
                     size_hint_x: None
-                    width: dp(24)
+                    width: dp(26)
 
                 TextInput:
                     id: search_input
                     hint_text: app.ar("ابحث عن مجلد أو مادة...")
                     multiline: False
                     background_color: 0, 0, 0, 0
-                    foreground_color: 0.20, 0.16, 0.14, 1
+                    foreground_color: 0.08, 0.16, 0.34, 1
+                    hint_text_color: 0.45, 0.55, 0.70, 1
                     font_size: "13sp"
-                    cursor_color: 0.72, 0.44, 0.26, 1
+                    cursor_color: 0.02, 0.55, 0.85, 1
                     pos_hint: {"center_y": 0.5}
                     on_text: root.filter_subjects(self.text)
 
-            # شريط عنوان قسم المواد والمجلدات
+            # ─── عنوان قسم المجلدات الكونية ───────────────────────
             MDBoxLayout:
                 size_hint_y: None
-                height: dp(24)
+                height: dp(28)
                 orientation: "horizontal"
                 padding: [dp(4), 0]
 
                 MDLabel:
                     id: section_title
-                    text: app.ar("الأقسام والمجلدات المنظمة")
+                    text: app.ar("✦ الأقسام والمنظومات الكونية")
                     bold: True
-                    font_size: "14sp"
+                    font_size: "13sp"
                     halign: "right"
                     theme_text_color: "Custom"
-                    text_color: 0.22, 0.17, 0.14, 1
+                    text_color: 0.08, 0.16, 0.34, 1
 
                 MDIcon:
-                    icon: "folder-star-outline"
+                    icon: "orbit"
                     theme_icon_color: "Custom"
-                    icon_color: 0.72, 0.44, 0.26, 1
+                    icon_color: 0.02, 0.55, 0.85, 1
                     size_hint_x: None
-                    width: dp(22)
+                    width: dp(26)
 
-            # الحاوية المركزية: قائمة المواد أو كرت الحالة الفارغة
+            # ─── منطقة القائمة + الحالة الفارغة ────────────────
             FloatLayout:
-                # تصميم حالة عدم وجود مواد (Empty State جذاب وفخم)
+
+                # Empty State كوني فاتح
                 MDCard:
                     id: empty_state
                     orientation: "vertical"
                     size_hint: 0.92, None
-                    height: dp(250)
+                    height: dp(270)
                     pos_hint: {"center_x": 0.5, "center_y": 0.52}
-                    radius: [24, 24, 24, 24]
-                    elevation: 1
+                    radius: [28, 28, 28, 28]
+                    elevation: 4
                     theme_bg_color: "Custom"
-                    md_bg_color: 1, 0.992, 0.980, 1
-                    padding: dp(20)
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
+                    padding: dp(22)
                     spacing: dp(12)
                     opacity: 0
 
                     MDIcon:
-                        icon: "image-filter-frames"
-                        font_size: "50sp"
+                        icon: "rocket-launch-outline"
+                        font_size: "60sp"
                         halign: "center"
                         theme_icon_color: "Custom"
-                        icon_color: 0.72, 0.42, 0.24, 0.85
+                        icon_color: 0.02, 0.55, 0.85, 0.85
 
                     MDLabel:
                         id: empty_state_label
                         text: app.ar("لا توجد ملفات مصنفة بعد")
                         halign: "center"
                         bold: True
-                        font_size: "16sp"
+                        font_size: "17sp"
                         theme_text_color: "Custom"
-                        text_color: 0.20, 0.16, 0.14, 1
+                        text_color: 0.08, 0.16, 0.34, 1
 
                     MDLabel:
                         id: empty_state_sub
-                        text: app.ar("التقط ورقة امتحان، أو فعّل المراقبة التلقائية لفرز صورك وفيديوهاتك فورياً.")
+                        text: app.ar("التقط ورقة امتحان أو ابدأ الفحص الفوري لفرز وسائطك الكونية.")
                         halign: "center"
                         font_size: "12sp"
                         theme_text_color: "Custom"
-                        text_color: 0.52, 0.46, 0.42, 1
+                        text_color: 0.35, 0.45, 0.60, 1
 
                     MDButton:
                         style: "filled"
                         pos_hint: {"center_x": 0.5}
                         theme_bg_color: "Custom"
-                        md_bg_color: 0.72, 0.42, 0.24, 1
+                        md_bg_color: 0.02, 0.55, 0.85, 1
+                        radius: [16, 16, 16, 16]
                         on_release: root.go_to_capture()
 
                         MDButtonIcon:
-                            icon: "camera-plus"
+                            icon: "camera-plus-outline"
                             theme_icon_color: "Custom"
-                            icon_color: 1, 1, 1, 1
+                            icon_color: 1.0, 1.0, 1.0, 1
 
                         MDButtonText:
                             text: app.ar("تصوير ورقة جديدة")
@@ -364,7 +392,7 @@
                             theme_text_color: "Custom"
                             text_color: 1, 1, 1, 1
 
-                # قائمة المواد القابلة للتمرير
+                # قائمة المواد
                 ScrollView:
                     id: scroll_view
                     do_scroll_x: False
@@ -372,17 +400,18 @@
                     MDList:
                         id: subjects_list
                         spacing: dp(10)
-                        padding: [0, dp(4), 0, dp(88)]
+                        padding: [0, dp(4), 0, dp(92)]
 
-    # الزر العائم المميز لإضافة ورقة اختبار بتنسيق التراكوتا والكراميل الدافئ
+    # ─── زر الكاميرا العائم الكوني ──────────────────────────
     MDFabButton:
         id: fab_add
-        icon: "camera"
+        icon: "camera-enhance"
         style: "standard"
         theme_bg_color: "Custom"
-        md_bg_color: 0.76, 0.44, 0.24, 1
+        md_bg_color: 0.02, 0.55, 0.85, 1
         theme_icon_color: "Custom"
-        icon_color: 1, 1, 1, 1
-        pos_hint: {"center_x": 0.86, "center_y": 0.08}
-        elevation: 4
+        icon_color: 1.0, 1.0, 1.0, 1
+        pos_hint: {"center_x": 0.85, "center_y": 0.08}
+        elevation: 6
         on_release: root.go_to_capture()
+
