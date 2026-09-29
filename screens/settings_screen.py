@@ -864,7 +864,11 @@ class SettingsScreen(Screen):
     def toggle_skip_intro(self) -> None:
         """تبديل تفضيل تخطي شاشة البداية عند فتح التطبيق"""
         prefs = file_manager.get_sorter_preferences()
-        current = bool(prefs.get("skip_intro", False))
+        skip_pref = prefs.get("skip_intro", None)
+        if skip_pref is None:
+            current = bool(prefs.get("intro_seen", False))
+        else:
+            current = bool(skip_pref)
         new_val = not current
         file_manager.save_sorter_preferences({"skip_intro": new_val})
         self.refresh_skip_intro_ui()
@@ -872,14 +876,19 @@ class SettingsScreen(Screen):
     def refresh_skip_intro_ui(self) -> None:
         """تحديث بطاقة وزر تفضيل شاشة البداية"""
         prefs = file_manager.get_sorter_preferences()
-        skip = bool(prefs.get("skip_intro", False))
+        skip_pref = prefs.get("skip_intro", None)
+        if skip_pref is None:
+            is_active_skip = bool(prefs.get("intro_seen", False))
+        else:
+            is_active_skip = bool(skip_pref)
+
         if "text_skip_intro" in self.ids:
             self.ids.text_skip_intro.text = ar(
-                "تخطي البداية: مفعل ✓" if skip else "تخطي البداية: معطل"
+                "تخطي البداية: مفعل ✓" if is_active_skip else "تخطي البداية: معطل"
             )
         if "btn_skip_intro" in self.ids:
             self.ids.btn_skip_intro.md_bg_color = (
-                (0.88, 0.96, 1.0, 0.95) if skip else (0.92, 0.95, 1.0, 0.95)
+                (0.88, 0.96, 1.0, 0.95) if is_active_skip else (0.92, 0.95, 1.0, 0.95)
             )
 
     def show_storage_stats(self) -> None:

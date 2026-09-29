@@ -132,9 +132,15 @@ class CosmoSortApp(MDApp):
         sm.add_widget(PeopleSetupScreen(name="people_setup_screen"))
         sm.add_widget(SettingsScreen(name="settings_screen"))
 
-        # فحص تفضيل تخطي شاشة البداية بعد أول تشغيل
+        # فحص تفضيل تخطي شاشة البداية (تظهر أول مرة فقط تلقائياً، أو حسب خيار الإعدادات)
         prefs = file_manager.get_sorter_preferences()
-        if prefs.get("skip_intro", False):
+        skip_pref = prefs.get("skip_intro", None)
+        if skip_pref is None:
+            should_skip = bool(prefs.get("intro_seen", False))
+        else:
+            should_skip = bool(skip_pref)
+
+        if should_skip:
             sm.current = "home_screen"
         else:
             sm.current = "intro_screen"
