@@ -10,20 +10,15 @@ import os
 from pathlib import Path
 from typing import Any
 
-try:
-    from typing import override
-except ImportError:
-    def override(func: Any) -> Any:  # type: ignore
-        return func
-
 from kivy.animation import Animation
 from kivy.clock import Clock
-from kivy.properties import ListProperty, NumericProperty
+from kivy.properties import ListProperty
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 from kivy.uix.textinput import TextInput
+from kivy.utils import platform
 
 import file_manager
 from utils.arabic_helper import ar
@@ -36,9 +31,8 @@ from utils.ui_helper import (
 
 
 class HomeScreen(Screen):
-    cosmic_glow_color: list[float] = ListProperty([0.02, 0.65, 0.95, 0.70])
+    cosmic_glow_color: list[float] = ListProperty([0.02, 0.65, 0.95, 0.55])
     hero_card_color: list[float] = ListProperty([0.90, 0.95, 1.0, 0.98])
-    cosmic_pulse_size: float = NumericProperty(1.0)
 
     def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -47,46 +41,22 @@ class HomeScreen(Screen):
         self._is_scanning: bool = False
         self._anim_running: bool = False
 
-    @override
     def on_enter(self, *args: object) -> None:
         """يتم استدعاؤها في كل مرة يدخل فيها المستخدم للشاشة لتحديث القائمة"""
         self.apply_arabic_texts()
         self.refresh_subjects()
         self.check_initial_setup()
-        self.start_cosmic_animation()
+        # ★ لا نشغل حركة كونية مستمرة — الألوان ثابتة لحماية GPU Adreno القديمة
+        if platform == "android":
+            from kivy.app import App
+            app = App.get_running_app()
+            if hasattr(app, "request_android_permissions"):
+                Clock.schedule_once(lambda _dt: app.request_android_permissions(), 0.5)
 
     def start_cosmic_animation(self) -> None:
-        """تشغيل حركة التنفس الكوني والسمائي الفاتح والمتحرك بشكل مستمر"""
-        if getattr(self, "_anim_running", False):
-            return
-        self._anim_running = True
+        """تم تعطيل الحركة الكونية المستمرة لحماية الأجهزة ذات GPU Adreno القديمة من SIGSEGV"""
+        pass
 
-        anim1 = Animation(
-            cosmic_glow_color=[0.55, 0.25, 0.92, 0.65],
-            hero_card_color=[0.93, 0.91, 1.0, 0.98],
-            cosmic_pulse_size=1.04,
-            duration=3.5,
-            t="in_out_sine",
-        )
-        anim2 = Animation(
-            cosmic_glow_color=[0.02, 0.68, 0.95, 0.65],
-            hero_card_color=[0.90, 0.95, 1.0, 0.98],
-            cosmic_pulse_size=1.0,
-            duration=3.5,
-            t="in_out_sine",
-        )
-        anim3 = Animation(
-            cosmic_glow_color=[0.05, 0.75, 0.65, 0.60],
-            hero_card_color=[0.90, 0.97, 0.98, 0.98],
-            cosmic_pulse_size=1.02,
-            duration=3.5,
-            t="in_out_sine",
-        )
-        anim = anim1 + anim2 + anim3
-        anim.repeat = True
-        anim.start(self)
-
-    @override
     def on_leave(self, *args: object) -> None:
         """إيقاف الحركة الكونية عند مغادرة الشاشة لتوفير طاقة المعالج والبطارية"""
         self.stop_cosmic_animation()
@@ -95,6 +65,7 @@ class HomeScreen(Screen):
         """إيقاف كامل للمؤثرات التكرارية لتوفير البطارية"""
         Animation.stop_all(self)
         self._anim_running = False
+
 
     def apply_arabic_texts(self):
         """تطبيق إعادة التشكيل العربي على عناصر الشاشة الثابتة"""

@@ -14,12 +14,6 @@ import threading
 from pathlib import Path
 from typing import Any
 
-try:
-    from typing import override
-except ImportError:
-    def override(func: Any) -> Any:  # type: ignore
-        return func
-
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.metrics import dp
@@ -44,7 +38,6 @@ class SettingsScreen(Screen):
         self.is_continuous_scanning: bool = False
         self._stop_continuous_scan: bool = False
 
-    @override
     def on_enter(self, *args: object) -> None:
         self.apply_arabic_texts()
         self.refresh_storage_source_ui()
@@ -709,7 +702,7 @@ class SettingsScreen(Screen):
             size_hint_y=None,
             height=dp(60),
             radius=[14, 14, 14, 14],
-            elevation=1,
+            elevation=0,
             padding=[dp(12), dp(6), dp(12), dp(6)],
             theme_bg_color="Custom",
             md_bg_color=(1.0, 1.0, 1.0, 0.98),

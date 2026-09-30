@@ -19,7 +19,7 @@ from kivy.clock import Clock
 from kivy.core.text import LabelBase
 from kivy.core.window import Window
 from kivy.lang import Builder
-from kivy.uix.screenmanager import FadeTransition, ScreenManager
+from kivy.uix.screenmanager import NoTransition, ScreenManager
 from kivy.utils import platform
 from kivymd.app import MDApp
 
@@ -108,7 +108,6 @@ class CosmoSortApp(MDApp):
         """مساعد عام لتشكيل وعكس النصوص العربية في ملفات KV"""
         return ar(text)
 
-    @override
     def build(self) -> ScreenManager:
         """بناء التطبيق وضبط الواجهة والشاشات"""
         # ضبط نمط سمائي كوني فاتح ومضيء (Light Celestial Sky)
@@ -127,10 +126,6 @@ class CosmoSortApp(MDApp):
             Window.minimum_width = 340
             Window.minimum_height = 500
 
-        # طلب الصلاحيات الأساسية بأمان بعد استقرار وتهيئة واجهة المستخدم بالكامل
-        if platform == "android":
-            Clock.schedule_once(lambda _dt: self.request_android_permissions(), 1.5)
-
         # تحميل ملفات التصميم .kv
         kv_dir = Path(__file__).resolve().parent / "kv"
         for kv_file in [
@@ -148,7 +143,7 @@ class CosmoSortApp(MDApp):
                 _ = Builder.load_file(str(file_path))
 
         # إنشاء مدير الشاشات وإضافة الشاشات
-        sm = ScreenManager(transition=FadeTransition(duration=0.25))
+        sm = ScreenManager(transition=NoTransition())
         sm.add_widget(IntroScreen(name="intro_screen"))
         sm.add_widget(HomeScreen(name="home_screen"))
         sm.add_widget(CaptureScreen(name="capture_screen"))
@@ -213,7 +208,11 @@ class CosmoSortApp(MDApp):
 
     def on_resume(self) -> None:
         """استئناف التطبيق عند العودة من الخلفية"""
-        pass
+        if Window is not None:
+            try:
+                Window.update_viewport()
+            except Exception:
+                pass
 
     def request_android_permissions(self) -> None:
         """طلب صلاحيات الكاميرا والتخزين الأساسية على أجهزة أندرويد عبر النافذة القياسية"""

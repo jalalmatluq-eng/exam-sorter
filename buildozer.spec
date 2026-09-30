@@ -7,7 +7,7 @@ source.dir = .
 source.include_exts = py,png,jpg,jpeg,kv,atlas,ttf,otf,json,txt
 source.include_patterns = assets/*,assets/fonts/*,kv/*,screens/*,utils/*,service/*
 source.exclude_patterns = exam_sorter_prompt.md,exam_sorter_full_media_prompt.md,test_modules.py,pyrightconfig.json,basedpyrightconfig.json,.env.example,build_apk_wsl.sh,*.apk,build_wsl.log,patch_p4a.py,*.pyc
-source.exclude_dirs = .git,.venv,.idea,__pycache__,test_media_input,ExamSorter,MediaSorter,temp,test_data,.github,الملفات المنظمة,docs,bin,tools,.buildozer
+source.exclude_dirs = .git,.venv,.idea,__pycache__,test_media_input,ExamSorter,MediaSorter,temp,test_data,.github,الملفات المنظمة,docs,bin,tools,.buildozer,scratch
 version = 2.0.0
 requirements = python3,kivy==2.3.1,kivymd==2.0.0,materialyoucolor==3.0.4,asynckivy,asyncgui,pillow,plyer,python-dotenv,arabic-reshaper==2.1.4,python-bidi==0.4.2,numpy,opencv
 presplash.filename = %(source.dir)s/assets/presplash.png

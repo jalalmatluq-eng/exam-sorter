@@ -9,12 +9,6 @@ import logging
 import os
 from typing import Any
 
-try:
-    from typing import override
-except ImportError:
-    def override(func: Any) -> Any:  # type: ignore
-        return func
-
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.uix.image import Image
@@ -36,7 +30,6 @@ class PeopleSetupScreen(Screen):
         self.selected_paths: list[str] = []
         self.threshold: float = 0.68
 
-    @override
     def on_enter(self, *args: object) -> None:
         self.apply_arabic_texts()
         self.refresh_profile_status()
@@ -191,7 +184,7 @@ class PeopleSetupScreen(Screen):
                 size_hint=(1, None),
                 height=dp(120),
                 radius=[14, 14, 14, 14],
-                elevation=2,
+                elevation=0,
                 padding=dp(2),
                 theme_bg_color="Custom",
                 md_bg_color=(1.0, 1.0, 1.0, 0.98),

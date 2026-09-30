@@ -377,6 +377,9 @@ def classify_video_with_claude(
     if frame is None:
         return CATEGORY_UNCLASSIFIED
 
+    temp_frame_path = str(file_manager.get_temp_dir() / "_vid_classify_frame.jpg")
+
+
     if cv2 is not None:
         cv2.imwrite(temp_frame_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
     else:

@@ -12,12 +12,6 @@
 import math
 from typing import Any, Literal
 
-try:
-    from typing import override
-except ImportError:
-    def override(func: Any) -> Any:  # type: ignore
-        return func
-
 from kivy.animation import Animation
 from kivy.clock import Clock
 from kivy.metrics import dp
@@ -41,17 +35,13 @@ class IntroScreen(Screen):
         self._orbit_widgets: list[MDCard] = []
         self._animation_started = False
         self._completed = False
+        self._touch_locked = False
+        self._orbit_clock_event: object = None
         super().__init__(**kwargs)
 
     def on_kv_post(self, base_widget: Any) -> None:
         super().on_kv_post(base_widget)
-        self.bind(
-            orbit_angle=self._update_orbit_positions,
-            orbit_radius=self._update_orbit_positions,
-            orbit_alpha=self._update_orbit_positions,
-            size=self._update_orbit_positions,
-            pos=self._update_orbit_positions,
-        )
+        # لا نربط bind فوري — سنستخدم مؤقت بمعدل ثابت بدلاً من ذلك
         self._create_orbit_items()
 
     def _create_orbit_items(self) -> None:
@@ -76,7 +66,7 @@ class IntroScreen(Screen):
                 size_hint=(None, None),
                 size=(dp(58), dp(58)),
                 radius=[dp(29), dp(29), dp(29), dp(29)],
-                elevation=4,
+                elevation=0,
                 theme_bg_color="Custom",
                 md_bg_color=(1.0, 1.0, 1.0, 0.95),
             )
@@ -107,9 +97,9 @@ class IntroScreen(Screen):
             container.add_widget(card)
             self._orbit_widgets.append(card)
 
-    def _update_orbit_positions(self, *args: Any) -> None:
-        """تحديث مواقع الوسائط في المدار الرياضي الدائري"""
-        if not self._orbit_widgets:
+    def _update_orbit_positions(self, _dt: float = 0.0) -> None:
+        """تحديث مواقع الوسائط في المدار — تُستدعى بمؤقت ثابت 30 مرة/ثانية بدلاً من bind فوري"""
+        if self._completed or not self._orbit_widgets:
             return
         container = self.ids.get("orbit_container")
         if not container:
@@ -118,6 +108,7 @@ class IntroScreen(Screen):
         cx, cy = container.center_x, container.center_y
         r = self.orbit_radius
         base_deg = self.orbit_angle
+        alpha = self.orbit_alpha
         count = len(self._orbit_widgets)
 
         for i, widget in enumerate(self._orbit_widgets):
@@ -125,7 +116,26 @@ class IntroScreen(Screen):
             rad = math.radians(deg)
             widget.center_x = cx + r * math.cos(rad)
             widget.center_y = cy + r * math.sin(rad)
-            widget.opacity = self.orbit_alpha
+            widget.opacity = alpha
+
+    def _start_orbit_clock(self) -> None:
+        """بدء مؤقت تحديث المدار بمعدل 30 إطار/ثانية — أخف بكثير من bind الفوري"""
+        self._stop_orbit_clock()
+        self._orbit_clock_event = Clock.schedule_interval(
+            self._update_orbit_positions, 1.0 / 30.0
+        )
+
+    def _stop_orbit_clock(self) -> None:
+        """إيقاف مؤقت تحديث المدار"""
+        if self._orbit_clock_event is not None:
+            try:
+                if hasattr(self._orbit_clock_event, "cancel"):
+                    self._orbit_clock_event.cancel()
+                else:
+                    Clock.unschedule(self._orbit_clock_event)
+            except Exception:
+                pass
+            self._orbit_clock_event = None
 
     def on_enter(self, *args: Any) -> None:
         """بدء حركة الدوران الكوني بمجرد فتح الشاشة"""
@@ -143,8 +153,27 @@ class IntroScreen(Screen):
         self.center_pulse = 1.0
         self.text_alpha = 0.0
         self._completed = False
+        self._touch_locked = False
 
-        Clock.schedule_once(self._start_orbit_sequence, 0.2)
+        # بدء مؤقت تحديث المدار (30fps بدلاً من bind فوري)
+        self._start_orbit_clock()
+
+        Clock.schedule_once(self._start_orbit_sequence, 0.3)
+
+    def on_leave(self, *args: Any) -> None:
+        """إيقاف كل شيء عند مغادرة الشاشة — حماية من SIGSEGV"""
+        self._cleanup_all()
+
+    def _cleanup_all(self) -> None:
+        """إيقاف كافة الحركات والمؤقتات وتنظيف المدار بالكامل"""
+        self._completed = True
+        # 1. إيقاف جميع حركات Kivy المرتبطة بهذه الشاشة
+        Animation.stop_all(self)
+        # 2. إيقاف مؤقت تحديث المدار
+        self._stop_orbit_clock()
+        # 3. إخفاء الودجتات المدارية فوراً (تحرير VBO)
+        for widget in self._orbit_widgets:
+            widget.opacity = 0
 
     def _start_orbit_sequence(self, _dt: float) -> None:
         """تنفيذ دورتين كاملتين (720 درجة) ثم تجميع الملفات في المركز"""
@@ -172,42 +201,57 @@ class IntroScreen(Screen):
             def _on_converge_complete(*_b: Any) -> None:
                 if self._completed:
                     return
-                # 3. وميض ونبضة المركز الكوني وظهور النص المعبر
+                # إيقاف مؤقت المدار — لم نعد بحاجته بعد التجمع
+                self._stop_orbit_clock()
+
+                # 3. نبضة المركز وظهور النص — بدون Ellipse ديناميكي
                 anim_pulse = (
-                    Animation(center_pulse=1.28, duration=0.22, t="out_quad")
-                    + Animation(center_pulse=1.0, duration=0.35, t="in_out_sine")
+                    Animation(center_pulse=1.15, duration=0.2, t="out_quad")
+                    + Animation(center_pulse=1.0, duration=0.3, t="in_out_sine")
                 )
                 anim_text = Animation(text_alpha=1.0, duration=0.7, t="out_quad")
 
-                anim_pulse.start(self)
-                anim_text.start(self)
+                if not self._completed:
+                    anim_pulse.start(self)
+                    anim_text.start(self)
 
                 # 4. الانتقال للشاشة الرئيسية بعد استعراض الشعار
-                Clock.schedule_once(self.go_to_home, 1.8)
+                if not self._completed:
+                    Clock.schedule_once(self.go_to_home, 1.8)
 
             anim_converge.bind(on_complete=_on_converge_complete)
-            anim_converge.start(self)
+            if not self._completed:
+                anim_converge.start(self)
 
         anim_orbit.bind(on_complete=_on_orbit_complete)
-        anim_orbit.start(self)
+        if not self._completed:
+            anim_orbit.start(self)
 
     def go_to_home(self, *_args: Any) -> None:
-        """الانتقال بسلاسة إلى الشاشة الرئيسية"""
+        """الانتقال بسلاسة إلى الشاشة الرئيسية — مع إيقاف كافة الحركات أولاً"""
         if self._completed:
             return
-        self._completed = True
+        # ★ الإصلاح الأهم: إيقاف كل شيء قبل الانتقال لمنع SIGSEGV
+        self._cleanup_all()
+
         try:
             import file_manager
 
             file_manager.save_sorter_preferences({"intro_seen": True})
         except (OSError, RuntimeError):
             pass
+
+        # تأخير بسيط ليكتمل إيقاف الرسم قبل تبديل الشاشة
+        Clock.schedule_once(lambda _dt: self._switch_to_home(), 0.1)
+
+    def _switch_to_home(self) -> None:
         if self.manager and self.manager.has_screen("home_screen"):
             self.manager.current = "home_screen"
 
-    @override
-    def on_touch_down(self, touch: object) -> Literal[True] | None:
-        """النقر في أي مكان لتخطي المقدمة فورياً لمن يرغب"""
+    def on_touch_down(self, touch: object) -> bool:
+        """النقر في أي مكان لتخطي المقدمة فورياً — مع حماية من اللمس المتكرر"""
+        if self._touch_locked or self._completed:
+            return True
+        self._touch_locked = True
         self.go_to_home()
-        res = super().on_touch_down(touch)
-        return True if res else None
+        return True

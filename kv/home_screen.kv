@@ -15,7 +15,7 @@
             type: "small"
             theme_bg_color: "Custom"
             md_bg_color: 1.0, 1.0, 1.0, 0.98
-            elevation: 2
+            elevation: 0
 
             MDTopAppBarLeadingButtonContainer:
                 MDActionTopAppBarButton:
@@ -58,13 +58,13 @@
                 height: dp(146)
                 radius: [26, 26, 26, 26]
                 padding: dp(14)
-                elevation: 6
+                elevation: 0
                 theme_bg_color: "Custom"
-                md_bg_color: root.hero_card_color
+                md_bg_color: 0.90, 0.95, 1.0, 0.98
 
                 canvas.before:
                     Color:
-                        rgba: root.cosmic_glow_color
+                        rgba: 0.02, 0.65, 0.95, 0.55
                     Line:
                         rounded_rectangle: [self.x, self.y, self.width, self.height, 26]
                         width: 1.5
@@ -115,7 +115,7 @@
                         MDCard:
                             radius: [18, 18, 18, 18]
                             padding: [dp(8), dp(6)]
-                            elevation: 2
+                            elevation: 0
                             theme_bg_color: "Custom"
                             md_bg_color: 0.93, 0.91, 1.0, 0.95
 
@@ -144,7 +144,7 @@
                         MDCard:
                             radius: [18, 18, 18, 18]
                             padding: [dp(8), dp(6)]
-                            elevation: 2
+                            elevation: 0
                             theme_bg_color: "Custom"
                             md_bg_color: 0.88, 0.96, 1.0, 0.95
 
@@ -282,7 +282,7 @@
                 height: dp(50)
                 radius: [20, 20, 20, 20]
                 padding: [dp(14), dp(4), dp(14), dp(4)]
-                elevation: 3
+                elevation: 0
                 theme_bg_color: "Custom"
                 md_bg_color: 1.0, 1.0, 1.0, 0.98
                 orientation: "horizontal"
@@ -342,7 +342,7 @@
                     height: dp(270)
                     pos_hint: {"center_x": 0.5, "center_y": 0.52}
                     radius: [28, 28, 28, 28]
-                    elevation: 4
+                    elevation: 0
                     theme_bg_color: "Custom"
                     md_bg_color: 1.0, 1.0, 1.0, 0.98
                     padding: dp(22)
@@ -412,6 +412,6 @@
         theme_icon_color: "Custom"
         icon_color: 1.0, 1.0, 1.0, 1
         pos_hint: {"center_x": 0.85, "center_y": 0.08}
-        elevation: 6
+        elevation: 0
         on_release: root.go_to_capture()
 

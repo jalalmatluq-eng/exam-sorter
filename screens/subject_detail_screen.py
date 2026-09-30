@@ -10,12 +10,6 @@
 from pathlib import Path
 from typing import Any
 
-try:
-    from typing import override
-except ImportError:
-    def override(func: Any) -> Any:  # type: ignore
-        return func
-
 from kivy.core.window import Window
 from kivy.metrics import dp
 from kivy.uix.boxlayout import BoxLayout
@@ -54,7 +48,6 @@ class SubjectDetailScreen(Screen):
             else:
                 self.ids.images_grid.cols = 2
 
-    @override
     def on_enter(self, *args: object) -> None:
         if Window is not None:
             try:
@@ -64,7 +57,6 @@ class SubjectDetailScreen(Screen):
         self.apply_arabic_texts()
         self.update_grid_layout()
 
-    @override
     def on_leave(self, *args: object) -> None:
         if Window is not None:
             try:
@@ -124,7 +116,7 @@ class SubjectDetailScreen(Screen):
             size_hint=(1, None),
             height=dp(230),
             radius=[18, 18, 18, 18],
-            elevation=3,
+            elevation=0,
             orientation="vertical",
             padding=dp(8),
             spacing=dp(6),

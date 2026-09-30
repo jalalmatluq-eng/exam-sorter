@@ -10,41 +10,29 @@
         FloatLayout:
             id: main_intro_layout
 
-            # ─── حلقة المدار الكوني الهادئة ─────────────────
+            # ─── حلقة المدار الكوني الهادئة (ثابتة — لا تتحرك) ──
             canvas.before:
                 Color:
                     rgba: 0.70, 0.85, 0.98, 0.45
                 Line:
                     circle: (self.center_x, self.center_y + dp(35), dp(130))
                     width: 1.2
-                Color:
-                    rgba: 0.55, 0.78, 0.96, 0.25
-                Line:
-                    circle: (self.center_x, self.center_y + dp(35), dp(150))
-                    width: 1.0
 
             # ─── حاوية العناصر المدارية (الصور والفيديوهات والملفات) ─
             FloatLayout:
                 id: orbit_container
                 pos_hint: {"center_x": 0.5, "center_y": 0.55}
 
-            # ─── الشكل الكوني البارز في المركز ──────────────
+            # ─── الشكل الكوني البارز في المركز (حجم ثابت — بدون ربط ديناميكي بـ VBO) ──
             MDCard:
                 id: central_cosmos
                 size_hint: None, None
-                size: dp(96) * root.center_pulse, dp(96) * root.center_pulse
+                size: dp(96), dp(96)
                 pos_hint: {"center_x": 0.5, "center_y": 0.55}
-                radius: [self.height / 2, self.height / 2, self.height / 2, self.height / 2]
-                elevation: 10
+                radius: [dp(48), dp(48), dp(48), dp(48)]
+                elevation: 0
                 theme_bg_color: "Custom"
                 md_bg_color: 0.02, 0.55, 0.88, 1
-
-                canvas.before:
-                    Color:
-                        rgba: 0.35, 0.75, 1.0, 0.35 * root.center_pulse
-                    Ellipse:
-                        pos: (self.center_x - (self.width * 1.35) / 2, self.center_y - (self.height * 1.35) / 2)
-                        size: (self.width * 1.35, self.height * 1.35)
 
                 MDBoxLayout:
                     orientation: "vertical"
