@@ -366,12 +366,12 @@ def is_visual_document_or_paper(image_path: str) -> bool:
             return float(np.std(horiz_hist)) >= 5.0
         else:
             # بديل نقي معتمد على NumPy
-            faces = face_classifier.detect_faces_in_image(img)
+            faces = face_classifier.detect_faces_in_image(small)
             if len(faces) > 0:
                 return False
-            b = img[:, :, 0].astype(np.float32)
-            g = img[:, :, 1].astype(np.float32)
-            r = img[:, :, 2].astype(np.float32)
+            b = small[:, :, 0].astype(np.float32)
+            g = small[:, :, 1].astype(np.float32)
+            r = small[:, :, 2].astype(np.float32)
             v = np.maximum(np.maximum(r, g), b)
             m = np.minimum(np.minimum(r, g), b)
             delta = v - m
@@ -648,7 +648,7 @@ def run_continuous_scan(
             break
 
         try:
-            res = process_one_file(f, api_key=api_key)
+            res: dict[str, object] = process_one_file(f, api_key=api_key)
         except Exception as e:
             logger.error("خطأ أثناء معالجة الملف %s: %s", f, e)
             res = {"success": False, "error": str(e), "original_path": str(f)}

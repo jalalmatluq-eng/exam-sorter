@@ -6,6 +6,7 @@
 """
 
 import os
+from typing import Any
 
 from kivy.clock import Clock
 from kivy.uix.screenmanager import Screen
@@ -84,13 +85,15 @@ class CaptureScreen(Screen):
         """اختيار صورة أو عدة صور من المعرض أو مستعرض الملفات"""
         try:
             from plyer import filechooser  # type: ignore[import-untyped]
-            filechooser.open_file(
-                title=ar("اختر صور أوراق الاختبار"),
-                filters=["*.jpg", "*.jpeg", "*.png", "*.webp"],
-                multiple=True,
-                on_selection=self._on_file_selected,
-            )
-            return
+            open_func: Any = getattr(filechooser, "open_file", None)
+            if callable(open_func):
+                open_func(
+                    title=ar("اختر صور أوراق الاختبار"),
+                    filters=["*.jpg", "*.jpeg", "*.png", "*.webp"],
+                    multiple=True,
+                    on_selection=self._on_file_selected,
+                )
+                return
         except Exception as e:
             print("Plyer filechooser غير متوفر:", e)
 
@@ -136,13 +139,15 @@ class CaptureScreen(Screen):
                 temp_filename = f"capture_{os.urandom(4).hex()}.jpg"
                 temp_filepath = str(save_dir / temp_filename)
 
-                camera.take_picture(
-                    filename=temp_filepath,
-                    on_complete=lambda path: Clock.schedule_once(
-                        lambda dt: self.set_selected_image(path), 0
-                    ),
-                )
-                return
+                take_pic: Any = getattr(camera, "take_picture", None)
+                if callable(take_pic):
+                    take_pic(
+                        filename=temp_filepath,
+                        on_complete=lambda path: Clock.schedule_once(
+                            lambda dt: self.set_selected_image(path), 0
+                        ),
+                    )
+                    return
             except Exception as e:
                 print("فشل تشغيل كاميرا أندرويد عبر Plyer:", e)
 
@@ -173,6 +178,6 @@ class CaptureScreen(Screen):
         """عرض رسالة تنبيه للمستخدم"""
         show_app_dialog(title="تنبيه", text=message)
 
-    def get_app(self) -> object:
+    def get_app(self) -> Any:
         from kivy.app import App
         return App.get_running_app()

@@ -10,12 +10,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-try:
-    from typing import override
-except ImportError:
-    def override(func: Any) -> Any:  # type: ignore
-        return func
-
 from kivy.uix.screenmanager import Screen
 
 import file_manager
@@ -29,7 +23,6 @@ class ConfirmScreen(Screen):
         self.image_path: str | None = None
         self.dialog: object = None
 
-    @override
     def on_enter(self, *args: object) -> None:
         self.apply_arabic_texts()
         self.update_chips()
@@ -77,7 +70,6 @@ class ConfirmScreen(Screen):
             self.ids.status_details.text = ar(error_message or err_fallback)
             self.update_target_label("...")
 
-    @override
     def on_kv_post(self, base_widget: object) -> None:
         super().on_kv_post(base_widget)
         if "subject_field" in self.ids:
@@ -122,7 +114,7 @@ class ConfirmScreen(Screen):
                 subject_names.append(d)
 
         for name in subject_names[:8]:
-            sub_name = str(name)
+            sub_name = name
             btn = create_action_button(
                 text=sub_name,
                 on_release_callback=self._make_chip_cb(sub_name),

@@ -6,6 +6,7 @@
 """
 
 import threading
+from typing import Any
 
 from kivy.clock import Clock
 from kivy.uix.screenmanager import Screen
@@ -127,6 +128,6 @@ class ClassifyingScreen(Screen):
         app = self.get_app()
         app.root.current = "capture_screen"
 
-    def get_app(self) -> object:
+    def get_app(self) -> Any:
         from kivy.app import App
         return App.get_running_app()

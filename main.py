@@ -5,46 +5,14 @@
 - إدارة أذونات الأجهزة والخدمات بالخلفية والانتقال بين الشاشات.
 """
 
+from __future__ import annotations
+
 import logging
 import os
+from pathlib import Path
 import sys
 import traceback
-import typing
-from pathlib import Path
-
-def _handle_uncaught_exception(exctype: typing.Any, value: typing.Any, tb: typing.Any) -> None:
-    err = "".join(traceback.format_exception(exctype, value, tb))
-    logging.critical("CRITICAL UNCAUGHT EXCEPTION: %s", err)
-    try:
-        from pathlib import Path
-        for log_target in [
-            Path("/storage/emulated/0/Download/cosmosort_crash.log"),
-            Path("/storage/emulated/0/cosmosort_crash.log"),
-            Path(__file__).resolve().parent / "crash.log",
-        ]:
-            try:
-                log_target.write_text(err, encoding="utf-8")
-                break
-            except Exception:
-                pass
-    except Exception:
-        pass
-    if sys.__excepthook__:
-        sys.__excepthook__(exctype, value, tb)
-
-sys.excepthook = _handle_uncaught_exception
-
-# ضمان التوافق التام مع بايثون 3.11 على نظام أندرويد
-if not hasattr(typing, "override"):
-    def _override(func: typing.Any) -> typing.Any:
-        return func
-
-    typing.override = _override  # type: ignore
-
-try:
-    from typing import override
-except ImportError:
-    override = typing.override  # type: ignore
+from typing import Any, Literal
 
 from dotenv import load_dotenv
 from kivy.clock import Clock
@@ -68,6 +36,28 @@ from service import media_watcher_service
 from utils.arabic_helper import ar, get_arabic_font_path
 
 logger = logging.getLogger("CosmoSortApp")
+
+
+def _handle_uncaught_exception(exctype: Any, value: Any, tb: Any) -> None:
+    err = "".join(traceback.format_exception(exctype, value, tb))
+    logger.critical("CRITICAL UNCAUGHT EXCEPTION: %s", err)
+    try:
+        for log_target in [
+            Path("/storage/emulated/0/Download/cosmosort_crash.log"),
+            Path("/storage/emulated/0/cosmosort_crash.log"),
+            Path(__file__).resolve().parent / "crash.log",
+        ]:
+            try:
+                log_target.write_text(err, encoding="utf-8")
+                break
+            except Exception:
+                pass
+    except Exception:
+        pass
+    sys.__excepthook__(exctype, value, tb)
+
+
+sys.excepthook = _handle_uncaught_exception
 
 # تحميل المتغيرات من .env بأمان
 try:
@@ -217,13 +207,13 @@ class CosmoSortApp(MDApp):
             return True  # استهلاك الحدث لمنع خروج التطبيق
         return False
 
-    def on_pause(self) -> bool:
+    def on_pause(self) -> Literal[True]:
         """السماح للتطبيق بالبقاء في الخلفية دون إنهاء السياق الرسومي"""
         return True
 
     def on_resume(self) -> None:
         """استئناف التطبيق عند العودة من الخلفية"""
-        return None
+        pass
 
     def request_android_permissions(self) -> None:
         """طلب صلاحيات الكاميرا والتخزين الأساسية على أجهزة أندرويد عبر النافذة القياسية"""
