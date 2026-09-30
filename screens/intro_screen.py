@@ -10,7 +10,13 @@
 """
 
 import math
-from typing import Any, Literal, override
+from typing import Any, Literal
+
+try:
+    from typing import override
+except ImportError:
+    def override(func: Any) -> Any:  # type: ignore
+        return func
 
 from kivy.animation import Animation
 from kivy.clock import Clock
@@ -124,7 +130,7 @@ class IntroScreen(Screen):
     def on_enter(self, *args: Any) -> None:
         """بدء حركة الدوران الكوني بمجرد فتح الشاشة"""
         if hasattr(self.ids, "app_title"):
-            self.ids.app_title.text = ar("CosmoSort ✦ كوزمو سورت")
+            self.ids.app_title.text = ar("CosmoSort | كوزمو سورت")
         if hasattr(self.ids, "app_tagline"):
             self.ids.app_tagline.text = ar(
                 "دليلك المفضل والذكي لتنظيم وترتيب ملفاتك في فضاء واحد"

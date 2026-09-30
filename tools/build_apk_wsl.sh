@@ -37,6 +37,21 @@ rm -f bin/*.apk
 echo "تأكيد توافق إصدار بايثون 3.11 مع حزم المشروع..."
 python3 /mnt/d/exam-sorter/tools/patch_p4a.py
 
+# التأكد من نسخ cv2.so وجميع مكتبات libopencv_*.so المشتركة
+CV2_SRC="/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/wasaetdhakiyah/_python_bundle__arm64-v8a/_python_bundle/site-packages/cv2.so"
+CV2_DST="/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/cosmosort/_python_bundle__arm64-v8a/_python_bundle/site-packages/"
+if [ -f "$CV2_SRC" ]; then
+    mkdir -p "$CV2_DST"
+    cp -u "$CV2_SRC" "$CV2_DST" 2>/dev/null || true
+fi
+
+LIBS_SRC="/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/wasaetdhakiyah/libs/arm64-v8a"
+if [ -d "$LIBS_SRC" ]; then
+    mkdir -p "/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/cosmosort/libs/arm64-v8a"
+    rm -rf "/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/cosmosort/src/main/jniLibs"
+    cp -u "$LIBS_SRC"/libopencv_*.so "/root/build_wasaet/.buildozer/android/platform/build-arm64-v8a/dists/cosmosort/libs/arm64-v8a/" 2>/dev/null || true
+fi
+
 echo "تشغيل Buildozer في بيئة ext4..."
 buildozer -v android debug 2>&1 | tee /mnt/d/exam-sorter/tools/build_wsl.log
 

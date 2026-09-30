@@ -297,7 +297,7 @@ def show_modern_notification(
     try:
         snackbar = MDSnackbar(
             MDSnackbarText(
-                text=ar(f"✦ {title}"),
+                text=ar(title),
                 bold=True,
                 theme_text_color="Custom",
                 text_color=accent,

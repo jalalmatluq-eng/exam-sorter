@@ -24,7 +24,10 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
-import cv2
+try:
+    import cv2
+except Exception:
+    cv2 = None  # type: ignore
 import numpy as np
 
 import classifier
@@ -205,6 +208,8 @@ def _safe_read_frame(
     video_path: str, position_ratio: float = 0.5
 ) -> np.ndarray | None:
     """استخراج إطار تمثيلي محدد من الفيديو عبر OpenCV"""
+    if cv2 is None:
+        return None
     cap = None
     try:
         cap = cv2.VideoCapture(video_path)
@@ -244,6 +249,8 @@ def get_video_metadata(video_path: str) -> dict[str, Any]:
         "fps": 0.0,
         "frame_count": 0,
     }
+    if cv2 is None:
+        return meta
     cap = None
     try:
         cap = cv2.VideoCapture(video_path)
@@ -370,10 +377,12 @@ def classify_video_with_claude(
     if frame is None:
         return CATEGORY_UNCLASSIFIED
 
-    # حفظ الإطار في ملف مؤقت لتجهيزه وتصغيره
-    temp_dir = file_manager.get_temp_dir()
-    temp_frame_path = str(temp_dir / f"vframe_{os.urandom(4).hex()}.jpg")
-    cv2.imwrite(temp_frame_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if cv2 is not None:
+        cv2.imwrite(temp_frame_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    else:
+        from PIL import Image
+        pil_f = Image.fromarray(frame[:, :, ::-1] if frame.ndim == 3 else frame)
+        pil_f.save(temp_frame_path, quality=85)
 
     try:
         base64_data, media_type = classifier.encode_and_resize_image(

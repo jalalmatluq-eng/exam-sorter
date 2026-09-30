@@ -8,7 +8,13 @@
 
 from collections.abc import Callable
 from pathlib import Path
-from typing import override
+from typing import Any
+
+try:
+    from typing import override
+except ImportError:
+    def override(func: Any) -> Any:  # type: ignore
+        return func
 
 from kivy.uix.screenmanager import Screen
 

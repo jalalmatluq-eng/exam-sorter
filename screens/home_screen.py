@@ -8,7 +8,13 @@
 
 import os
 from pathlib import Path
-from typing import Any, override
+from typing import Any
+
+try:
+    from typing import override
+except ImportError:
+    def override(func: Any) -> Any:  # type: ignore
+        return func
 
 from kivy.animation import Animation
 from kivy.clock import Clock
@@ -94,9 +100,9 @@ class HomeScreen(Screen):
         """تطبيق إعادة التشكيل العربي على عناصر الشاشة الثابتة"""
         if hasattr(self, "ids"):
             if "top_bar_title" in self.ids:
-                self.ids.top_bar_title.text = ar("CosmoSort ✦ جامع العوالم")
+                self.ids.top_bar_title.text = ar("CosmoSort | جامع العوالم")
             if "hero_title" in self.ids:
-                self.ids.hero_title.text = ar("✦ جامع وسائط العالم | CosmoHub")
+                self.ids.hero_title.text = ar("جامع وسائط العالم | CosmoHub")
             if "hero_sub" in self.ids:
                 self.ids.hero_sub.text = ar(
                     "يلم كل وسائط العالم وينظمها بذكاء اصطناعي"
@@ -249,6 +255,7 @@ class HomeScreen(Screen):
         from kivymd.uix.button import MDButton, MDButtonIcon, MDButtonText
         from kivymd.uix.dialog import (
             MDDialog,
+            MDDialogButtonContainer,
             MDDialogContentContainer,
             MDDialogHeadlineText,
             MDDialogSupportingText,
@@ -272,7 +279,7 @@ class HomeScreen(Screen):
 
         # عناصر الواجهة بنافذة زجاجية داكنة فاخرة
         scroll = ScrollView(
-            size_hint=(1, None), height=dp(380), do_scroll_x=False
+            size_hint=(1, None), height=dp(250), do_scroll_x=False
         )
         content_box = MDBoxLayout(
             orientation="vertical",
@@ -624,8 +631,6 @@ class HomeScreen(Screen):
             )
             btn_action_box.add_widget(btn_cancel)
 
-        content_box.add_widget(btn_action_box)
-
         headline_text = (
             ar("مرحباً بك: خيارات الفحص والتنظيم")
             if is_initial
@@ -650,6 +655,11 @@ class HomeScreen(Screen):
             MDDialogContentContainer(
                 scroll,
                 orientation="vertical",
+            ),
+            MDDialogButtonContainer(
+                btn_action_box,
+                orientation="vertical",
+                spacing=dp(4),
             ),
             theme_bg_color="Custom",
             md_bg_color=(0.090, 0.114, 0.176, 0.98),
@@ -694,12 +704,16 @@ class HomeScreen(Screen):
         )
 
         def worker():
-            app = self.get_app()
-            api_key = getattr(app, "api_key", None) if app else None
+            try:
+                app = self.get_app()
+                api_key = getattr(app, "api_key", None) if app else None
 
-            res = media_scanner.run_continuous_scan(
-                batch_size=35, api_key=api_key, source_storage=source_choice
-            )
+                res = media_scanner.run_continuous_scan(
+                    batch_size=35, api_key=api_key, source_storage=source_choice
+                )
+            except Exception as e:
+                logger.error("خطأ أثناء الفحص المستمر: %s", e)
+                res = {"total_processed": 0, "batches": 0}
 
             def on_finish(_dt: float) -> None:
                 self._is_scanning = False

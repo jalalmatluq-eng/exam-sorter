@@ -7,7 +7,13 @@
 
 import logging
 import os
-from typing import override
+from typing import Any
+
+try:
+    from typing import override
+except ImportError:
+    def override(func: Any) -> Any:  # type: ignore
+        return func
 
 from kivy.clock import Clock
 from kivy.metrics import dp

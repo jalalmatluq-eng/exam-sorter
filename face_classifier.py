@@ -24,7 +24,11 @@ import logging
 import os
 from pathlib import Path
 
-import cv2
+try:
+    import cv2
+except (ImportError, Exception):
+    cv2 = None  # type: ignore
+
 import numpy as np
 
 logger = logging.getLogger(__name__)
@@ -54,7 +58,7 @@ def get_profile_path() -> Path:
 def _load_cascade(xml_name: str) -> object | None:
     """تحميل مصنف Haar Cascade من مسارات OpenCV المدمجة بأمان فائق"""
     try:
-        if not hasattr(cv2, "CascadeClassifier"):
+        if cv2 is None or not hasattr(cv2, "CascadeClassifier"):
             return None
 
         # البحث عن مسار قوالب Haar المدمجة في OpenCV بأمان
@@ -76,7 +80,7 @@ def _load_cascade(xml_name: str) -> object | None:
                 cascade = cv2.CascadeClassifier(path)
                 if not cascade.empty():
                     return cascade
-    except (cv2.error, OSError, AttributeError, ValueError) as exc:
+    except (OSError, AttributeError, ValueError) as exc:
         logger.warning("تعذر تحميل Haar Cascade %s: %s", xml_name, exc)
     return None
 
@@ -88,9 +92,18 @@ def _safe_read_image(image_path: str) -> np.ndarray | None:
         with open(image_path, "rb") as f:
             bytes_data = bytearray(f.read())
         numpy_array = np.asarray(bytes_data, dtype=np.uint8)
-        img = cv2.imdecode(numpy_array, cv2.IMREAD_COLOR)
-        return img
-    except (OSError, ValueError, cv2.error) as exc:
+        if cv2 is not None:
+            img = cv2.imdecode(numpy_array, cv2.IMREAD_COLOR)
+            return img
+
+        # بديل PIL في حال عدم توفر cv2
+        import io
+        from PIL import Image
+
+        pil_img = Image.open(io.BytesIO(bytes_data)).convert("RGB")
+        rgb = np.array(pil_img)
+        return rgb[:, :, ::-1]
+    except Exception as exc:
         logger.warning("خطأ أثناء قراءة الصورة %s: %s", image_path, exc)
         return None
 
@@ -100,7 +113,7 @@ safe_read_image = _safe_read_image
 
 def detect_faces_in_image(img: np.ndarray | None) -> list[np.ndarray]:
     """اكتشاف الوجوه البشرية في مصفوفة صورة BGR وإرجاع الوجوه المقصوصة"""
-    if img is None or img.size == 0:
+    if img is None or img.size == 0 or cv2 is None:
         return []
 
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
@@ -185,9 +198,15 @@ def detect_faces_in_image(img: np.ndarray | None) -> list[np.ndarray]:
 
         crop = img[y1:y2, x1:x2]
         if crop.size > 0:
-            crop_resized = cv2.resize(
-                crop, (112, 112), interpolation=cv2.INTER_AREA
-            )
+            if cv2 is not None:
+                crop_resized = cv2.resize(
+                    crop, (112, 112), interpolation=cv2.INTER_AREA
+                )
+            else:
+                from PIL import Image
+                crop_resized = np.array(
+                    Image.fromarray(crop).resize((112, 112))
+                )
             cropped_faces.append(crop_resized)
 
     return cropped_faces
@@ -207,20 +226,31 @@ def extract_face_embedding(face_img: np.ndarray) -> np.ndarray:
     هذه الطريقة خفيفة وسريعة وتعمل بدون الحاجة إلى مكتبات C++ ثقيلة
     أو نماذج ضخمة، وهي متوافقة 100% مع أندرويد.
     """
-    # 1. توحيد الأبعاد إلى 112x112
-    resized = cv2.resize(face_img, (112, 112), interpolation=cv2.INTER_AREA)
+    if cv2 is not None:
+        # 1. توحيد الأبعاد إلى 112x112
+        resized = cv2.resize(face_img, (112, 112), interpolation=cv2.INTER_AREA)
 
-    # 2. التحويل للتدرج الرمادي وموازنة الإضاءة
-    if resized.ndim == 3 and resized.shape[2] == 3:
-        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        # 2. التحويل للتدرج الرمادي وموازنة الإضاءة
+        if resized.ndim == 3 and resized.shape[2] == 3:
+            gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        else:
+            gray = resized
+        gray = cv2.equalizeHist(gray)
+
+        # 3. حساب المشتقات التدرجية في الاتجاهين الأفقي والعمودي (Sobel)
+        sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+        sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
+        magnitude, angle = cv2.cartToPolar(sobel_x, sobel_y, angleInDegrees=True)
     else:
-        gray = resized
-    gray = cv2.equalizeHist(gray)
+        from PIL import Image
 
-    # 3. حساب المشتقات التدرجية في الاتجاهين الأفقي والعمودي (Sobel)
-    sobel_x = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
-    sobel_y = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
-    magnitude, angle = cv2.cartToPolar(sobel_x, sobel_y, angleInDegrees=True)
+        pil_img = Image.fromarray(
+            face_img[:, :, ::-1] if face_img.ndim == 3 else face_img
+        ).resize((112, 112))
+        gray = np.array(pil_img.convert("L"), dtype=np.float32)
+        gy, gx = np.gradient(gray)
+        magnitude = np.hypot(gx, gy)
+        angle = (np.arctan2(gy, gx) * 180.0 / np.pi) % 360.0
 
     # 4. تقسيم الوجه إلى شبكة 8x8 (64 خلية مكانية)
     # كل خلية 14x14 بكسل، ويتم حساب هستوجرام تدرج الاتجاهات (8 اتجاهات)

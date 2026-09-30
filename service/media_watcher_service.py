@@ -113,7 +113,7 @@ def setup_android_foreground_notification() -> None:
             except Exception:
                 builder = NotificationBuilder(app_context)
 
-            builder.setContentTitle("CosmoSort ✦ حارس الوسائط الكوني")
+            builder.setContentTitle("CosmoSort | حارس الوسائط الكوني")
             builder.setContentText(
                 "المراقبة الذكية لفرز وسائط العالم قيد العمل في الخلفية"
             )

@@ -21,7 +21,10 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-import cv2
+try:
+    import cv2
+except Exception:
+    cv2 = None  # type: ignore
 import numpy as np
 
 import classifier
@@ -315,46 +318,68 @@ def is_visual_document_or_paper(image_path: str) -> bool:
         if h < 100 or w < 100:
             return False
 
-        # تصغير سريع لتقليل استهلاك المعالج والذاكرة
-        max_dim = max(h, w)
-        if max_dim > 600:
-            scale = float(600.0 / max_dim)
-            new_w = int(float(w) * scale)
-            new_h = int(float(h) * scale)
-            small = cv2.resize(
-                img, (new_w, new_h), interpolation=cv2.INTER_AREA
-            )
+        if cv2 is not None:
+            # تصغير سريع لتقليل استهلاك المعالج والذاكرة
+            max_dim = max(h, w)
+            if max_dim > 600:
+                scale = float(600.0 / max_dim)
+                new_w = int(float(w) * scale)
+                new_h = int(float(h) * scale)
+                small = cv2.resize(
+                    img, (new_w, new_h), interpolation=cv2.INTER_AREA
+                )
+            else:
+                small = img
+
+            # استثناء الصور التي تحتوي على وجوه بشرية
+            faces = face_classifier.detect_faces_in_image(small)
+            if len(faces) > 0:
+                return False
+
+            hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+            gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
+
+            mean_s = float(str(np.mean(hsv[:, :, 1])))
+            mean_v = float(str(np.mean(hsv[:, :, 2])))
+
+            # الأوراق والمستندات تتميز بخلفية بيضاء/فاتحة وتشبع لوني منخفض
+            if mean_s > 58.0 or mean_v < 118.0:
+                return False
+
+            # استخراج عتبة الحبر والنصوص باستخدام Otsu Threshold
+            otsu_flag = cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
+            _, thresh = cv2.threshold(gray, 0, 255, otsu_flag)
+            ink_ratio = float(np.count_nonzero(thresh) / thresh.size)
+
+            # نسبة الحبر في أوراق الاختبارات والمستندات عادة بين 1% و 60%
+            if not (0.01 <= ink_ratio <= 0.60):
+                return False
+
+            # التحقق من وجود توزيع أفقي لسطور النصوص
+            horiz_hist = np.sum(thresh, axis=1)
+            return float(np.std(horiz_hist)) >= 5.0
         else:
-            small = img
-
-        # استثناء الصور التي تحتوي على وجوه بشرية
-        faces = face_classifier.detect_faces_in_image(small)
-        if len(faces) > 0:
-            return False
-
-        hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
-        gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-
-        mean_s = float(str(np.mean(hsv[:, :, 1])))
-        mean_v = float(str(np.mean(hsv[:, :, 2])))
-
-        # الأوراق والمستندات تتميز بخلفية بيضاء/فاتحة وتشبع لوني منخفض
-        if mean_s > 58.0 or mean_v < 118.0:
-            return False
-
-        # استخراج عتبة الحبر والنصوص باستخدام Otsu Threshold
-        otsu_flag = cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
-        _, thresh = cv2.threshold(gray, 0, 255, otsu_flag)
-        ink_ratio = float(np.count_nonzero(thresh) / thresh.size)
-
-        # نسبة الحبر في أوراق الاختبارات والمستندات عادة بين 1% و 60%
-        if not (0.01 <= ink_ratio <= 0.60):
-            return False
-
-        # التحقق من وجود توزيع أفقي لسطور النصوص
-        horiz_hist = np.sum(thresh, axis=1)
-        return float(np.std(horiz_hist)) >= 5.0
-    except (cv2.error, OSError, ValueError) as e:
+            # بديل نقي معتمد على NumPy
+            faces = face_classifier.detect_faces_in_image(img)
+            if len(faces) > 0:
+                return False
+            b = img[:, :, 0].astype(np.float32)
+            g = img[:, :, 1].astype(np.float32)
+            r = img[:, :, 2].astype(np.float32)
+            v = np.maximum(np.maximum(r, g), b)
+            m = np.minimum(np.minimum(r, g), b)
+            delta = v - m
+            s = np.where(v == 0, 0, (delta / np.maximum(v, 1.0)) * 255.0)
+            if float(np.mean(s)) > 58.0 or float(np.mean(v)) < 118.0:
+                return False
+            gray = 0.299 * r + 0.587 * g + 0.114 * b
+            ink_mask = gray < 180.0
+            ink_ratio = float(np.count_nonzero(ink_mask) / ink_mask.size)
+            if not (0.01 <= ink_ratio <= 0.60):
+                return False
+            horiz_hist = np.sum(ink_mask, axis=1)
+            return float(np.std(horiz_hist)) >= 5.0
+    except Exception as e:
         logger.debug("خطأ أثناء فحص الرؤية الحاسوبية للورقة: %s", e)
         return False
 
@@ -384,10 +409,32 @@ def is_likely_exam_paper(image_path: str) -> bool:
         subject = classifier.classify_with_local_ocr(image_path)
         if subject:
             return True
-    except (OSError, RuntimeError, ValueError) as e:
+    except Exception as e:
         logger.debug("فشل فحص OCR المحلي للورقة: %s", e)
 
     return False
+
+
+def _guess_exam_subject(filename: str) -> str:
+    """تخمين اسم المادة الدراسية بذكاء من اسم الملف في حال غياب مفتاح API أو الإنترنت"""
+    name_clean = Path(filename).stem.lower().replace("_", " ").replace("-", " ")
+    subject_keywords: dict[str, list[str]] = {
+        "رياضيات": ["رياضيات", "math", "calculus", "جبر", "تفاضل", "هندسة"],
+        "فيزياء": ["فيزياء", "physic", "physics"],
+        "كيمياء": ["كيمياء", "chem", "chemistry"],
+        "أحياء": ["أحياء", "احياء", "bio", "biology"],
+        "برمجة": ["برمجة", "programming", "code", "python", "java", "حاسوب"],
+        "لغة إنجليزية": ["english", "إنجليزي", "انجليزي"],
+        "لغة عربية": ["عربي", "نحو", "بلاغة", "arabic"],
+        "علوم": ["علوم", "science"],
+        "تاريخ": ["تاريخ", "history"],
+        "جغرافيا": ["جغرافيا", "geography"],
+        "إسلامية": ["إسلامية", "اسلامية", "قرآن", "حديث", "فقه", "توحيد"],
+    }
+    for subj, kws in subject_keywords.items():
+        if any(kw in name_clean for kw in kws):
+            return subj
+    return "اختبارات عامة"
 
 
 def process_one_file(
@@ -434,11 +481,10 @@ def process_one_file(
                     clean_sub = subject_name.strip()
                     target_category = f"{CATEGORY_EXAMS_ROOT}/{clean_sub}"
                     detected_details = f"ورقة اختبار مادة: {clean_sub}"
-            except (OSError, ValueError, RuntimeError):
-                target_category = f"{CATEGORY_EXAMS_ROOT}/اختبارات عامة"
-                detected_details = (
-                    "ورقة اختبار ومستند دراسي (بانتظار تحديد المادة)"
-                )
+            except Exception:
+                guessed = _guess_exam_subject(p.name)
+                target_category = f"{CATEGORY_EXAMS_ROOT}/{guessed}"
+                detected_details = f"ورقة اختبار مادة: {guessed}"
 
         # إذا لم تحسم كاختبار بالاسم أو الرؤية، نفحص الوجوه
         if target_category == CATEGORY_UNCLASSIFIED:
@@ -464,11 +510,12 @@ def process_one_file(
                             detected_details = (
                                 f"ورقة اختبار مادة مصنفة: {clean_sub}"
                             )
-                    except (OSError, ValueError, RuntimeError):
+                    except Exception:
+                        guessed = _guess_exam_subject(p.name)
                         target_category = (
-                            f"{CATEGORY_EXAMS_ROOT}/اختبارات عامة"
+                            f"{CATEGORY_EXAMS_ROOT}/{guessed}"
                         )
-                        detected_details = "ورقة اختبار ومستند دراسي"
+                        detected_details = f"ورقة اختبار مادة: {guessed}"
                 elif api_key or os.getenv("ANTHROPIC_API_KEY"):
                     try:
                         subject_name = classifier.classify_exam_image(
@@ -482,7 +529,7 @@ def process_one_file(
                             detected_details = (
                                 f"ورقة اختبار مادة مصنفة: {clean_sub}"
                             )
-                    except (OSError, ValueError, RuntimeError) as e:
+                    except Exception as e:
                         logger.debug("فشل تصنيف الورقة بالذكاء: %s", e)
 
                 if target_category == CATEGORY_UNCLASSIFIED:
@@ -595,7 +642,11 @@ def run_continuous_scan(
             if stop_check and stop_check():
                 break
 
-            res = process_one_file(f, api_key=api_key)
+            try:
+                res = process_one_file(f, api_key=api_key)
+            except Exception as e:
+                logger.error("خطأ أثناء معالجة الملف %s: %s", f, e)
+                res = {"success": False, "error": str(e), "original_path": str(f)}
             all_results.append(res)
             if res.get("success"):
                 batch_processed += 1

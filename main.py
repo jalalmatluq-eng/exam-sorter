@@ -7,8 +7,20 @@
 
 import logging
 import os
+import typing
 from pathlib import Path
-from typing import override
+
+# ضمان التوافق التام مع بايثون 3.11 على نظام أندرويد
+if not hasattr(typing, "override"):
+    def _override(func: typing.Any) -> typing.Any:
+        return func
+
+    typing.override = _override  # type: ignore
+
+try:
+    from typing import override
+except ImportError:
+    override = typing.override  # type: ignore
 
 from dotenv import load_dotenv
 from kivy.clock import Clock
@@ -66,14 +78,14 @@ if font_path and os.path.exists(font_path):
 
 
 class CosmoSortApp(MDApp):
-    title: str = "CosmoSort ✦ جامع العوالم الذكي"
+    title: str = "CosmoSort - جامع العوالم الذكي"
     api_key: str = ""
     arabic_font: str = ""
     batch_queue: list[object]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self.title = "CosmoSort ✦ جامع العوالم الذكي"
+        self.title = "CosmoSort - جامع العوالم الذكي"
         self.api_key = os.getenv("ANTHROPIC_API_KEY", "")
         self.arabic_font = font_path or "Roboto"
         self.batch_queue = []
@@ -180,6 +192,14 @@ class CosmoSortApp(MDApp):
                 self.root.current = "home_screen"
             return True  # استهلاك الحدث لمنع خروج التطبيق
         return False
+
+    def on_pause(self) -> bool:
+        """السماح للتطبيق بالبقاء في الخلفية دون إنهاء السياق الرسومي"""
+        return True
+
+    def on_resume(self) -> None:
+        """استئناف التطبيق عند العودة من الخلفية"""
+        return None
 
     def request_android_permissions(self) -> None:
         """طلب صلاحيات الكاميرا والتخزين على أجهزة أندرويد"""

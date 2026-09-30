@@ -12,7 +12,13 @@
 
 import threading
 from pathlib import Path
-from typing import Any, override
+from typing import Any
+
+try:
+    from typing import override
+except ImportError:
+    def override(func: Any) -> Any:  # type: ignore
+        return func
 
 from kivy.app import App
 from kivy.clock import Clock
