@@ -1,11 +1,11 @@
 #!/bin/bash
 # =============================================================
-# Build APK via WSL Native Linux (ext4) for Wasaet Dhakiyah v2.0.0
+# Build APK via WSL Native Linux (ext4) for CosmoSort v2.0.1
 # =============================================================
 set -e
 
 echo "=========================================="
-echo "  بدء بناء APK لتطبيق وسائط ذكية v2.0.0"
+echo "  بدء بناء APK لتطبيق CosmoSort v2.0.1"
 echo "=========================================="
 
 export ax_cv_c_float_words_bigendian=no

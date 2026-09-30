@@ -346,6 +346,17 @@ def test_poison_files_and_pending_scan() -> None:
     print("✓ نجح فحص درع الملف السام والفحص المعلق والمفتاح المشترك بنجاح.\n")
 
 
+def test_export_logs() -> None:
+    print("--- 9. فحص تصدير سجل التشخيص (Export Diagnostic Logs) ---")
+    from utils.export_logs import get_private_log_file, export_diagnostic_log
+    log_p = get_private_log_file()
+    assert log_p.exists(), "ملف السجل الداخلي يجب أن يكون موجوداً أو تم إنشاؤه!"
+    ok, msg = export_diagnostic_log()
+    assert ok, f"فشل تصدير سجل التشخيص: {msg}"
+    print(f"✓ تم تصدير السجل بنجاح إلى: {msg}")
+    print("✓ نجح فحص تصدير سجل التشخيص بالكامل.\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -355,6 +366,7 @@ if __name__ == "__main__":
     test_media_scanner_and_rollback()
     test_service_watcher()
     test_poison_files_and_pending_scan()
+    test_export_logs()
     print("==================================================")
     print("  جميع الفحوصات الآلية للوحدات تمت بنجاح 100%!  ")
     print("==================================================")

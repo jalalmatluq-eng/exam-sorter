@@ -818,7 +818,76 @@
                             text_color: 0.48, 0.22, 0.85, 1
 
                 # ──────────────────────────────────────────────
-                # 8. سجل العمليات
+                # 8. سجل التشخيص والدعم الفني
+                # ──────────────────────────────────────────────
+                MDCard:
+                    size_hint_y: None
+                    height: dp(124)
+                    radius: [24, 24, 24, 24]
+                    padding: dp(14)
+                    elevation: 0
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
+                    orientation: "vertical"
+                    spacing: dp(6)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(26)
+
+                        MDLabel:
+                            id: debug_log_title
+                            text: app.ar("سجل التشخيص واستكشاف الأخطاء")
+                            bold: True
+                            font_size: "14sp"
+                            theme_text_color: "Custom"
+                            text_color: 0.08, 0.16, 0.34, 1
+                            halign: "right"
+
+                        MDIcon:
+                            icon: "file-document-outline"
+                            theme_icon_color: "Custom"
+                            icon_color: 0.02, 0.52, 0.80, 1
+                            font_size: "24sp"
+                            size_hint_x: None
+                            width: dp(28)
+
+                    MDLabel:
+                        id: debug_log_desc
+                        text: app.ar("تصدير سجل cosmosort_debug.log إلى مجلد Downloads")
+                        font_size: "11sp"
+                        halign: "right"
+                        theme_text_color: "Custom"
+                        text_color: 0.35, 0.45, 0.60, 1
+                        size_hint_y: None
+                        height: dp(20)
+
+                    MDButton:
+                        id: btn_export_log
+                        style: "outlined"
+                        theme_bg_color: "Custom"
+                        md_bg_color: 0.92, 0.95, 1.0, 0.95
+                        size_hint_y: None
+                        height: dp(38)
+                        radius: [14, 14, 14, 14]
+                        on_release: root.export_diagnostic_log()
+
+                        MDButtonIcon:
+                            icon: "share-variant-outline"
+                            theme_icon_color: "Custom"
+                            icon_color: 0.02, 0.52, 0.80, 1
+
+                        MDButtonText:
+                            id: text_export_log
+                            text: app.ar("تصدير سجل التشخيص (Download)")
+                            bold: True
+                            font_size: "11sp"
+                            theme_text_color: "Custom"
+                            text_color: 0.02, 0.52, 0.80, 1
+
+                # ──────────────────────────────────────────────
+                # 9. سجل العمليات
                 # ──────────────────────────────────────────────
                 MDBoxLayout:
                     size_hint_y: None

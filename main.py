@@ -36,17 +36,24 @@ from screens.subject_detail_screen import SubjectDetailScreen
 from service import media_watcher_service
 from utils.arabic_helper import ar, get_arabic_font_path
 
-# مسار ملف التشخيص الدائم cosmosort_debug.log
+# مسار ملف التشخيص الدائم cosmosort_debug.log في التخزين الخاص للتطبيق (ANDROID_PRIVATE)
 DEBUG_LOG_FILE: Path | None = None
-for _p in [
-    Path("/storage/emulated/0/Download/cosmosort_debug.log"),
-    Path("/storage/emulated/0/cosmosort_debug.log"),
-    Path(__file__).resolve().parent / "cosmosort_debug.log",
-]:
+_private_candidates: list[Path] = []
+
+_android_private = os.environ.get("ANDROID_PRIVATE")
+if _android_private:
+    _private_candidates.append(Path(_android_private) / "cosmosort_debug.log")
+    _private_candidates.append(Path(_android_private) / "app" / "cosmosort_debug.log")
+
+_app_dir = Path(__file__).resolve().parent
+_private_candidates.append(_app_dir / "cosmosort_debug.log")
+_private_candidates.append(Path.home() / ".cosmosort" / "cosmosort_debug.log")
+
+for _candidate in _private_candidates:
     try:
-        _p.parent.mkdir(parents=True, exist_ok=True)
-        _p.touch(exist_ok=True)
-        DEBUG_LOG_FILE = _p
+        _candidate.parent.mkdir(parents=True, exist_ok=True)
+        _candidate.touch(exist_ok=True)
+        DEBUG_LOG_FILE = _candidate
         break
     except Exception:
         pass

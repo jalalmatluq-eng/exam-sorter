@@ -99,6 +99,14 @@ class SettingsScreen(Screen):
                 self.ids.face_card_title.text = ar("بصمة وجهي وصوري الخاصة")
             if "btn_edit_face_text" in self.ids:
                 self.ids.btn_edit_face_text.text = ar("تعديل البصمة")
+            if "debug_log_title" in self.ids:
+                self.ids.debug_log_title.text = ar("سجل التشخيص واستكشاف الأخطاء")
+            if "debug_log_desc" in self.ids:
+                self.ids.debug_log_desc.text = ar(
+                    "تصدير سجل cosmosort_debug.log إلى مجلد Downloads"
+                )
+            if "text_export_log" in self.ids:
+                self.ids.text_export_log.text = ar("تصدير سجل التشخيص (Download)")
             if "history_section_title" in self.ids:
                 self.ids.history_section_title.text = ar(
                     "سجل عمليات النقل الأخيرة والتراجع"
@@ -917,6 +925,31 @@ class SettingsScreen(Screen):
             )
         except (KeyError, ValueError, OSError, RuntimeError) as e:
             _ = show_app_dialog(title="خطأ", text=f"تعذر جلب الإحصائيات: {e}")
+
+    def export_diagnostic_log(self) -> None:
+        """تصدير سجل التشخيص cosmosort_debug.log إلى مجلد Downloads."""
+        try:
+            from utils.export_logs import export_diagnostic_log as _do_export
+
+            success, message = _do_export()
+            if success:
+                _ = show_app_dialog(
+                    title="تم تصدير سجل التشخيص بنجاح",
+                    text=(
+                        f"تم حفظ نسخة من ملف التشخيص في:\n\n{message}\n\n"
+                        "يمكنك الآن العثور عليه في مجلد التنزيلات (Download) لمشاركته أو فحصه."
+                    ),
+                )
+            else:
+                _ = show_app_dialog(
+                    title="تعذر تصدير السجل",
+                    text=f"فشل تصدير سجل التشخيص:\n{message}",
+                )
+        except Exception as e:
+            _ = show_app_dialog(
+                title="خطأ",
+                text=f"حدث استثناء أثناء محاولة التصدير:\n{e}",
+            )
 
     def go_back(self) -> None:
         app = self.get_app()
