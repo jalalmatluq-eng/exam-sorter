@@ -15,7 +15,32 @@ env:
   PYTHONFORANDROID_PREREQUISITES_INSTALL_INTERACTIVE: 0
 
 jobs:
+  test:
+    name: Run automated unit tests
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install test dependencies
+        run: |
+          pip install --upgrade pip
+          # opencv headless: same API as opencv-python, no system libGL needed on CI runners
+          pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless
+
+      - name: Run test_modules.py (7 suites)
+        run: |
+          python test_modules.py
+
   build-apk:
+    needs: test
     runs-on: ubuntu-22.04
     timeout-minutes: 120
 
