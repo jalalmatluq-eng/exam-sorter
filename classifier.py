@@ -48,9 +48,9 @@ DEFAULT_API_KEY = ""
 
 # الرابط الخاص بـ Anthropic Messages API
 ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
-# النموذج المقترح
+# النموذج المقترح (تم التحديث إلى أحدث وأسرع نموذج متاح)
 DEFAULT_MODEL = os.getenv(
-    "CLAUDE_MODEL", "claude-3-haiku-20240307"
+    "CLAUDE_MODEL", "claude-haiku-4-5-20251001"
 ).strip()
 
 
@@ -63,7 +63,9 @@ def get_api_key(custom_key: str | None = None) -> str:
     استرجاع مفتاح الـ API بالترتيب التالي:
     1. المفتاح الممرر يدوياً من الشاشة/الإعدادات.
     2. متغير البيئة ANTHROPIC_API_KEY من ملف .env.
-    3. القيمة الافتراضية DEFAULT_API_KEY.
+    3. ملف التخزين الدائم المشترك (لتوافق الخدمات الخلفية).
+    4. مسار user_data_dir لتطبيقات الجوال.
+    5. القيمة الافتراضية DEFAULT_API_KEY.
     """
     if custom_key is not None and custom_key.strip():
         return custom_key.strip()
@@ -71,6 +73,15 @@ def get_api_key(custom_key: str | None = None) -> str:
     env_key = os.getenv("ANTHROPIC_API_KEY", "").strip()
     if env_key:
         return env_key
+
+    # فحص مسار التخزين المشترك للتطبيق والخدمة الخلفية
+    try:
+        import file_manager
+        stored = file_manager.get_stored_api_key()
+        if stored:
+            return stored
+    except Exception:
+        pass
 
     # فحص مسار user_data_dir لتطبيقات الجوال
     try:
