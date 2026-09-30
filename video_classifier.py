@@ -204,10 +204,120 @@ KEYWORDS_MAP = {
 }
 
 
+def _android_get_video_metadata(video_path: str) -> dict[str, Any] | None:
+    """استخراج بيانات الفيديو الوصفية بأمان كامل عبر محرك أندرويد الأصلي"""
+    retriever = None
+    try:
+        from jnius import autoclass  # type: ignore
+
+        MediaMetadataRetriever = autoclass("android.media.MediaMetadataRetriever")
+        retriever = MediaMetadataRetriever()
+        retriever.setDataSource(str(video_path))
+
+        meta: dict[str, Any] = {
+            "duration_sec": 0.0,
+            "width": 0,
+            "height": 0,
+            "fps": 25.0,
+            "frame_count": 0,
+        }
+        # METADATA_KEY_DURATION = 9 (in ms)
+        dur_str = retriever.extractMetadata(9)
+        if dur_str:
+            meta["duration_sec"] = float(dur_str) / 1000.0
+
+        # METADATA_KEY_VIDEO_WIDTH = 18, METADATA_KEY_VIDEO_HEIGHT = 19
+        w_str = retriever.extractMetadata(18)
+        if w_str:
+            meta["width"] = int(w_str)
+        h_str = retriever.extractMetadata(19)
+        if h_str:
+            meta["height"] = int(h_str)
+
+        # METADATA_KEY_CAPTURE_FRAMERATE = 25
+        fps_str = retriever.extractMetadata(25)
+        if fps_str:
+            try:
+                meta["fps"] = float(fps_str)
+            except ValueError:
+                pass
+        if meta["fps"] > 0 and meta["duration_sec"] > 0:
+            meta["frame_count"] = int(meta["duration_sec"] * meta["fps"])
+
+        return meta
+    except Exception as e:
+        print(f"تنبيه: تعذر قراءة بيانات الفيديو عبر أندرويد الأصلي {video_path}:", e)
+        return None
+    finally:
+        if retriever is not None:
+            try:
+                retriever.release()
+            except Exception:
+                pass
+
+
+def _android_read_frame(
+    video_path: str, position_ratio: float = 0.5
+) -> np.ndarray | None:
+    """استخراج إطار الفيديو عبر MediaMetadataRetriever لمنع أي انهيار native في OpenCV"""
+    retriever = None
+    try:
+        from io import BytesIO
+        from jnius import autoclass  # type: ignore
+        from PIL import Image
+
+        MediaMetadataRetriever = autoclass("android.media.MediaMetadataRetriever")
+        ByteArrayOutputStream = autoclass("java.io.ByteArrayOutputStream")
+        CompressFormat = autoclass("android.graphics.Bitmap$CompressFormat")
+
+        retriever = MediaMetadataRetriever()
+        retriever.setDataSource(str(video_path))
+
+        dur_str = retriever.extractMetadata(9)
+        dur_ms = float(dur_str) if dur_str else 0.0
+        time_us = int(dur_ms * 1000.0 * max(0.05, min(0.95, position_ratio)))
+
+        # OPTION_CLOSEST_SYNC = 2
+        bitmap = retriever.getFrameAtTime(time_us, 2)
+        if bitmap is None:
+            bitmap = retriever.getFrameAtTime(0, 2)
+        if bitmap is None:
+            return None
+
+        bos = ByteArrayOutputStream()
+        _ = bitmap.compress(CompressFormat.JPEG, 85, bos)
+        raw_bytes = bytes(bos.toByteArray())
+        bos.close()
+
+        pil_img = Image.open(BytesIO(raw_bytes))
+        arr = np.array(pil_img)
+        # تحويل RGB إلى BGR ليتوافق مع باقي نظام التصنيف ومعالجة الوجوه
+        bgr = arr[:, :, [2, 1, 0]] if arr.ndim == 3 and arr.shape[2] >= 3 else arr
+        return bgr
+    except Exception as e:
+        print(f"تنبيه: تعذر استخراج إطار أندرويد الأصلي من {video_path}:", e)
+        return None
+    finally:
+        if retriever is not None:
+            try:
+                retriever.release()
+            except Exception:
+                pass
+
+
 def _safe_read_frame(
     video_path: str, position_ratio: float = 0.5
 ) -> np.ndarray | None:
-    """استخراج إطار تمثيلي محدد من الفيديو عبر OpenCV"""
+    """استخراج إطار تمثيلي من الفيديو (عبر أندرويد الأصلي أولاً، أو OpenCV لسطح المكتب)"""
+    try:
+        from kivy.utils import platform
+        if platform == "android":
+            frame = _android_read_frame(video_path, position_ratio)
+            if frame is not None:
+                return frame
+    except Exception:
+        pass
+
     if cv2 is None:
         return None
     cap = None
@@ -218,7 +328,6 @@ def _safe_read_frame(
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
         if total_frames <= 0:
-            # محاولة قراءة أول إطار إن كان طول الفيديو غير محدد
             ret, frame = cap.read()
             return frame if ret else None
 
@@ -228,7 +337,6 @@ def _safe_read_frame(
         if ret and frame is not None:
             return frame
 
-        # محاولة بديلة لقراءة أول إطار
         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
         ret, frame = cap.read()
         return frame if ret else None
@@ -241,7 +349,18 @@ def _safe_read_frame(
 
 
 def get_video_metadata(video_path: str) -> dict[str, Any]:
-    """استخراج مدة الفيديو وأبعاده ومعدل الإطارات"""
+    """استخراج مدة الفيديو وأبعاده ومعدل الإطارات بأمان تام"""
+    try:
+        from kivy.utils import platform
+        if platform == "android":
+            meta = _android_get_video_metadata(video_path)
+            if meta is not None and (
+                meta.get("duration_sec", 0) > 0 or meta.get("width", 0) > 0
+            ):
+                return meta
+    except Exception:
+        pass
+
     meta = {
         "duration_sec": 0.0,
         "width": 0,
@@ -378,7 +497,6 @@ def classify_video_with_claude(
         return CATEGORY_UNCLASSIFIED
 
     temp_frame_path = str(file_manager.get_temp_dir() / "_vid_classify_frame.jpg")
-
 
     if cv2 is not None:
         cv2.imwrite(temp_frame_path, frame, [cv2.IMWRITE_JPEG_QUALITY, 85])

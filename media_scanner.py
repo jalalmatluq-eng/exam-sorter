@@ -225,6 +225,48 @@ def scan_storage_roots(source_storage: str | None = None) -> list[Path]:
     return roots
 
 
+def _scan_android_mediastore(scanned_set: set[str]) -> list[Path]:
+    """
+    مسار بديل آمن: استعلام صور وفيديوهات الجهاز عبر MediaStore
+    في حال لم تُمنح صلاحية إدارة كافة الملفات (Scoped Storage / All Files Access).
+    """
+    found: list[Path] = []
+    try:
+        from android import mActivity  # type: ignore
+        from jnius import autoclass  # type: ignore
+
+        MediaStoreImages = autoclass("android.provider.MediaStore$Images$Media")
+        MediaStoreVideo = autoclass("android.provider.MediaStore$Video$Media")
+        content_uris = [
+            MediaStoreImages.EXTERNAL_CONTENT_URI,
+            MediaStoreVideo.EXTERNAL_CONTENT_URI,
+        ]
+
+        cr = mActivity.getContentResolver()
+        for uri in content_uris:
+            cursor = cr.query(uri, ["_data"], None, None, None)
+            if cursor is not None:
+                try:
+                    col_idx = cursor.getColumnIndexOrThrow("_data")
+                    while cursor.moveToNext():
+                        raw_str = cursor.getString(col_idx)
+                        if raw_str and raw_str not in scanned_set:
+                            p = Path(raw_str)
+                            if (
+                                "الملفات المنظمة" not in raw_str
+                                and p.exists()
+                                and p.is_file()
+                            ):
+                                ext = p.suffix.lower()
+                                if ext in IMAGE_EXTENSIONS or ext in VIDEO_EXTENSIONS:
+                                    found.append(p)
+                finally:
+                    cursor.close()
+    except Exception as e:
+        logger.debug("تنبيه: تعذر استعلام MediaStore عبر أندرويد: %s", e)
+    return found
+
+
 def find_unsorted_media(
     roots: list[Path] | None = None,
     max_depth: int = 8,
@@ -235,12 +277,25 @@ def find_unsorted_media(
     - استثناء مجلد الملفات المنظمة ومجلدات أندرويد المحمية.
     - استثناء مجلد الحفظ المعتمد أياً كان مساره لمنع التكرار.
     - استثناء الملفات المعالجة مسبقاً.
+    - مسار بديل عبر MediaStore إن لم تتوفر صلاحية الوصول الكامل للملفات.
     """
+    scanned_set = get_all_scanned_files_set()
+
+    # مسار بديل عبر MediaStore في حال حظر أو رفض إذن إدارة كل الملفات
+    try:
+        from kivy.utils import platform
+        if platform == "android" and not file_manager.is_all_files_access_granted():
+            ms_files = _scan_android_mediastore(scanned_set)
+            if ms_files:
+                logger.info("تم العثور على %d ملف عبر MediaStore البديل", len(ms_files))
+                return ms_files
+    except Exception:
+        pass
+
     if roots is None:
         roots = scan_storage_roots(source_storage=source_storage)
 
     found_files: list[Path] = []
-    scanned_set = get_all_scanned_files_set()
     excluded_dir_names = {
         "الملفات المنظمة", "الملفات_المنظمة", "mediasorter",
         "examsorter", ".git", ".venv", "venv",
@@ -457,6 +512,32 @@ def process_one_file(
     5. خارج التصنيف.
     """
     p = Path(file_path).resolve()
+    p_str = str(p)
+    if p_str in file_manager.get_poison_files_set():
+        logger.info("تخطي ملف سام مستبعد من الفحص: %s", p_str)
+        return {
+            "success": False,
+            "skipped": True,
+            "reason": "poison_file",
+            "source": p_str,
+            "error": "ملف مستبعد لتسببه بانهيار سابق",
+        }
+
+    file_manager.mark_file_processing_start(p_str)
+    try:
+        return _process_one_file_internal(
+            p, api_key=api_key, copy_only=copy_only
+        )
+    finally:
+        file_manager.mark_file_processing_end()
+
+
+def _process_one_file_internal(
+    p: Path,
+    api_key: str | None = None,
+    copy_only: bool | None = None,
+) -> dict[str, object]:
+    """المعالجة الفعلية للملف بعد تجاوز درع الملف السام"""
     if not p.exists() or not p.is_file():
         return {"success": False, "error": "الملف غير موجود"}
 
