@@ -11,6 +11,9 @@ on:
         type: boolean
         default: false
 
+env:
+  PYTHONFORANDROID_PREREQUISITES_INSTALL_INTERACTIVE: 0
+
 jobs:
   build-apk:
     runs-on: ubuntu-22.04
@@ -20,38 +23,56 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Cache Buildozer global directory
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            git zip unzip autoconf automake libtool pkg-config \
+            zlib1g-dev libncurses5-dev libncursesw5-dev libtinfo5 \
+            cmake libffi-dev libssl-dev libltdl-dev ccache
+
+      - name: Install Buildozer and tools
+        run: |
+          pip install --upgrade pip
+          pip install --upgrade "Cython<3.0" buildozer virtualenv sh jinja2
+
+      - name: Cache Buildozer global directory (~/.buildozer)
         if: ${{ !inputs.clean_cache }}
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: cosmosort-buildozer-global-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          key: cosmosort-global-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            cosmosort-buildozer-global-v1-${{ runner.os }}-
+            cosmosort-global-v2-${{ runner.os }}-
 
       - name: Cache .buildozer local directory
         if: ${{ !inputs.clean_cache }}
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: cosmosort-buildozer-local-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          key: cosmosort-local-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            cosmosort-buildozer-local-v1-${{ runner.os }}-
+            cosmosort-local-v2-${{ runner.os }}-
 
-      - name: Build with Buildozer
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
-        with:
-          command: buildozer -v android debug
-          buildozer_version: stable
+      - name: Build APK with Buildozer
+        run: |
+          buildozer -v android debug
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         if: always()
         with:
           name: cosmosort-2.0.0-debug
-          path: |
-            bin/*.apk
-            ${{ steps.buildozer.outputs.filename }}
+          path: bin/*.apk
           retention-days: 30
-
