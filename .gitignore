@@ -35,6 +35,8 @@ scratch/
 temp/
 *.tmp
 *.log
+crash_log*.txt
+last_processing.json
 
 # IDE & Editor Settings
 .idea/

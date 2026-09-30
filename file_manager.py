@@ -14,6 +14,7 @@ import re
 import shutil
 import sqlite3
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -444,6 +445,11 @@ DEFAULT_PREFERENCES: dict[str, object] = {
     "custom_target_path": "",
     "scan_all_roots": True,
     "initial_setup_completed": False,
+    "poison_files": [],
+    "pending_scan": False,
+    "pending_source": "both",
+    "pending_target": "internal",
+    "api_key": "",
 }
 
 
@@ -486,6 +492,142 @@ def save_sorter_preferences(prefs: dict[str, object]) -> None:
             json.dump(current, f, ensure_ascii=False, indent=2)
     except (OSError, TypeError) as e:
         print("خطأ أثناء حفظ تفضيلات الفرز:", e)
+
+
+def get_last_processing_file_path() -> Path:
+    """مسار ملف تتبع الملف الجاري معالجته لاكتشاف الانهيارات غير المتوقعة (Poison Files)"""
+    return get_prefs_file_path().parent / "last_processing.json"
+
+
+def mark_file_processing_start(file_path: str) -> None:
+    """تسجيل مسار الملف قبل بدء معالجته لاكتشاف أي انهيار أصلي مفاجئ"""
+    try:
+        target = get_last_processing_file_path()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        data = {"file": str(file_path), "started_at": time.time()}
+        target.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def mark_file_processing_end() -> None:
+    """مسح ملف التتبع بعد اكتمال معالجة الملف بنجاح"""
+    try:
+        target = get_last_processing_file_path()
+        if target.exists():
+            target.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def check_and_handle_poison_file_on_boot() -> str | None:
+    """
+    فحص ما إذا كان التطبيق قد انهار في الجلسة السابقة أثناء معالجة ملف معين:
+    إذا وُجد ملف مسجل، يتم اعتباره ملفاً ساماً (Poison File) مسبباً للانهيار الأصلي،
+    ويُضاف تلقائياً إلى قائمة poison_files لتخطيه مستقبلاً مع حذف ملف التتبع.
+    """
+    try:
+        target = get_last_processing_file_path()
+        if not target.exists():
+            return None
+        data = json.loads(target.read_text(encoding="utf-8"))
+        poison_file = str(data.get("file", "")).strip()
+        target.unlink(missing_ok=True)
+
+        if poison_file:
+            prefs = get_sorter_preferences()
+            poisons = list(prefs.get("poison_files", []))
+            if poison_file not in poisons:
+                poisons.append(poison_file)
+                save_sorter_preferences({"poison_files": poisons})
+            return poison_file
+    except Exception as e:
+        print("خطأ أثناء فحص ملف الانهيار السابق:", e)
+    return None
+
+
+def get_poison_files_set() -> set[str]:
+    """استرجاع مجموعة مسارات الملفات السامة المستبعدة"""
+    try:
+        prefs = get_sorter_preferences()
+        return set(str(x) for x in prefs.get("poison_files", []))
+    except Exception:
+        return set()
+
+
+def set_pending_scan(
+    pending: bool, source: str = "both", target: str = "internal"
+) -> None:
+    """حفظ نية الفحص لاستئنافها تلقائياً بعد منح الصلاحيات"""
+    save_sorter_preferences({
+        "pending_scan": pending,
+        "pending_source": source,
+        "pending_target": target,
+    })
+
+
+def get_pending_scan_info() -> tuple[bool, str, str]:
+    """استرجاع حالة الفحص المعلق ومصدره ووجهته"""
+    prefs = get_sorter_preferences()
+    is_pending = bool(prefs.get("pending_scan", False))
+    source = str(prefs.get("pending_source", "both"))
+    target = str(prefs.get("pending_target", "internal"))
+    return is_pending, source, target
+
+
+def clear_pending_scan() -> None:
+    """إلغاء الفحص المعلق بعد تنفيذه"""
+    save_sorter_preferences({"pending_scan": False})
+
+
+def get_stored_api_key() -> str:
+    """استرجاع مفتاح API المحفوظ في مسار التخزين المشترك لتتمكن الخدمة والتطبيق من قراءته"""
+    try:
+        prefs = get_sorter_preferences()
+        k = str(prefs.get("api_key", "")).strip()
+        if k:
+            return k
+    except Exception:
+        pass
+
+    try:
+        candidates = [
+            get_prefs_file_path().parent / ".api_key",
+            get_media_sorter_base_path() / ".api_key",
+            Path(__file__).resolve().parent / ".api_key",
+        ]
+        for c in candidates:
+            if c.exists() and c.is_file():
+                val = c.read_text(encoding="utf-8").strip()
+                if val:
+                    return val
+    except Exception:
+        pass
+    return ""
+
+
+def save_api_key_to_persistent_storage(new_key: str) -> None:
+    """حفظ مفتاح API في مسار تخزين دائم ومشترك يصل إليه التطبيق والخدمة الخلفية"""
+    clean_k = (new_key or "").strip()
+    try:
+        save_sorter_preferences({"api_key": clean_k})
+    except Exception:
+        pass
+
+    targets = [
+        get_prefs_file_path().parent / ".api_key",
+        get_media_sorter_base_path() / ".api_key",
+    ]
+    for target in targets:
+        try:
+            if clean_k:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(clean_k, encoding="utf-8")
+            else:
+                if target.exists():
+                    target.unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def is_all_files_access_granted() -> bool:

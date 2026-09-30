@@ -114,6 +114,8 @@ def test_classifier_encoding() -> None:
     dummy_test_img = Path("dummy_for_key.jpg")
     Image.new("RGB", (100, 100), color=(255, 255, 255)).save(dummy_test_img)
     saved_env_key = os.environ.pop("ANTHROPIC_API_KEY", None)
+    saved_stored_key = file_manager.get_stored_api_key()
+    file_manager.save_api_key_to_persistent_storage("")
     try:
         _ = classifier.classify_exam_image(
             str(dummy_test_img), api_key="", fallback_to_ocr=False
@@ -128,6 +130,8 @@ def test_classifier_encoding() -> None:
             dummy_test_img.unlink()
         if saved_env_key is not None:
             os.environ["ANTHROPIC_API_KEY"] = saved_env_key
+        if saved_stored_key:
+            file_manager.save_api_key_to_persistent_storage(saved_stored_key)
 
     print("✓ نجح فحص وحدة التصنيف.\n")
 
@@ -298,6 +302,50 @@ def test_service_watcher() -> None:
     print("✓ تم بدء وإيقاف ثريد خدمة المراقبة بنجاح.\n")
 
 
+def test_poison_files_and_pending_scan() -> None:
+    print("--- 8. فحص درع الملف السام والفحص المعلق وحفظ المفتاح ---")
+
+    # 1. فحص تتبع الملف الجاري ومعالجة الملف السام
+    fake_poison_file = "test_corrupt_video.mp4"
+    file_manager.mark_file_processing_start(fake_poison_file)
+    last_proc_path = file_manager.get_last_processing_file_path()
+    assert last_proc_path.exists(), "ملف تتبع المعالجة يجب أن ينشأ عند البدء!"
+
+    # محاكاة إقلاع التطبيق بعد انهيار غير متوقع
+    detected_poison = file_manager.check_and_handle_poison_file_on_boot()
+    assert detected_poison == fake_poison_file, "يجب اكتشاف الملف السام عند الإقلاع!"
+    assert not last_proc_path.exists(), "يجب مسح ملف التتبع بعد نقله لقائمة poison_files!"
+
+    poisons = file_manager.get_poison_files_set()
+    assert fake_poison_file in poisons, "الملف السام يجب أن يكون مضافاً في قائمة poison_files!"
+
+    # تنظيف قائمة الملفات السامة
+    file_manager.save_sorter_preferences({"poison_files": []})
+    assert fake_poison_file not in file_manager.get_poison_files_set()
+
+    # 2. فحص الفحص المعلق (Pending Scan)
+    file_manager.set_pending_scan(True, source="internal", target="sdcard")
+    is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()
+    assert is_pending is True, "يجب حفظ حالة الفحص المعلق!"
+    assert p_src == "internal"
+    assert p_tgt == "sdcard"
+
+    file_manager.clear_pending_scan()
+    is_pending_after, _, _ = file_manager.get_pending_scan_info()
+    assert is_pending_after is False, "يجب إلغاء الفحص المعلق بعد clear_pending_scan!"
+
+    # 3. فحص حفظ واسترجاع مفتاح API المشترك
+    test_key = "sk-ant-test-key-12345"
+    file_manager.save_api_key_to_persistent_storage(test_key)
+    retrieved_key = file_manager.get_stored_api_key()
+    assert retrieved_key == test_key, "المفتاح المسترجع يجب أن يتطابق مع المحفوظ!"
+
+    # تنظيف
+    file_manager.save_api_key_to_persistent_storage("")
+
+    print("✓ نجح فحص درع الملف السام والفحص المعلق والمفتاح المشترك بنجاح.\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -306,6 +354,7 @@ if __name__ == "__main__":
     test_video_classifier()
     test_media_scanner_and_rollback()
     test_service_watcher()
+    test_poison_files_and_pending_scan()
     print("==================================================")
     print("  جميع الفحوصات الآلية للوحدات تمت بنجاح 100%!  ")
     print("==================================================")

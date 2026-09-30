@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import faulthandler
 import logging
 import os
 from pathlib import Path
@@ -35,7 +36,50 @@ from screens.subject_detail_screen import SubjectDetailScreen
 from service import media_watcher_service
 from utils.arabic_helper import ar, get_arabic_font_path
 
+# مسار ملف التشخيص الدائم cosmosort_debug.log
+DEBUG_LOG_FILE: Path | None = None
+for _p in [
+    Path("/storage/emulated/0/Download/cosmosort_debug.log"),
+    Path("/storage/emulated/0/cosmosort_debug.log"),
+    Path(__file__).resolve().parent / "cosmosort_debug.log",
+]:
+    try:
+        _p.parent.mkdir(parents=True, exist_ok=True)
+        _p.touch(exist_ok=True)
+        DEBUG_LOG_FILE = _p
+        break
+    except Exception:
+        pass
+
+# تفعيل faulthandler فوراً لالتقاط انهيارات C/C++ و SIGSEGV قبل تحميل أي مكتبات
+if DEBUG_LOG_FILE is not None:
+    try:
+        _fh_stream = open(DEBUG_LOG_FILE, "a", encoding="utf-8", buffering=1)
+        faulthandler.enable(file=_fh_stream, all_threads=True)
+    except Exception:
+        pass
+
+# إعداد السجل الرئيسي FileHandler لتسجيل كل ما يحدث في التطبيق
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s",
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
+if DEBUG_LOG_FILE is not None:
+    try:
+        _file_handler = logging.FileHandler(
+            str(DEBUG_LOG_FILE), encoding="utf-8"
+        )
+        _file_handler.setFormatter(
+            logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s")
+        )
+        logging.getLogger().addHandler(_file_handler)
+    except Exception:
+        pass
+
 logger = logging.getLogger("CosmoSortApp")
+logger.info("=== بدء تشغيل تطبيق CosmoSort (كوزمو سورت) ===")
+logger.info("Python: %s | Platform: %s", sys.version, sys.platform)
 
 
 def _handle_uncaught_exception(exctype: Any, value: Any, tb: Any) -> None:
@@ -43,15 +87,18 @@ def _handle_uncaught_exception(exctype: Any, value: Any, tb: Any) -> None:
     logger.critical("CRITICAL UNCAUGHT EXCEPTION: %s", err)
     try:
         for log_target in [
+            DEBUG_LOG_FILE,
             Path("/storage/emulated/0/Download/cosmosort_crash.log"),
             Path("/storage/emulated/0/cosmosort_crash.log"),
             Path(__file__).resolve().parent / "crash.log",
         ]:
-            try:
-                log_target.write_text(err, encoding="utf-8")
-                break
-            except Exception:
-                pass
+            if log_target is not None:
+                try:
+                    with open(log_target, "a", encoding="utf-8") as f:
+                        f.write(f"\n--- CRASH AT {err}\n")
+                    break
+                except Exception:
+                    pass
     except Exception:
         pass
     sys.__excepthook__(exctype, value, tb)
@@ -207,15 +254,30 @@ class CosmoSortApp(MDApp):
         return True
 
     def on_resume(self) -> None:
-        """استئناف التطبيق عند العودة من الخلفية"""
+        """استئناف التطبيق عند العودة من الخلفية والتحقق من الفحص المعلق"""
         if Window is not None:
             try:
                 Window.update_viewport()
             except Exception:
                 pass
 
+        # استئناف أي فحص كان معلقاً بانتظار موافقة المستخدم على الصلاحيات
+        try:
+            is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()
+            if is_pending and file_manager.is_all_files_access_granted():
+                file_manager.clear_pending_scan()
+                if self.root and hasattr(self.root, "get_screen"):
+                    home = self.root.get_screen("home_screen")
+                    if home and hasattr(home, "start_scan_with_options"):
+                        Clock.schedule_once(
+                            lambda _dt: home.start_scan_with_options(p_src, p_tgt),
+                            0.5,
+                        )
+        except Exception as e:
+            logger.debug("تنبيه أثناء فحص الفحص المعلق في on_resume: %s", e)
+
     def request_android_permissions(self) -> None:
-        """طلب صلاحيات الكاميرا والتخزين الأساسية على أجهزة أندرويد عبر النافذة القياسية"""
+        """طلب صلاحيات الكاميرا والوسائط الأساسية على أجهزة أندرويد (تغطي أندرويد 8 حتى 15)"""
         try:
             from android.permissions import (  # type: ignore
                 Permission,
@@ -227,12 +289,17 @@ class CosmoSortApp(MDApp):
                 Permission.READ_EXTERNAL_STORAGE,
                 Permission.WRITE_EXTERNAL_STORAGE,
             ]
-            if hasattr(Permission, "READ_MEDIA_IMAGES"):
-                perms.append(Permission.READ_MEDIA_IMAGES)
-            if hasattr(Permission, "READ_MEDIA_VIDEO"):
-                perms.append(Permission.READ_MEDIA_VIDEO)
-            if hasattr(Permission, "POST_NOTIFICATIONS"):
-                perms.append(Permission.POST_NOTIFICATIONS)
+            # دعم أندرويد 13+ و 14+ للصور والفيديوهات والصوتيات
+            for extra_perm in [
+                "READ_MEDIA_IMAGES",
+                "READ_MEDIA_VIDEO",
+                "READ_MEDIA_AUDIO",
+                "READ_MEDIA_VISUAL_USER_SELECTED",
+                "POST_NOTIFICATIONS",
+            ]:
+                if hasattr(Permission, extra_perm):
+                    perms.append(getattr(Permission, extra_perm))
+
             request_permissions(perms)
         except Exception as e:
             logger.warning("تنبيه: تعذر استدعاء مكتبة صلاحيات أندرويد: %s", e)

@@ -6,6 +6,7 @@
 - نافذة إعدادات لإدخال وتعديل مفتاح API الخاص بـ Claude.
 """
 
+import logging
 import os
 from pathlib import Path
 from typing import Any
@@ -29,6 +30,8 @@ from utils.ui_helper import (
     show_modern_notification,
 )
 
+logger = logging.getLogger("HomeScreen")
+
 
 class HomeScreen(Screen):
     cosmic_glow_color: list[float] = ListProperty([0.02, 0.65, 0.95, 0.55])
@@ -40,14 +43,36 @@ class HomeScreen(Screen):
         self.all_subjects: list[dict[str, Any]] = []
         self._is_scanning: bool = False
         self._anim_running: bool = False
+        self._has_requested_perms: bool = False
 
     def on_enter(self, *args: object) -> None:
         """يتم استدعاؤها في كل مرة يدخل فيها المستخدم للشاشة لتحديث القائمة"""
         self.apply_arabic_texts()
         self.refresh_subjects()
         self.check_initial_setup()
-        # ★ لا نشغل حركة كونية مستمرة — الألوان ثابتة لحماية GPU Adreno القديمة
-        if platform == "android":
+
+        # فحص وجود ملف سام تسبب بانهيار في الجلسة السابقة لحمايته وتنبيه المستخدم
+        poison_file = file_manager.check_and_handle_poison_file_on_boot()
+        if poison_file:
+            poison_name = Path(poison_file).name
+            show_modern_notification(
+                "درع الحماية",
+                f"تم تجاوز الملف ({poison_name}) لحماية التطبيق من الانهيار.",
+                icon="shield-check",
+                notif_type="magic",
+            )
+
+        # استئناف الفحص المعلق تلقائياً إن كان المستخدم قد غادر لمنح الصلاحيات وعاد
+        is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()
+        if is_pending and file_manager.is_all_files_access_granted():
+            file_manager.clear_pending_scan()
+            Clock.schedule_once(
+                lambda _dt: self.start_scan_with_options(p_src, p_tgt), 0.5
+            )
+
+        # طلب الصلاحيات الأساسية مرة واحدة فقط عند الإقلاع وليس مع كل دخول
+        if platform == "android" and not self._has_requested_perms:
+            self._has_requested_perms = True
             from kivy.app import App
             app = App.get_running_app()
             if hasattr(app, "request_android_permissions"):
@@ -65,7 +90,6 @@ class HomeScreen(Screen):
         """إيقاف كامل للمؤثرات التكرارية لتوفير البطارية"""
         Animation.stop_all(self)
         self._anim_running = False
-
 
     def apply_arabic_texts(self):
         """تطبيق إعادة التشكيل العربي على عناصر الشاشة الثابتة"""
@@ -219,7 +243,6 @@ class HomeScreen(Screen):
         2. أين تريد حفظ وترتيب الملفات المنظمة؟ (الداخلية / كرت SD)
         مع شرح ديناميكي مباشر لما سيقوم به التطبيق، وزر البدء.
         """
-        from kivy.clock import Clock
         from kivy.metrics import dp
         from kivy.uix.scrollview import ScrollView
         from kivymd.uix.boxlayout import MDBoxLayout
@@ -537,14 +560,18 @@ class HomeScreen(Screen):
 
             # فحص الصلاحية
             if not file_manager.is_all_files_access_granted():
+                # حفظ حالة الفحص المعلق لبدء الفحص فور العودة مع الصلاحية
+                file_manager.set_pending_scan(
+                    True, source=state["source"], target=state["target"]
+                )
 
                 def open_perm_settings() -> None:
                     _ = file_manager.open_all_files_permission_settings()
-                    Clock.schedule_once(
-                        lambda _dt: self.start_scan_with_options(
-                            state["source"], state["target"]
-                        ),
-                        1.5,
+
+                def on_proceed_without_full_access() -> None:
+                    file_manager.clear_pending_scan()
+                    self.start_scan_with_options(
+                        state["source"], state["target"]
                     )
 
                 _ = show_confirm_dialog(
@@ -552,16 +579,16 @@ class HomeScreen(Screen):
                     text=(
                         "لسحب كافة الصور والفيديوهات من مجلدات واتساب"
                         " وبلوتوث والكاميرا، يرجى تفعيل مفتاح"
-                        " 'السماح بالوصول لإدارة جميع الملفات'."
+                        " 'السماح بالوصول لإدارة جميع الملفات'.\n\n"
+                        "عند منح الصلاحية والعودة للتطبيق، سيبدأ الفحص تلقائياً."
                     ),
                     on_confirm=open_perm_settings,
-                    on_cancel=lambda: self.start_scan_with_options(
-                        state["source"], state["target"]
-                    ),
+                    on_cancel=on_proceed_without_full_access,
                     confirm_text="فتح الإعدادات لمنح الصلاحية",
-                    cancel_text="المتابعة الآن",
+                    cancel_text="المتابعة بالصلاحيات الحالية",
                 )
             else:
+                file_manager.clear_pending_scan()
                 self.start_scan_with_options(
                     state["source"], state["target"]
                 )
@@ -825,14 +852,17 @@ class HomeScreen(Screen):
                     env_lines.append(f"ANTHROPIC_API_KEY={new_key}\n")
                     if not any("CLAUDE_MODEL" in ln for ln in env_lines):
                         env_lines.append(
-                            "CLAUDE_MODEL=claude-3-haiku-20240307\n"
+                            "CLAUDE_MODEL=claude-haiku-4-5-20251001\n"
                         )
 
                 env_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(env_path, "w", encoding="utf-8") as f:
                     f.writelines(env_lines)
             except Exception as e:
-                print(f"تعذر حفظ المفتاح في {env_path}:", e)
+                logger.warning("تعذر حفظ المفتاح في %s: %s", env_path, e)
+
+        # حفظ المفتاح في مسار التخزين المشترك للخدمات الخلفية
+        file_manager.save_api_key_to_persistent_storage(new_key)
 
     def get_app(self) -> Any:
         from kivy.app import App
