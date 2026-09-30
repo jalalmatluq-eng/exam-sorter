@@ -7,8 +7,32 @@
 
 import logging
 import os
+import sys
+import traceback
 import typing
 from pathlib import Path
+
+def _handle_uncaught_exception(exctype: typing.Any, value: typing.Any, tb: typing.Any) -> None:
+    err = "".join(traceback.format_exception(exctype, value, tb))
+    logging.critical("CRITICAL UNCAUGHT EXCEPTION: %s", err)
+    try:
+        from pathlib import Path
+        for log_target in [
+            Path("/storage/emulated/0/Download/cosmosort_crash.log"),
+            Path("/storage/emulated/0/cosmosort_crash.log"),
+            Path(__file__).resolve().parent / "crash.log",
+        ]:
+            try:
+                log_target.write_text(err, encoding="utf-8")
+                break
+            except Exception:
+                pass
+    except Exception:
+        pass
+    if sys.__excepthook__:
+        sys.__excepthook__(exctype, value, tb)
+
+sys.excepthook = _handle_uncaught_exception
 
 # ضمان التوافق التام مع بايثون 3.11 على نظام أندرويد
 if not hasattr(typing, "override"):
@@ -113,9 +137,9 @@ class CosmoSortApp(MDApp):
             Window.minimum_width = 340
             Window.minimum_height = 500
 
-        # طلب أذونات أندرويد عند بدء التشغيل
+        # طلب الصلاحيات الأساسية بأمان بعد استقرار وتهيئة واجهة المستخدم بالكامل
         if platform == "android":
-            self.request_android_permissions()
+            Clock.schedule_once(lambda _dt: self.request_android_permissions(), 1.5)
 
         # تحميل ملفات التصميم .kv
         kv_dir = Path(__file__).resolve().parent / "kv"
@@ -202,7 +226,7 @@ class CosmoSortApp(MDApp):
         return None
 
     def request_android_permissions(self) -> None:
-        """طلب صلاحيات الكاميرا والتخزين على أجهزة أندرويد"""
+        """طلب صلاحيات الكاميرا والتخزين الأساسية على أجهزة أندرويد عبر النافذة القياسية"""
         try:
             from android.permissions import (  # type: ignore
                 Permission,
@@ -221,39 +245,18 @@ class CosmoSortApp(MDApp):
             if hasattr(Permission, "POST_NOTIFICATIONS"):
                 perms.append(Permission.POST_NOTIFICATIONS)
             request_permissions(perms)
-        except (ImportError, AttributeError, RuntimeError) as e:
+        except Exception as e:
             logger.warning("تنبيه: تعذر استدعاء مكتبة صلاحيات أندرويد: %s", e)
 
-        self.check_and_request_all_files_permission()
-
     def check_and_request_all_files_permission(self) -> None:
-        """طلب إذن الوصول الكامل لكافة الملفات على أندرويد 11+"""
+        """طلب إذن الوصول الكامل لكافة الملفات عبر المعالج الآمن في file_manager"""
         if platform != "android":
             return
         try:
-            from android import mActivity  # type: ignore
-            from jnius import autoclass  # type: ignore
-
-            Environment = autoclass("android.os.Environment")
-            BuildVersion = autoclass("android.os.Build$VERSION")
-
-            sdk_ver = int(BuildVersion.SDK_INT)
-            is_mgr = bool(Environment.isExternalStorageManager())
-            if sdk_ver >= 30 and not is_mgr:
-                Intent = autoclass("android.content.Intent")
-                Settings = autoclass("android.provider.Settings")
-                Uri = autoclass("android.net.Uri")
-
-                action = Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
-                intent = Intent(action)
-                pkg_name = str(mActivity.getPackageName())
-                uri = Uri.fromParts("package", pkg_name, None)
-                intent.setData(uri)
-                mActivity.startActivity(intent)
-        except (ImportError, AttributeError, RuntimeError) as e:
-            logger.warning(
-                "تنبيه: تعذر فتح إعدادات إذن الوصول لكافة الملفات: %s", e
-            )
+            if not file_manager.is_all_files_access_granted():
+                file_manager.open_all_files_permission_settings()
+        except Exception as e:
+            logger.warning("تنبيه: تعذر فتح إعدادات إذن الملفات: %s", e)
 
 
 # التوافق مع أي استدعاءات خارجية سابقة

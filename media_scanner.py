@@ -99,6 +99,25 @@ def is_file_already_processed(
     return False
 
 
+def get_all_scanned_files_set() -> set[str]:
+    """تحميل مسارات كافة الملفات المفحوصة مسبقاً في الذاكرة دفعة واحدة لسرعة فائقة"""
+    scanned: set[str] = set()
+    try:
+        db_path = get_cache_db_path()
+        if not db_path.exists():
+            return scanned
+        conn = sqlite3.connect(str(db_path))
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM scanned_files")
+        for row in cursor.fetchall():
+            if row and row[0]:
+                scanned.add(str(row[0]))
+        conn.close()
+    except Exception as e:
+        logger.debug("خطأ أثناء قراءة كاش الملفات: %s", e)
+    return scanned
+
+
 def record_processed_file(
     file_path: str, file_size: int, mtime: float, category: str
 ) -> None:
@@ -221,11 +240,14 @@ def find_unsorted_media(
         roots = scan_storage_roots(source_storage=source_storage)
 
     found_files: list[Path] = []
+    scanned_set = get_all_scanned_files_set()
     excluded_dir_names = {
         "الملفات المنظمة", "الملفات_المنظمة", "mediasorter",
         "examsorter", ".git", ".venv", "venv",
         "__pycache__", "temp", "node_modules", ".buildozer",
         "امثلة_نسخة_احتياطية", "backup", "backups",
+        "android", ".android", "data", "obb", "cache", ".thumbnails",
+        "lost.dir", "alms",
     }
 
     try:
@@ -256,7 +278,8 @@ def find_unsorted_media(
                 # استبعاد المجلدات الممنوعة وتعديل dirs في المكان
                 kept_dirs: list[str] = []
                 for d in dirs:
-                    if d.startswith(".") or d.lower() in excluded_dir_names:
+                    d_lower = d.lower()
+                    if d.startswith(".") or d_lower in excluded_dir_names:
                         continue
                     full_sub_path = curr_root_path / d
                     if (
@@ -266,8 +289,10 @@ def find_unsorted_media(
                         continue
                     full_sub = full_sub_path.as_posix().lower()
                     if (
-                        "/android/data" in full_sub
-                        or "/android/obb" in full_sub
+                        "/android" in full_sub
+                        or "/data" in full_sub
+                        or "/obb" in full_sub
+                        or "/cache" in full_sub
                     ):
                         continue
                     kept_dirs.append(d)
@@ -279,22 +304,15 @@ def find_unsorted_media(
                     continue
 
                 for f in files:
+                    if f.startswith("."):
+                        continue
                     ext = Path(f).suffix.lower()
                     if ext in IMAGE_EXTENSIONS or ext in VIDEO_EXTENSIONS:
                         full_path = Path(root) / f
-                        try:
-                            st = full_path.stat()
-                            if is_file_already_processed(
-                                str(full_path), st.st_size, st.st_mtime
-                            ):
-                                continue
-                            found_files.append(full_path)
-                        except (OSError, ValueError) as e:
-                            logger.debug(
-                                "تعذر قراءة بيانات الملف %s: %s",
-                                full_path, e
-                            )
+                        str_full = str(full_path)
+                        if str_full in scanned_set:
                             continue
+                        found_files.append(full_path)
         except (OSError, RuntimeError) as e:
             print(f"خطأ أثناء فحص المجلد {root_dir}:", e)
 
@@ -310,27 +328,15 @@ def is_visual_document_or_paper(image_path: str) -> bool:
     - فحص التوزيع الأفقي للأسطر.
     """
     try:
-        img = face_classifier.safe_read_image(image_path)
-        if img is None:
+        small = face_classifier.safe_read_image(image_path, max_size=500)
+        if small is None:
             return False
-        h = int(str(img.shape[0]))
-        w = int(str(img.shape[1]))
-        if h < 100 or w < 100:
+        h = int(str(small.shape[0]))
+        w = int(str(small.shape[1]))
+        if h < 80 or w < 80:
             return False
 
         if cv2 is not None:
-            # تصغير سريع لتقليل استهلاك المعالج والذاكرة
-            max_dim = max(h, w)
-            if max_dim > 600:
-                scale = float(600.0 / max_dim)
-                new_w = int(float(w) * scale)
-                new_h = int(float(h) * scale)
-                small = cv2.resize(
-                    img, (new_w, new_h), interpolation=cv2.INTER_AREA
-                )
-            else:
-                small = img
-
             # استثناء الصور التي تحتوي على وجوه بشرية
             faces = face_classifier.detect_faces_in_image(small)
             if len(faces) > 0:
@@ -612,69 +618,72 @@ def run_batch_scan(
 
 
 def run_continuous_scan(
-    batch_size: int = 30,
+    batch_size: int = 25,
     api_key: str | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
     stop_check: Callable[[], bool] | None = None,
     source_storage: str | None = None
 ) -> dict[str, object]:
     """
-    تشغيل فرز متواصل مستمر حتى الانتهاء من جميع الملفات المتاحة على الجهاز.
+    تشغيل فرز متواصل مستمر حتى الانتهاء من جميع الملفات المتاحة على الجهاز
+    مع حماية متقدمة من نفاد الذاكرة وتحمل ضغط آلاف الملفات والصور الكبيرة.
     """
+    import gc
     init_cache_db()
     total_processed = 0
-    batches_completed = 0
     all_results: list[dict[str, object]] = []
 
-    while True:
+    # استكشاف الملفات دفعة واحدة في البداية بدلاً من إعادة المسح البطيء
+    media_files = find_unsorted_media(source_storage=source_storage)
+    total_files = len(media_files)
+    if total_files == 0:
+        return {
+            "total_processed": 0,
+            "batches_completed": 0,
+            "results": [],
+        }
+
+    for idx, f in enumerate(media_files):
         if stop_check and stop_check():
             break
 
-        media_files = find_unsorted_media(source_storage=source_storage)
-        remaining_count = len(media_files)
-        if remaining_count == 0:
-            break
+        try:
+            res = process_one_file(f, api_key=api_key)
+        except Exception as e:
+            logger.error("خطأ أثناء معالجة الملف %s: %s", f, e)
+            res = {"success": False, "error": str(e), "original_path": str(f)}
 
-        current_batch = media_files[:batch_size]
-        batch_processed = 0
+        if res.get("success"):
+            total_processed += 1
 
-        for idx, f in enumerate(current_batch):
-            if stop_check and stop_check():
-                break
-
-            try:
-                res = process_one_file(f, api_key=api_key)
-            except Exception as e:
-                logger.error("خطأ أثناء معالجة الملف %s: %s", f, e)
-                res = {"success": False, "error": str(e), "original_path": str(f)}
+        # الاحتفاظ بآخر 50 نتيجة فقط لتجنب استهلاك ذاكرة RAM عند معالجة آلاف الملفات
+        if len(all_results) < 50:
             all_results.append(res)
-            if res.get("success"):
-                batch_processed += 1
-                total_processed += 1
 
-            if progress_callback:
-                progress_callback({
-                    "current_file": f.name,
-                    "batch_index": idx + 1,
-                    "batch_total": len(current_batch),
-                    "total_processed": total_processed,
-                    "remaining_count": max(0, remaining_count - (idx + 1)),
-                    "is_finished": False,
-                })
+        if progress_callback:
+            progress_callback({
+                "current_file": f.name,
+                "batch_index": idx + 1,
+                "batch_total": total_files,
+                "total_processed": total_processed,
+                "remaining_count": max(0, total_files - (idx + 1)),
+                "is_finished": False,
+            })
 
-            time.sleep(0.02)
+        # تنظيف الذاكرة دورياً كل 20 ملفاً لمنع انهيار التطبيق تحت الضغط العالي
+        if (idx + 1) % 20 == 0:
+            gc.collect()
+            time.sleep(0.03)
+        else:
+            time.sleep(0.01)
 
-        batches_completed += 1
-
-        # إذا لم يُعالج أي ملف في الدفعة، ننهي لتفادي حلقة لانهائية
-        if batch_processed == 0 and len(current_batch) > 0:
-            break
+    gc.collect()
 
     if progress_callback:
         progress_callback({
             "current_file": "",
-            "batch_index": 0,
-            "batch_total": 0,
+            "batch_index": total_files,
+            "batch_total": total_files,
             "total_processed": total_processed,
             "remaining_count": 0,
             "is_finished": True,
@@ -682,6 +691,6 @@ def run_continuous_scan(
 
     return {
         "total_processed": total_processed,
-        "batches_completed": batches_completed,
+        "batches_completed": (total_processed // batch_size) + 1,
         "results": all_results,
     }

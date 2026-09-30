@@ -24,10 +24,10 @@ android.numeric_version = 2
 android.archs = arm64-v8a
 android.allow_backup = True
 android.enable_androidx = True
+android.accept_sdk_license = True
 android.release_artifact = apk
 android.debug_artifact = apk
 android.copy_libs = 1
-p4a.source_dir = /root/build_wasaet/.buildozer/android/platform/python-for-android
 
 [buildozer]
 log_level = 2

@@ -85,27 +85,38 @@ def _load_cascade(xml_name: str) -> object | None:
     return None
 
 
-def _safe_read_image(image_path: str) -> np.ndarray | None:
-    """قراءة الصورة بأمان مع دعم المسارات التي تحتوي حروفاً عربية"""
+def _safe_read_image(image_path: str, max_size: int = 800) -> np.ndarray | None:
+    """قراءة الصورة بأمان مع ضغط الحجم فورياً لتوفير 95% من الذاكرة ومنع إغلاق التطبيق على الهواتف الحديثة"""
     try:
-        # قراءة الملف كثنائي أولاً لحل مشاكل المسارات العربية في Windows
-        with open(image_path, "rb") as f:
-            bytes_data = bytearray(f.read())
-        numpy_array = np.asarray(bytes_data, dtype=np.uint8)
+        from PIL import Image, ImageOps
+        with Image.open(image_path) as pil_img:
+            try:
+                pil_img = ImageOps.exif_transpose(pil_img)
+            except Exception:
+                pass
+            pil_img.thumbnail((max_size, max_size), Image.Resampling.BILINEAR)
+            pil_img = pil_img.convert("RGB")
+            rgb = np.array(pil_img)
+            return rgb[:, :, ::-1]
+    except Exception:
+        pass
+
+    try:
+        # المحاولة البديلة عبر OpenCV إذا فشل PIL
         if cv2 is not None:
+            with open(image_path, "rb") as f:
+                bytes_data = bytearray(f.read())
+            numpy_array = np.asarray(bytes_data, dtype=np.uint8)
             img = cv2.imdecode(numpy_array, cv2.IMREAD_COLOR)
-            return img
-
-        # بديل PIL في حال عدم توفر cv2
-        import io
-        from PIL import Image
-
-        pil_img = Image.open(io.BytesIO(bytes_data)).convert("RGB")
-        rgb = np.array(pil_img)
-        return rgb[:, :, ::-1]
+            if img is not None:
+                h, w = img.shape[:2]
+                if max(h, w) > max_size:
+                    scale = float(max_size) / float(max(h, w))
+                    img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+                return img
     except Exception as exc:
-        logger.warning("خطأ أثناء قراءة الصورة %s: %s", image_path, exc)
-        return None
+        logger.debug("خطأ أثناء قراءة الصورة %s: %s", image_path, exc)
+    return None
 
 
 safe_read_image = _safe_read_image

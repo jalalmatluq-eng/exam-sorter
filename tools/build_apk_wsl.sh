@@ -34,6 +34,13 @@ rsync -a \
 cd "$BUILD_DIR"
 rm -f bin/*.apk
 
+# ضبط مسار p4a المحلي السريع داخل بيئة WSL فقط دون التأثير على buildozer.spec المشترك
+if [ -d "/root/build_wasaet/.buildozer/android/platform/python-for-android" ]; then
+    if ! grep -q "p4a.source_dir" "$BUILD_DIR/buildozer.spec"; then
+        echo "p4a.source_dir = /root/build_wasaet/.buildozer/android/platform/python-for-android" >> "$BUILD_DIR/buildozer.spec"
+    fi
+fi
+
 echo "تأكيد توافق إصدار بايثون 3.11 مع حزم المشروع..."
 python3 /mnt/d/exam-sorter/tools/patch_p4a.py
 

@@ -1,9 +1,15 @@
-name: Build APK - Wasaet Dhakiyah
+name: Build APK - CosmoSort
 
 on:
   push:
     branches: [ main, master ]
   workflow_dispatch:
+    inputs:
+      clean_cache:
+        description: 'Clean cache before build (ignore saved cache)'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build-apk:
@@ -15,20 +21,22 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Cache Buildozer global directory
+        if: ${{ !inputs.clean_cache }}
         uses: actions/cache@v4
         with:
           path: ~/.buildozer
-          key: buildozer-global-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          key: cosmosort-buildozer-global-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-global-${{ runner.os }}-
+            cosmosort-buildozer-global-v1-${{ runner.os }}-
 
       - name: Cache .buildozer local directory
+        if: ${{ !inputs.clean_cache }}
         uses: actions/cache@v4
         with:
           path: .buildozer
-          key: buildozer-local-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          key: cosmosort-buildozer-local-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
-            buildozer-local-${{ runner.os }}-
+            cosmosort-buildozer-local-v1-${{ runner.os }}-
 
       - name: Build with Buildozer
         uses: ArtemSBulgakov/buildozer-action@v1
@@ -41,8 +49,9 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: wasaet-dhakiyah-v2-debug
+          name: cosmosort-2.0.0-debug
           path: |
             bin/*.apk
             ${{ steps.buildozer.outputs.filename }}
           retention-days: 30
+

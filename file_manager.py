@@ -21,7 +21,10 @@ from pathlib import Path
 def get_base_storage_path() -> Path:
     """تحديد المسار الأساسي لحفظ ملفات الاختبارات المنظمة"""
     base = get_media_sorter_base_path() / "صور الاختبارات"
-    base.mkdir(parents=True, exist_ok=True)
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     return base
 
 
@@ -192,63 +195,83 @@ def list_subjects(base_path: Path | None = None) -> list[dict[str, object]]:
     subjects_dict: dict[str, dict[str, object]] = {}
 
     for root in roots:
-        if not root.exists():
+        try:
+            if not root.exists():
+                continue
+            items = list(root.iterdir())
+        except (OSError, PermissionError):
             continue
-        for item in root.iterdir():
-            if item.is_dir():
+
+        for item in items:
+            try:
+                if not item.is_dir():
+                    continue
                 media_files = [
                     f for f in item.iterdir()
                     if f.is_file() and f.suffix.lower() in valid_extensions
                 ]
-                count = len(media_files)
+            except (OSError, PermissionError):
+                continue
+            count = len(media_files)
+            try:
                 latest_mod = item.stat().st_mtime
                 if media_files:
                     latest_mod = max(f.stat().st_mtime for f in media_files)
+            except (OSError, PermissionError):
+                latest_mod = 0.0
 
-                # فحص المجلدات الفرعية للمواد داخل صور الاختبارات
-                if item.name in ("صور الاختبارات", "صور اختبارات"):
-                    sub_exam_count = 0
-                    for sub in item.iterdir():
-                        if sub.is_dir():
-                            sub_files = [
-                                f for f in sub.iterdir()
-                                if (
-                                    f.is_file()
-                                    and f.suffix.lower() in valid_extensions
-                                )
-                            ]
-                            s_count = len(sub_files)
-                            sub_exam_count += s_count
-                            s_mod = sub.stat().st_mtime
-                            if sub_files:
-                                s_mod = max(
-                                    f.stat().st_mtime for f in sub_files
-                                )
-                            sub_name = sub.name
-                            if sub_name not in subjects_dict:
-                                subjects_dict[sub_name] = {
-                                    "name": sub_name,
-                                    "folder_path": str(sub),
-                                    "count": s_count,
-                                    "latest_modified": s_mod,
-                                }
-                            else:
-                                old_c = int(
-                                    str(subjects_dict[sub_name]["count"])
-                                )
-                                subjects_dict[sub_name]["count"] = (
-                                    old_c + s_count
-                                )
-                                old_m = float(
-                                    str(
-                                        subjects_dict[sub_name][
-                                            "latest_modified"
-                                        ]
-                                    )
-                                )
+            # فحص المجلدات الفرعية للمواد داخل صور الاختبارات
+            if item.name in ("صور الاختبارات", "صور اختبارات"):
+                sub_exam_count = 0
+                try:
+                    sub_items = [sub for sub in item.iterdir() if sub.is_dir()]
+                except (OSError, PermissionError):
+                    sub_items = []
+                for sub in sub_items:
+                    try:
+                        sub_files = [
+                            f for f in sub.iterdir()
+                            if (
+                                f.is_file()
+                                and f.suffix.lower() in valid_extensions
+                            )
+                        ]
+                        s_count = len(sub_files)
+                        s_mod = sub.stat().st_mtime
+                        if sub_files:
+                            s_mod = max(
+                                f.stat().st_mtime for f in sub_files
+                            )
+                    except (OSError, PermissionError):
+                        sub_files = []
+                        s_count = 0
+                        s_mod = 0.0
+
+                    sub_name = sub.name
+                    if sub_name not in subjects_dict:
+                        subjects_dict[sub_name] = {
+                            "name": sub_name,
+                            "folder_path": str(sub),
+                            "count": s_count,
+                            "latest_modified": s_mod,
+                        }
+                    else:
+                        old_c = int(
+                            str(subjects_dict[sub_name]["count"])
+                        )
+                        subjects_dict[sub_name]["count"] = (
+                            old_c + s_count
+                        )
+                        old_m = float(
+                            str(
                                 subjects_dict[sub_name][
                                     "latest_modified"
-                                ] = max(old_m, float(s_mod))
+                                ]
+                            )
+                        )
+                        subjects_dict[sub_name][
+                            "latest_modified"
+                        ] = max(old_m, float(s_mod))
 
                     count += sub_exam_count
 
@@ -483,7 +506,7 @@ def is_all_files_access_granted() -> bool:
 
 
 def open_all_files_permission_settings() -> bool:
-    """فتح شاشة إعدادات أندرويد الخاصة بمنح صلاحية الوصول لكافة الملفات"""
+    """فتح شاشة إعدادات أندرويد الخاصة بمنح صلاحية الوصول لكافة الملفات بتوافق كامل مع جميع أجهزة أندرويد"""
     try:
         from kivy.utils import platform  # type: ignore
         if platform != "android":
@@ -493,14 +516,40 @@ def open_all_files_permission_settings() -> bool:
         Intent = autoclass("android.content.Intent")
         Settings = autoclass("android.provider.Settings")
         Uri = autoclass("android.net.Uri")
-        action = Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION
-        intent = Intent(action)
         pkg = str(mActivity.getPackageName())
         uri = Uri.fromParts("package", pkg, None)
-        intent.setData(uri)
-        mActivity.startActivity(intent)
-        return True
-    except (ImportError, AttributeError, RuntimeError) as e:
+
+        # 1. المحاولة الأولى: صفحة التطبيق المباشرة
+        try:
+            intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+            intent.setData(uri)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            mActivity.startActivity(intent)
+            return True
+        except Exception:
+            pass
+
+        # 2. المحاولة الثانية: صفحة إدارة جميع الملفات العامة (خاصة بأجهزة سامسونج وشاومي)
+        try:
+            intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            mActivity.startActivity(intent)
+            return True
+        except Exception:
+            pass
+
+        # 3. المحاولة الثالثة: صفحة تفاصيل أذونات التطبيق
+        try:
+            intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            intent.setData(uri)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            mActivity.startActivity(intent)
+            return True
+        except Exception:
+            pass
+
+        return False
+    except Exception as e:
         print("تعذر فتح شاشة إذن الملفات:", e)
         return False
 
@@ -670,13 +719,19 @@ def get_media_sorter_base_path() -> Path:
             internal_base = (
                 Path("/storage/emulated/0") / ORGANIZED_FOLDER_NAME
             )
-            internal_base.mkdir(parents=True, exist_ok=True)
+            try:
+                internal_base.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                pass
             return internal_base
     except (ImportError, OSError, RuntimeError) as e:
         print("تنبيه أثناء تهيئة مسار الملفات المنظمة:", e)
 
     base = Path(__file__).resolve().parent / ORGANIZED_FOLDER_NAME
-    base.mkdir(parents=True, exist_ok=True)
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
     return base
 
 
@@ -688,7 +743,10 @@ def create_initial_category_folders(
         base_path if base_path is not None
         else get_media_sorter_base_path()
     )
-    base.mkdir(parents=True, exist_ok=True)
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        pass
 
     folder_names = [
         "صوري",
@@ -703,8 +761,11 @@ def create_initial_category_folders(
     created: list[Path] = []
     for f_name in folder_names:
         p = base / f_name
-        p.mkdir(parents=True, exist_ok=True)
-        created.append(p)
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+            created.append(p)
+        except OSError:
+            pass
     return created
 
 

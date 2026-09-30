@@ -64,16 +64,16 @@ def set_service_desired_state(running: bool) -> None:
 
 
 def is_service_desired_running() -> bool:
-    """التحقق مما إذا كان المستخدم يرغب بتشغيل الخدمة"""
+    """التحقق مما إذا كان المستخدم يرغب بتشغيل الخدمة (افتراضياً معطلة حتى يفعلها المستخدم لتوفير البطارية ومنع أخطاء الإقلاع)"""
     ctrl = get_service_control_file()
     if not ctrl.exists():
-        return True  # افتراضياً تعمل
+        return False
     try:
         with open(ctrl, "r", encoding="utf-8") as f:
             data = json.load(f)
-            return bool(data.get("running", True))
+            return bool(data.get("running", False))
     except Exception:
-        return True
+        return False
 
 
 def setup_android_foreground_notification() -> None:
