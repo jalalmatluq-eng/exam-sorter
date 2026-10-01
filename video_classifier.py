@@ -448,33 +448,39 @@ def classify_video_locally(
             return CATEGORY_MOVIES
         return CATEGORY_LECTURE
 
-    # مقاطع قصيرة (أقل من 35 ثانية) من تطبيقات المراسلة
-    # أو بنسب طولية (9:16)
-    if 0 < duration < 35 and h > w:
-        return CATEGORY_FUNNY
-
-    # مقاطع متوسطة (دقيقة ونصف إلى 6 دقائق)
+    # 3. مقاطع متوسطة (دقيقة ونصف إلى 6 دقائق) تحتوي على مؤشرات صوتية أو كليبات
     if 90 <= duration <= 360 and any(
-        term in clean_text for term in ["vid", "audio", "track", "clip"]
+        term in clean_text for term in ["vid", "audio", "track", "clip", "كليب", "لحن"]
     ):
         return CATEGORY_SONGS
 
-    # 3. فحص الوجوه ومحتوى الإطار الأوسط للفيديو محلياً
+    # 4. فحص محتوى متعدد الإطارات للفيديو محلياً (البداية، الوسط، النهاية)
     if video_path and os.path.exists(video_path):
         try:
             import face_classifier
 
-            frame = _safe_read_frame(video_path, position_ratio=0.5)
-            if frame is not None:
-                faces = face_classifier.detect_faces_in_image(frame)
-                if len(faces) > 0:
-                    # أفلام ومسلسلات: مقاطع طويلة بوجوه
-                    # بشرية وشاشات سينمائية
-                    if duration >= 1200:
-                        return CATEGORY_MOVIES
-                    # مقاطع قصيرة بوجوه بشرية (ريلز أو تيك توك مضحك)
-                    elif 0 < duration <= 45 and h >= w:
-                        return CATEGORY_FUNNY
+            # فحص عينات متعددة الإطارات لتجنب الحكم من لقطة واحدة مضللة
+            frames_to_check = [
+                _safe_read_frame(video_path, position_ratio=pos)
+                for pos in (0.15, 0.5, 0.85)
+            ]
+            valid_frames = [fr for fr in frames_to_check if fr is not None]
+
+            if valid_frames:
+                total_faces = 0
+                for fr in valid_frames:
+                    faces = face_classifier.detect_faces_in_image(fr)
+                    total_faces += len(faces)
+
+                # أفلام ومسلسلات: مقاطع طويلة وشاشات سينمائية بوجوه متعددة
+                if duration >= 1200 and total_faces > 0 and (w / max(1, h)) >= 1.3:
+                    return CATEGORY_MOVIES
+
+                # مقاطع قصيرة جداً لا تصنف مضحكة إلا بوجود كلمات مفتاحية داعمة
+                # لتجنب تصنيف فيديوهات العائلة أو المحاضرات كفيديوهات مضحكة
+                funny_cues = ["meme", "funny", "tiktok", "reels", "مضحك", "ضحك", "طقطقة", "نكتة", "كوميدي"]
+                if 0 < duration <= 45 and any(cue in clean_text for cue in funny_cues):
+                    return CATEGORY_FUNNY
         except Exception:
             pass
 
@@ -597,6 +603,9 @@ def classify_video_with_claude(
     return CATEGORY_UNCLASSIFIED
 
 
+_VIDEO_CACHE: dict[tuple[str, int, int], str] = {}
+
+
 def classify_video(
     video_path: str = "",
     api_key: str | None = None,
@@ -606,14 +615,22 @@ def classify_video(
     title: str = "",
 ) -> str:
     """
-    الدالة الرئيسية المطلوبة في البرومبت:
-    classify_video(video_path) -> category
-
-    1. تحاول أولاً التصنيف محلياً دون الحاجة لإنترنت.
-    2. في حال عدم الحسم محلياً، تستشير Claude Vision API
-       إن توفر إنترنت ومفتاح API.
-    3. إذا تعذر ذلك، ترجع 'خارج التصنيف'.
+    الدالة الرئيسية لتصنيف الفيديو مع دعم كامل لنظام Offline-First:
+    1. فحص كاش التصنيف المسبق لتجنب إعادة استخراج الإطارات.
+    2. محاولة التصنيف محلياً دون اتصال بالإنترنت.
+    3. إذا لم يُحسم محلياً: فحص قاطع الدائرة وتوافر مفتاح API قبل استشارة Claude.
+    4. حفظ النتيجة في الكاش لمنع استهلاك الموارد.
     """
+    cache_key: tuple[str, int, int] | None = None
+    if video_path and os.path.exists(video_path):
+        try:
+            st = os.stat(video_path)
+            cache_key = (Path(video_path).name, st.st_size, int(st.st_mtime))
+            if cache_key in _VIDEO_CACHE:
+                return _VIDEO_CACHE[cache_key]
+        except OSError:
+            pass
+
     local_result = classify_video_locally(
         video_path=video_path,
         duration_seconds=duration_seconds,
@@ -622,10 +639,32 @@ def classify_video(
         title=title,
     )
     if local_result is not None:
+        if cache_key:
+            _VIDEO_CACHE[cache_key] = local_result
         return local_result
 
-    # اللجوء للذكاء الاصطناعي عند الشك في وجود ملف حقيقي
+    # اللجوء للذكاء الاصطناعي فقط عند توفر مفتاح API وعدم فتح قاطع الدائرة
     if video_path and os.path.exists(video_path):
-        return classify_video_with_claude(video_path, api_key=api_key)
+        key = classifier.get_api_key(api_key)
+        if key:
+            try:
+                import offline_classifier
+                if not offline_classifier.is_circuit_breaker_open():
+                    res = classify_video_with_claude(video_path, api_key=key)
+                    if res and res != CATEGORY_UNCLASSIFIED:
+                        offline_classifier.record_cloud_api_success()
+                        if cache_key:
+                            _VIDEO_CACHE[cache_key] = res
+                        return res
+            except Exception as e_cloud:
+                print("تنبيه أثناء استدعاء ذكاء الفيديو السحابي:", e_cloud)
+                try:
+                    import offline_classifier
+                    offline_classifier.record_cloud_api_failure()
+                except Exception:
+                    pass
 
-    return CATEGORY_UNCLASSIFIED
+    final_cat = CATEGORY_UNCLASSIFIED
+    if cache_key:
+        _VIDEO_CACHE[cache_key] = final_cat
+    return final_cat

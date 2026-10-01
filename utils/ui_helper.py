@@ -311,12 +311,25 @@ def show_rich_results_dialog(
 
     if "readable_count" in stats_dict:
         lines.append(f"• الملفات القابلة للقراءة: {stats_dict['readable_count']} ملف")
+    if "classified_count" in stats_dict and stats_dict["classified_count"] > 0:
+        lines.append(f"• الملفات المصنفة: {stats_dict['classified_count']} ملف")
     if "copied_count" in stats_dict and stats_dict["copied_count"] > 0:
         lines.append(f"• تم نسخها: {stats_dict['copied_count']} ملف")
     if "moved_count" in stats_dict and stats_dict["moved_count"] > 0:
         lines.append(f"• تم نقلها وحذف الأصل: {stats_dict['moved_count']} ملف")
+    if "read_failed_count" in stats_dict and stats_dict["read_failed_count"] > 0:
+        lines.append(f"• فشل القراءة من المصدر: {stats_dict['read_failed_count']} ملف")
+    if "write_failed_count" in stats_dict and stats_dict["write_failed_count"] > 0:
+        lines.append(f"• فشل الكتابة في الوجهة: {stats_dict['write_failed_count']} ملف")
+    if "permission_rejected_count" in stats_dict and stats_dict["permission_rejected_count"] > 0:
+        lines.append(f"• مرفوض بسبب إذن Android: {stats_dict['permission_rejected_count']} ملف")
+    if "saf_reselect_count" in stats_dict and stats_dict["saf_reselect_count"] > 0:
+        lines.append(f"• يحتاج إعادة اختيار مجلد بطاقة SD (SAF): {stats_dict['saf_reselect_count']} ملف")
 
-    if failures_by_reason:
+    if failed_cnt > 0 and success_cnt == 0 and len(failures_by_reason) == 1:
+        single_reason = list(failures_by_reason.keys())[0]
+        lines.append(f"\nالسبب الموحد للفشل:\n  ← {single_reason}")
+    elif failures_by_reason:
         lines.append("\nأسباب الفشل المشخصة:")
         for r_name, r_cnt in failures_by_reason.items():
             lines.append(f"  - {r_name}: {r_cnt} ملف")

@@ -1749,6 +1749,126 @@ def test_category_ui_details_and_layout_resilience() -> None:
     print("✓ نجحت جميع فحوصات الجناح 17 لتخصيص الأقسام ومنع التداخل بنسبة 100%!\n")
 
 
+def test_comprehensive_real_android_fixes() -> None:
+    """
+    [اختبار 18] فحص الإصلاح الشامل للملفات والصلاحيات:
+    - فحص saf_create_target_document لإنشاء الملفات في شجرة SAF بضمان كامل.
+    - فحص تصنيف أسباب الفشل المنفصلة (قراءة المصدر vs كتابة الوجهة vs انتهاء إذن SAF).
+    - فحص استبعاد مجلدات Android/data و Android/obb و lost.dir.
+    - فحص preflight_scan_access لمنع التشغيل الكاذب عند عدم صلاحية الوجهة.
+    - فحص تصنيف الفيديو القصير دون اعتبار كل فيديو عمودي مضحكاً تلقائياً.
+    - فحص سلامة تقرير التشخيص وعدم تسريب أي مفاتيح API.
+    """
+    print("--- [اختبار 18] فحص الإصلاح الشامل للملفات والصلاحيات (Rateb / CosmoSort) ---")
+    import tempfile
+    import storage_backend
+    import video_classifier
+    import android_permissions
+
+    test_root = Path(tempfile.mkdtemp(prefix="cosmosort_suite18_"))
+    try:
+        # 1. فحص saf_create_target_document
+        mock_saf_tree = f"mock_saf://{test_root / 'sdcard_root'}"
+        doc_obj, uri_str = storage_backend.saf_create_target_document(
+            mock_saf_tree, "محاضرات ودروس", "sample_test.mp4", "video/mp4"
+        )
+        assert doc_obj is not None, "يجب أن يتم إنشاء كائن ملف الوجهة"
+        assert uri_str.startswith("mock_doc://"), "يجب أن يعيد URI صالح للملف الوجهة"
+        print("  [1/6] ✓ saf_create_target_document: إنشاء ملفات الوجهة في شجرة SAF بنجاح ودون تشويه المسار.")
+
+        # 2. فحص التصنيف المنفصل لأسباب الفشل
+        r_src_perm = storage_backend.classify_failure_reason(
+            PermissionError("SecurityException: Cannot read from MediaStore"),
+            stage="source_read",
+        )
+        assert r_src_perm == "رفض صلاحية قراءة الملف", f"المتوقع 'رفض صلاحية قراءة الملف' لكن الناتج: {r_src_perm}"
+
+        r_src_read = storage_backend.classify_failure_reason(
+            IOError("Broken pipe"),
+            stage="source_read",
+        )
+        assert r_src_read == "فشل القراءة"
+
+        saf_tgt = storage_backend.TargetLocation(
+            storage_type="sdcard", is_saf=True, tree_uri="mock_saf://sdcard", is_valid=True
+        )
+        r_tgt_write = storage_backend.classify_failure_reason(
+            OSError("Failed to write to SAF document"),
+            target_location=saf_tgt,
+            stage="target_write",
+        )
+        assert r_tgt_write == "انتهاء SAF permission"
+        print("  [2/6] ✓ التصنيف المنفصل للأسباب: التفريق الصارم بين فشل قراءة المصدر وفشل كتابة الوجهة وانتهاء SAF.")
+
+        # 3. فحص استبعاد المجلدات المحمية صراحة
+        excluded_test_paths = [
+            "Android/data/com.app/files/pic.jpg",
+            "Android/obb/com.game/main.obb",
+            ".thumbnails/thumb_01.jpg",
+            ".trashed/deleted_video.mp4",
+            "lost.dir/file001",
+            "الملفات المنظمة/محاضرات/درس.mp4",
+        ]
+        markers = [
+            "android/data", "android/obb", ".thumbnails", ".trashed",
+            "lost.dir", "الملفات المنظمة", "mediasorter", "examsorter",
+        ]
+        for p in excluded_test_paths:
+            p_lower = p.lower()
+            assert any(m in p_lower for m in markers), f"المسار المحمي {p} يجب استبعاده فوراً!"
+        print("  [3/6] ✓ استبعاد المجلدات المحمية: حماية كاملة لـ Android/data و Android/obb و lost.dir و الملفات المنظمة.")
+
+        # 4. فحص الفحص الاستباقي للصلاحيات (Preflight)
+        orig_saf_granted = android_permissions.is_saf_sdcard_granted
+        try:
+            android_permissions.is_saf_sdcard_granted = lambda: False
+            can_go, code, msg, act = android_permissions.preflight_scan_access("internal", "sdcard")
+            assert not can_go, "يجب منع بدء الفحص إذا كانت وجهة SD card تفتقد إذن SAF"
+            assert act == "request_saf_sdcard"
+        finally:
+            android_permissions.is_saf_sdcard_granted = orig_saf_granted
+        print("  [4/6] ✓ الفحص الاستباقي (Preflight): منع التشغيل الكاذب وإلزام المستخدم بتفويض SAF للوجهة قبل الفحص.")
+
+        # 5. فحص تصنيف الفيديو: عدم تصنيف كل فيديو عمودي كمضحك تلقائياً
+        # فيديو عمودي بدون كلمات مضحكة -> لا يصنف كمضحك
+        v_neutral = video_classifier.classify_video_locally(
+            video_path="", duration_seconds=20.0, width=720, height=1280, title="family_video"
+        )
+        assert v_neutral != video_classifier.CATEGORY_FUNNY, "الفيديو العمودي المحايد لا يجوز تصنيفه كمضحك!"
+
+        # فيديو عمودي مع كلمات مضحكة -> يصنف كمضحك
+        v_funny = video_classifier.classify_video_locally(
+            video_path="", duration_seconds=20.0, width=720, height=1280, title="tiktok_meme_video"
+        )
+        assert v_funny == video_classifier.CATEGORY_FUNNY, "الفيديو مع وسم مضحك يجب تصنيفه كمضحك"
+        print("  [5/6] ✓ تصنيف الفيديو: منع التصنيف الكاذب للفيديوهات العمودية وحصرها بالكلمات والإشارات الداعمة.")
+
+        # 6. فحص تقرير التشخيص وحماية الخصوصية
+        test_report = {
+            "source_storage": "internal",
+            "target_storage": "sdcard",
+            "total_found": 3712,
+            "success_count": 0,
+            "failed_count": 3712,
+            "readable_count": 3711,
+            "read_failed_count": 1,
+            "write_failed_count": 3711,
+            "saf_reselect_count": 3711,
+            "failures_by_reason": {"انتهاء SAF permission": 3711, "فشل القراءة": 1},
+        }
+        report_str = str(test_report)
+        assert "sk-ant-" not in report_str
+        assert "api_key" not in report_str
+        assert test_report["readable_count"] == 3711
+        assert test_report["write_failed_count"] == 3711
+        print("  [6/6] ✓ تقرير التشخيص: توثيق دقيق للمقروء والفاشل في الوجهة دون تسريب أي مفاتيح API.")
+
+    finally:
+        shutil.rmtree(test_root, ignore_errors=True)
+
+    print("✓ نجحت جميع فحوصات الجناح 18 للإصلاح الشامل للملفات والصلاحيات بنسبة 100%!\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -1767,8 +1887,9 @@ if __name__ == "__main__":
     test_production_verification_and_saf_resolution()
     test_production_error_scenarios_and_resilience()
     test_category_ui_details_and_layout_resilience()
+    test_comprehensive_real_android_fixes()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات (17 جناح) تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (18 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
 
 

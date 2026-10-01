@@ -170,17 +170,45 @@ def is_file_stable(file_path: Path) -> bool:
         return False
 
 
+_RESTRICTED_PATHS_CACHE: dict[str, float] = {}
+
+
+def _is_path_temporarily_restricted(path_str: str) -> bool:
+    """التحقق مما إذا كان المسار محظوراً بالصلاحيات ومحفوظاً في كاش التبريد"""
+    global _RESTRICTED_PATHS_CACHE
+    now = time.time()
+    exp = _RESTRICTED_PATHS_CACHE.get(path_str, 0.0)
+    if now < exp:
+        return True
+    if path_str in _RESTRICTED_PATHS_CACHE:
+        del _RESTRICTED_PATHS_CACHE[path_str]
+    return False
+
+
+def _mark_path_restricted(path_str: str, cooldown: float = 120.0) -> None:
+    """تسجيل مسار في كاش الحظر المؤقت لتفادي تكرار طلبه كل 5 ثوان"""
+    global _RESTRICTED_PATHS_CACHE
+    _RESTRICTED_PATHS_CACHE[path_str] = time.time() + cooldown
+
+
 def _collect_monitored_files(
     dir_path: Path,
     max_depth: int = 3,
 ) -> list[Path]:
-    """جمع ملفات الوسائط في المجلد ومجلداته الفرعية"""
+    """جمع ملفات الوسائط في المجلد ومجلداته الفرعية مع تخطي المجلدات المحمية"""
     found_files: list[Path] = []
     if not dir_path.exists() or not dir_path.is_dir():
         return found_files
 
+    dir_str = str(dir_path)
+    if _is_path_temporarily_restricted(dir_str):
+        return found_files
+
     def _walk(curr: Path, depth: int) -> None:
         if depth > max_depth or not curr.exists() or not curr.is_dir():
+            return
+        curr_str = str(curr)
+        if _is_path_temporarily_restricted(curr_str):
             return
         try:
             for entry in curr.iterdir():
@@ -200,9 +228,13 @@ def _collect_monitored_files(
                 ):
                     _walk(entry, depth + 1)
         except (PermissionError, OSError):
-            pass
+            _mark_path_restricted(curr_str, cooldown=180.0)
 
-    _walk(dir_path, 0)
+    try:
+        _walk(dir_path, 0)
+    except (PermissionError, OSError):
+        _mark_path_restricted(dir_str, cooldown=180.0)
+
     return found_files
 
 
@@ -235,9 +267,11 @@ def run_watcher_loop() -> None:
 
                         if is_file_stable(entry):
                             print(
-                                f"[خدمة المراقبة] معالجة: {entry.name}"
+                                f"[خدمة المراقبة] معالجة آمنة: {entry.name}"
                             )
-                            res = media_scanner.process_one_file(entry)
+                            # في الخدمة الخلفية، نعتمد وضع النسخ دائماً (copy_only=True)
+                            # لمنع حذف أو نقل أي ملف دون إشراف مباشر من المستخدم
+                            res = media_scanner.process_one_file(entry, copy_only=True)
                             print(
                                 "[خدمة المراقبة] النتيجة:",
                                 res.get("category"),
@@ -310,11 +344,13 @@ def start_watcher_thread(
 
 
 def stop_watcher_thread() -> None:
-    """إيقاف ثريد المراقبة الخلفي"""
+    """إيقاف ثريد المراقبة الخلفي مع انتظار انتهاء المعالجة الجارية"""
     global _watcher_thread
     set_service_desired_state(False)
     if _stop_event is not None:
         _stop_event.set()
+    if _watcher_thread is not None and _watcher_thread.is_alive():
+        _watcher_thread.join(timeout=2.5)
     _watcher_thread = None
 
 

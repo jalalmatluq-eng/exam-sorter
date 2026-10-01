@@ -872,26 +872,30 @@ def saf_find_or_create_directory(tree_uri: str, category_name: str) -> str:
 
         DocFileClass = _saf_get_document_file_class()
         if DocFileClass is not None:
-            root_doc = DocFileClass.fromTreeUri(mActivity, parsed_tree)
-            if not root_doc or not root_doc.canWrite():
-                logger.error("مجلد SAF غير قابل للكتابة عبر DocumentFile!")
-                return ""
+            try:
+                root_doc = DocFileClass.fromTreeUri(mActivity, parsed_tree)
+                if root_doc:
+                    target_org = root_doc.findFile(ORGANIZED_FOLDER_NAME)
+                    if not target_org:
+                        target_org = root_doc.createDirectory(ORGANIZED_FOLDER_NAME)
+                    if not target_org:
+                        target_org = root_doc
 
-            target_org = root_doc.findFile(ORGANIZED_FOLDER_NAME)
-            if not target_org:
-                target_org = root_doc.createDirectory(ORGANIZED_FOLDER_NAME)
+                    sub_dir = target_org
+                    for part in category_name.replace("\\", "/").split("/"):
+                        p_clean = part.strip()
+                        if not p_clean:
+                            continue
+                        next_d = sub_dir.findFile(p_clean)
+                        if not next_d:
+                            next_d = sub_dir.createDirectory(p_clean)
+                        if next_d:
+                            sub_dir = next_d
 
-            sub_dir = target_org
-            for part in category_name.replace("\\", "/").split("/"):
-                p_clean = part.strip()
-                if not p_clean:
-                    continue
-                next_d = sub_dir.findFile(p_clean)
-                if not next_d:
-                    next_d = sub_dir.createDirectory(p_clean)
-                sub_dir = next_d
-
-            return str(sub_dir.getUri().toString())
+                    if sub_dir and sub_dir.getUri():
+                        return str(sub_dir.getUri().toString())
+            except Exception as e_df:
+                logger.warning("تنبيه إنشاء مجلد SAF عبر DocumentFile، سيتم الانتقال لـ DocumentsContract: %s", e_df)
 
         # Fallback رسمي أصيل عبر DocumentsContract بدون androidx
         DocumentsContract = autoclass("android.provider.DocumentsContract")
@@ -919,6 +923,93 @@ def saf_find_or_create_directory(tree_uri: str, category_name: str) -> str:
     except Exception as e:
         logger.error("فشل إنشاء مجلد التصنيف في SAF: %s", e, exc_info=True)
         return ""
+
+
+def saf_create_target_document(
+    tree_uri: str, category_name: str, filename: str, mime_type: str = ""
+) -> tuple[Any, str]:
+    """
+    إنشاء ملف وجهة جديد داخل مجلد التصنيف في بطاقة SD عبر SAF:
+    - يتعامل مباشرة مع شجرة الـ SAF دون تشويه مسار TreeDocumentFile.
+    - يتحقق من وجود DocumentFile أولاً، ثم DocumentsContract كبديل أصلي موثوق.
+    - يضمن أن نوع MIME متوافق مع نوع الملف الفعلي (صورة أو فيديو).
+    - يعيد (new_uri_obj, new_uri_str) أو (None, "").
+    """
+    if not tree_uri:
+        return (None, "")
+
+    if tree_uri.startswith("mock_saf://"):
+        cat_uri_str = saf_find_or_create_directory(tree_uri, category_name)
+        dest_dir = Path(cat_uri_str.replace("mock_doc://", ""))
+        dest_file = dest_dir / filename
+        return (dest_file, f"mock_doc://{dest_file}")
+
+    if _get_platform() != "android":
+        return (None, "")
+
+    try:
+        from android import mActivity
+        from jnius import autoclass
+        Uri = autoclass("android.net.Uri")
+        cr = mActivity.getContentResolver()
+        parsed_tree = Uri.parse(tree_uri)
+
+        resolved_mime = resolve_media_mime_type(filename, mime_type)
+
+        # 1. المحاولة عبر DocumentFile
+        DocFileClass = _saf_get_document_file_class()
+        if DocFileClass is not None:
+            try:
+                root_doc = DocFileClass.fromTreeUri(mActivity, parsed_tree)
+                if root_doc:
+                    target_org = root_doc.findFile(ORGANIZED_FOLDER_NAME)
+                    if not target_org:
+                        target_org = root_doc.createDirectory(ORGANIZED_FOLDER_NAME)
+                    if not target_org:
+                        target_org = root_doc
+
+                    curr_doc = target_org
+                    for part in category_name.replace("\\", "/").split("/"):
+                        p_clean = part.strip()
+                        if not p_clean:
+                            continue
+                        next_d = curr_doc.findFile(p_clean)
+                        if not next_d:
+                            next_d = curr_doc.createDirectory(p_clean)
+                        if next_d:
+                            curr_doc = next_d
+
+                    new_doc = curr_doc.createFile(resolved_mime, filename)
+                    if new_doc:
+                        u = new_doc.getUri()
+                        return (u, str(u.toString()))
+            except Exception as e_df:
+                logger.warning("تنبيه إنشاء ملف SAF عبر DocumentFile: %s", e_df)
+
+        # 2. Fallback عبر DocumentsContract
+        DocumentsContract = autoclass("android.provider.DocumentsContract")
+        tree_doc_id = DocumentsContract.getTreeDocumentId(parsed_tree)
+        root_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, tree_doc_id)
+
+        MIME_DIR = "vnd.android.document/directory"
+        org_uri = _contract_find_or_create_child(cr, parsed_tree, root_doc_uri, ORGANIZED_FOLDER_NAME, MIME_DIR)
+        cat_uri = org_uri or root_doc_uri
+        for part in category_name.replace("\\", "/").split("/"):
+            p_clean = part.strip()
+            if not p_clean:
+                continue
+            child_uri = _contract_find_or_create_child(cr, parsed_tree, cat_uri, p_clean, MIME_DIR)
+            if child_uri:
+                cat_uri = child_uri
+
+        new_file_uri = DocumentsContract.createDocument(cr, cat_uri, resolved_mime, filename)
+        if new_file_uri:
+            return (new_file_uri, str(new_file_uri.toString()))
+
+        return (None, "")
+    except Exception as e:
+        logger.error("فشل إنشاء ملف الوجهة في SAF (%s): %s", filename, e, exc_info=True)
+        return (None, "")
 
 
 def saf_find_directory(tree_uri: str, category_name: str) -> str:
@@ -1830,37 +1921,19 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filen
 
         parsed_cat_uri = Uri.parse(cat_doc_uri_str)
 
+        target_name = filename or src_file.name
         # تحديد نوع الوسائط بدقة مع منع جعل الفيديو صورة JPG
-        mime = resolve_media_mime_type(filename or src_file.name, mime_type)
+        mime = resolve_media_mime_type(target_name, mime_type)
 
-        # إنشاء الملف
-        new_file_uri = None
-        DocFileClass = _saf_get_document_file_class()
-        if DocFileClass is not None:
-            cat_doc = DocFileClass.fromTreeUri(mActivity, parsed_cat_uri)
-            if cat_doc:
-                existing = cat_doc.findFile(filename)
-                if existing and existing.exists():
-                    if existing.length() == src_size:
-                        return str(existing.getUri().toString())
-                new_doc = cat_doc.createFile(mime, filename)
-                if new_doc:
-                    new_file_uri = new_doc.getUri()
-
-        if new_file_uri is None:
-            DocumentsContract = autoclass("android.provider.DocumentsContract")
-            new_file_uri = DocumentsContract.createDocument(cr, parsed_cat_uri, mime, filename)
-
-        if not new_file_uri:
-            logger.error("فشل إنشاء ملف الوجهة في SAF!")
-            return ""
-
-        created_uri_str = str(new_file_uri.toString())
+        new_file_uri, created_uri_str = saf_create_target_document(
+            saf_tree_uri, category, target_name, mime
+        )
+        if not new_file_uri or not created_uri_str:
+            raise OSError(f"تعذر إنشاء ملف الوجهة في بطاقة SD عبر SAF: {target_name}")
 
         out_stream = cr.openOutputStream(new_file_uri)
         if not out_stream:
-            logger.error("تعذر فتح دفق الكتابة لملف SAF!")
-            return ""
+            raise OSError(f"تعذر فتح دفق الكتابة لملف SAF: {target_name}")
 
         total_written = 0
         with open(src_file, "rb") as in_f:
@@ -1879,21 +1952,19 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filen
         out_stream = None
 
         if total_written != src_size:
-            logger.error("عدم تطابق البايتات المكتوبة إلى SAF: كتب %d من %d", total_written, src_size)
-            return ""
+            raise OSError(f"عدم تطابق البايتات المكتوبة إلى SAF: كتب {total_written} من {src_size}")
 
         # استعلام الحجم النهائي الفعلي بعد إغلاق OutputStream من نظام الملفات
         final_size = get_uri_file_size(created_uri_str)
         if final_size != src_size:
-            logger.error("عدم تطابق الحجم النهائي لملف SAF: المتوقع %d، الفعلي %d", src_size, final_size)
-            return ""
+            raise OSError(f"عدم تطابق الحجم النهائي لملف SAF: المتوقع {src_size}، الفعلي {final_size}")
 
         is_success = True
         return created_uri_str
 
     except Exception as e:
-        logger.error("فشل نسخ الملف إلى SAF: %s", e, exc_info=True)
-        return ""
+        logger.error("فشل نسخ الملف إلى بطاقة SD عبر SAF (%s): %s", filename or src_file.name, e, exc_info=True)
+        raise
     finally:
         if out_stream is not None:
             try:
@@ -1933,42 +2004,23 @@ def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, 
         Uri = autoclass("android.net.Uri")
         cr = mActivity.getContentResolver()
 
-        cat_doc_uri_str = saf_find_or_create_directory(saf_tree_uri, category)
-        if not cat_doc_uri_str:
-            return ""
-
-        parsed_cat_uri = Uri.parse(cat_doc_uri_str)
         src_parsed = Uri.parse(src_content_uri)
-
         in_stream = cr.openInputStream(src_parsed)
         if not in_stream:
-            logger.error("تعذر فتح دفق المصدر للـ URI: %s", src_content_uri)
-            return ""
+            raise PermissionError(f"تعذر فتح دفق المصدر للقراءة من مزود الوسائط: {src_content_uri}")
 
         # تحديد نوع الوسائط بدقة مع منع جعل الفيديو صورة JPG
         mime = resolve_media_mime_type(filename, mime_type)
 
-        DocFileClass = _saf_get_document_file_class()
-        new_file_uri = None
-        if DocFileClass is not None:
-            cat_doc = DocFileClass.fromTreeUri(mActivity, parsed_cat_uri)
-            if cat_doc:
-                new_doc = cat_doc.createFile(mime, filename)
-                if new_doc:
-                    new_file_uri = new_doc.getUri()
-
-        if new_file_uri is None:
-            DocumentsContract = autoclass("android.provider.DocumentsContract")
-            new_file_uri = DocumentsContract.createDocument(cr, parsed_cat_uri, mime, filename)
-
-        if not new_file_uri:
-            return ""
-
-        created_uri_str = str(new_file_uri.toString())
+        new_file_uri, created_uri_str = saf_create_target_document(
+            saf_tree_uri, category, filename, mime
+        )
+        if not new_file_uri or not created_uri_str:
+            raise OSError(f"تعذر إنشاء ملف الوجهة في بطاقة SD عبر SAF: {filename}")
 
         out_stream = cr.openOutputStream(new_file_uri)
         if not out_stream:
-            return ""
+            raise OSError(f"تعذر فتح دفق الكتابة لملف SAF: {filename}")
 
         total_written = 0
         buf = bytearray(64 * 1024)
@@ -1992,20 +2044,18 @@ def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, 
         out_stream = None
 
         if expected_size > 0 and total_written != expected_size:
-            logger.error("عدم تطابق الحجم عند نسخ URI إلى SAF: كتب %d من %d", total_written, expected_size)
-            return ""
+            raise OSError(f"عدم تطابق الحجم عند نسخ URI إلى SAF: كتب {total_written} من {expected_size}")
 
         final_size = get_uri_file_size(created_uri_str)
         if expected_size > 0 and final_size != expected_size:
-            logger.error("عدم تطابق الحجم النهائي لملف SAF: المتوقع %d، الفعلي %d", expected_size, final_size)
-            return ""
+            raise OSError(f"عدم تطابق الحجم النهائي لملف SAF: المتوقع {expected_size}، الفعلي {final_size}")
 
         is_success = True
         return created_uri_str
 
     except Exception as e:
-        logger.error("فشل نسخ Content URI إلى SAF: %s", e, exc_info=True)
-        return ""
+        logger.error("فشل نسخ Content URI إلى SAF (%s): %s", filename, e, exc_info=True)
+        raise
     finally:
         if in_stream is not None:
             try:

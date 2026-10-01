@@ -1185,6 +1185,7 @@ def _process_one_file_internal(
                 "source": source_key,
                 "error": str(e_trans),
                 "failure_reason": fail_reason,
+                "stage": "target_write",
             }
 
         dest_str = str(dest_res)
@@ -1236,6 +1237,8 @@ def _process_one_file_internal(
             "category": target_category,
             "details": detected_details,
             "mode": actual_mode,
+            "is_copy": is_copy,
+            "stage": "done",
         }
     finally:
         # حذف الملف المؤقت في حال استخدام streaming Content URI
@@ -1319,6 +1322,16 @@ def run_continuous_scan(
 
     total_processed = 0
     total_failed = 0
+    readable_count = 0
+    classified_count = 0
+    copied_count = 0
+    moved_count = 0
+    read_failed_count = 0
+    classification_failed_count = 0
+    write_failed_count = 0
+    permission_rejected_count = 0
+    saf_reselect_count = 0
+
     failures_by_reason: dict[str, int] = {}
     all_results: list[dict[str, object]] = []
 
@@ -1332,6 +1345,16 @@ def run_continuous_scan(
             "total_processed": 0,
             "success_count": 0,
             "failed_count": 0,
+            "total_found": 0,
+            "readable_count": 0,
+            "classified_count": 0,
+            "copied_count": 0,
+            "moved_count": 0,
+            "read_failed_count": 0,
+            "classification_failed_count": 0,
+            "write_failed_count": 0,
+            "permission_rejected_count": 0,
+            "saf_reselect_count": 0,
             "failures_by_reason": {},
             "batches_completed": 0,
             "results": [],
@@ -1345,19 +1368,55 @@ def run_continuous_scan(
             res: dict[str, object] = process_one_file(f, api_key=api_key)
         except Exception as e:
             logger.error("خطأ أثناء معالجة الملف %s: %s", f, e)
-            fail_reason = storage_backend.classify_failure_reason(e)
+            active_target = None
+            try:
+                active_target = storage_backend.get_active_target_location()
+            except Exception:
+                pass
+            fail_reason = storage_backend.classify_failure_reason(e, target_location=active_target)
             res = {
                 "success": False,
                 "error": str(e),
                 "original_path": str(f),
                 "failure_reason": fail_reason,
+                "stage": "unknown",
             }
 
-        if res.get("success"):
+        is_succ = bool(res.get("success"))
+        stg = str(res.get("stage") or "")
+        reason = str(res.get("failure_reason") or "فشل غير محدد")
+
+        if is_succ:
             total_processed += 1
+            readable_count += 1
+            cat = str(res.get("category") or "")
+            if cat and cat != CATEGORY_UNCLASSIFIED:
+                classified_count += 1
+            if res.get("is_copy") is False:
+                moved_count += 1
+            else:
+                copied_count += 1
         else:
             total_failed += 1
-            reason = str(res.get("failure_reason") or "فشل غير محدد")
+            if stg == "source_read":
+                read_failed_count += 1
+                if any(k in reason for k in ("صلاحية", "permission", "إذن")):
+                    permission_rejected_count += 1
+            elif stg == "target_write":
+                readable_count += 1
+                classified_count += 1
+                write_failed_count += 1
+                if any(k in reason.lower() for k in ("saf", "إذن", "بطاقة")):
+                    saf_reselect_count += 1
+            elif stg == "classification":
+                readable_count += 1
+                classification_failed_count += 1
+            else:
+                if any(k in reason for k in ("صلاحية", "permission")):
+                    permission_rejected_count += 1
+                elif any(k in reason.lower() for k in ("saf", "إذن")):
+                    saf_reselect_count += 1
+
             failures_by_reason[reason] = failures_by_reason.get(reason, 0) + 1
 
         # الاحتفاظ بآخر 50 نتيجة فقط لتجنب استهلاك ذاكرة RAM عند معالجة آلاف الملفات
@@ -1397,6 +1456,16 @@ def run_continuous_scan(
         "total_processed": total_processed,
         "success_count": total_processed,
         "failed_count": total_failed,
+        "total_found": total_files,
+        "readable_count": readable_count,
+        "classified_count": classified_count,
+        "copied_count": copied_count,
+        "moved_count": moved_count,
+        "read_failed_count": read_failed_count,
+        "classification_failed_count": classification_failed_count,
+        "write_failed_count": write_failed_count,
+        "permission_rejected_count": permission_rejected_count,
+        "saf_reselect_count": saf_reselect_count,
         "failures_by_reason": failures_by_reason,
         "batches_completed": (total_processed // batch_size) + 1,
         "results": all_results,

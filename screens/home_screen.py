@@ -822,21 +822,61 @@ class HomeScreen(Screen):
                         "bg_color": (0.15, 0.65, 0.45, 1),
                     })
 
-                # زر تصدير تقرير التشخيص
+                # زر فتح مجلد الوجهة
+                dlg_buttons.append({
+                    "text": "فتح مجلد الوجهة",
+                    "callback": lambda: self.open_storage_folder(),
+                    "filled": False,
+                })
+
+                # زر تصدير تقرير التشخيص (JSON + TXT دون تسريب أي مفاتيح)
                 def _export_report():
                     try:
                         import file_manager
-                        rep_path = file_manager.get_app_private_storage_dir() / "diagnostic_report.txt"
-                        with open(rep_path, "w", encoding="utf-8") as rf:
-                            rf.write("=== تقرير تشخيص فرز الوسائط ===\n")
+                        import json
+                        base_rep_dir = file_manager.get_app_private_storage_dir()
+                        rep_txt = base_rep_dir / "diagnostic_report.txt"
+                        rep_json = base_rep_dir / "diagnostic_report.json"
+
+                        report_data = {
+                            "source_storage": src_name,
+                            "target_storage": tgt_name,
+                            "total_found": res.get("total_found", total_files),
+                            "success_count": success_count,
+                            "failed_count": failed_count,
+                            "readable_count": res.get("readable_count", 0),
+                            "classified_count": res.get("classified_count", 0),
+                            "copied_count": res.get("copied_count", 0),
+                            "moved_count": res.get("moved_count", 0),
+                            "read_failed_count": res.get("read_failed_count", 0),
+                            "classification_failed_count": res.get("classification_failed_count", 0),
+                            "write_failed_count": res.get("write_failed_count", 0),
+                            "permission_rejected_count": res.get("permission_rejected_count", 0),
+                            "saf_reselect_count": res.get("saf_reselect_count", 0),
+                            "failures_by_reason": failures_by_reason,
+                            "timestamp": time.time(),
+                        }
+
+                        with open(rep_json, "w", encoding="utf-8") as jf:
+                            json.dump(report_data, jf, ensure_ascii=False, indent=2)
+
+                        with open(rep_txt, "w", encoding="utf-8") as rf:
+                            rf.write("=== تقرير تشخيص فرز الوسائط (Rateb / CosmoSort) ===\n")
                             rf.write(f"المصدر: {src_name} | الوجهة: {tgt_name}\n")
-                            rf.write(f"إجمالي الملفات: {total_files}\n")
-                            rf.write(f"الناجحة: {success_count}\n")
-                            rf.write(f"الفاشلة: {failed_count}\n\n")
-                            rf.write("تفصيل الإخفاقات:\n")
+                            rf.write(f"إجمالي الملفات المكتشفة: {report_data['total_found']}\n")
+                            rf.write(f"الملفات القابلة للقراءة: {report_data['readable_count']}\n")
+                            rf.write(f"الملفات المصنفة: {report_data['classified_count']}\n")
+                            rf.write(f"الناجحة: {success_count} (نسخ: {report_data['copied_count']} | نقل: {report_data['moved_count']})\n")
+                            rf.write(f"الفاشلة: {failed_count}\n")
+                            rf.write(f"فشل القراءة: {report_data['read_failed_count']}\n")
+                            rf.write(f"فشل الكتابة: {report_data['write_failed_count']}\n")
+                            rf.write(f"مرفوض بسبب إذن Android: {report_data['permission_rejected_count']}\n")
+                            rf.write(f"يحتاج إعادة اختيار SAF: {report_data['saf_reselect_count']}\n\n")
+                            rf.write("تفصيل الإخفاقات المشخصة:\n")
                             for r_k, r_v in failures_by_reason.items():
-                                rf.write(f"- {r_k}: {r_v} ملف\n")
-                        show_modern_notification("تقرير التشخيص", f"تم حفظ التقرير في:\n{rep_path.name}", notif_type="info")
+                                rf.write(f"  - {r_k}: {r_v} ملف\n")
+
+                        show_modern_notification("تقرير التشخيص", f"تم حفظ التقرير في:\n{rep_txt.name}", notif_type="info")
                     except Exception as ex_rep:
                         logger.error("تعذر تصدير تقرير التشخيص: %s", ex_rep)
 
@@ -868,9 +908,18 @@ class HomeScreen(Screen):
                 show_rich_results_dialog(
                     title=dialog_title,
                     stats_dict={
-                        "total_found": total_files,
+                        "total_found": res.get("total_found", total_files),
                         "success_count": success_count,
                         "failed_count": failed_count,
+                        "readable_count": res.get("readable_count", 0),
+                        "classified_count": res.get("classified_count", 0),
+                        "copied_count": res.get("copied_count", 0),
+                        "moved_count": res.get("moved_count", 0),
+                        "read_failed_count": res.get("read_failed_count", 0),
+                        "classification_failed_count": res.get("classification_failed_count", 0),
+                        "write_failed_count": res.get("write_failed_count", 0),
+                        "permission_rejected_count": res.get("permission_rejected_count", 0),
+                        "saf_reselect_count": res.get("saf_reselect_count", 0),
                     },
                     failures_by_reason=failures_by_reason,
                     buttons=dlg_buttons,
