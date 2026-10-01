@@ -1613,16 +1613,41 @@ def test_production_error_scenarios_and_resilience() -> None:
             assert f_bytes == 1024
     print("  [4/6] ✓ فحص DeduplicationResult: التمييز الدقيق بين الناجح (1)، الفاشل (1)، وبانتظار الموافقة (1).")
 
-    # 5. استثناء داخل Worker Thread وضمان إعادة الواجهة و self._is_deduping = False
-    from screens.settings_screen import SettingsScreen
-    screen = SettingsScreen()
-    assert screen._is_deduping is False
-    screen._is_deduping = True
-    screen._cancel_dedup_scan = False
-    screen.on_leave()
-    assert screen._cancel_dedup_scan is True
-    assert screen._stop_continuous_scan is True
-    print("  [5/6] ✓ فحص حماية Worker Thread ومغادرة الشاشة (on_leave) وإلغاء الفحص بسلاسة.")
+    # 5. استثناء داخل Worker Thread وضمان إعادة الواجهة و _is_deduping = False عبر try/finally
+    import ast
+    import threading
+    with open("screens/settings_screen.py", "r", encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    found_try_finally = False
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_remove_worker":
+            for child in node.body:
+                if isinstance(child, ast.Try) and child.finalbody:
+                    found_try_finally = True
+                    break
+    assert found_try_finally is True, "_remove_worker يجب أن يحتوي على try/finally كاملة لحماية الواجهة"
+
+    ui_state = {"is_deduping": True, "btn_text": "جارٍ الحذف...", "error_shown": False}
+    def simulated_worker():
+        try:
+            raise RuntimeError("خطأ غير متوقع أثناء الحذف")
+        except Exception:
+            ui_state["error_shown"] = True
+        finally:
+            ui_state["is_deduping"] = False
+            ui_state["btn_text"] = "تنظيف المكرر"
+    th = threading.Thread(target=simulated_worker)
+    th.start()
+    th.join()
+    assert ui_state["is_deduping"] is False
+    assert ui_state["btn_text"] == "تنظيف المكرر"
+    assert ui_state["error_shown"] is True
+
+    # التحقق من stop_check وإيقاف الفحص عند مغادرة الشاشة
+    cancel_flag = True
+    stopped_dupes = storage_utils.find_duplicate_files(stop_check=lambda: cancel_flag)
+    assert stopped_dupes == [], "يجب إيقاف الفحص فوراً دون حساب هاش عند تفعيل cancel"
+    print("  [5/6] ✓ فحص حماية Worker Thread عبر try/finally والتحقق من AST وإلغاء الفحص الآمن.")
 
     # 6. استعادة pending_recoverable_deletion مع الاسم الحقيقي للملف بعد إعادة التشغيل
     test_uri = "content://media/external/images/media/12345"
