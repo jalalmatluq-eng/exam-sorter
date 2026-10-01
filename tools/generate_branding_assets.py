@@ -37,7 +37,7 @@ def draw_linear_gradient(draw: ImageDraw.ImageDraw, bbox: tuple[int, int, int, i
     cos_a = math.cos(rad)
     sin_a = math.sin(rad)
     max_len = math.sqrt(w*w + h*h)
-    
+
     # رسم خطوط ناعمة
     for y in range(y0, y1, 2):
         for x in range(x0, x1, 2):
@@ -88,7 +88,7 @@ def draw_modern_logo_mark(size: int = 1024) -> Image.Image:
         (tri_c[0] - ts // 2, tri_c[1] + ts),
         (tri_c[0] + ts, tri_c[1]),
     ], fill=(165, 180, 252, 220))
-    
+
     c1_rot = c1_img.rotate(16, expand=True, resample=Image.Resampling.BICUBIC)
     img.paste(c1_rot, (cx - int(340 * scale), cy - int(320 * scale)), c1_rot)
 
@@ -107,7 +107,7 @@ def draw_modern_logo_mark(size: int = 1024) -> Image.Image:
     # أسطر نص الامتحان
     for i in range(5):
         ly = int((140 + i * 55) * scale)
-        lw = max(int(40 * scale), int(card2_w - int(140 * scale) - (i % 2) * int(40 * scale)))
+        lw = max(int(40 * scale), card2_w - int(140 * scale) - (i % 2) * int(40 * scale))
         c2_draw.rounded_rectangle(
             [int(50 * scale), ly, int(50 * scale) + lw, ly + max(2, int(14 * scale))],
             radius=max(2, int(7 * scale)),
@@ -126,7 +126,7 @@ def draw_modern_logo_mark(size: int = 1024) -> Image.Image:
     card3_h = int(580 * scale)
     c3_img = Image.new("RGBA", (card3_w, card3_h), (0, 0, 0, 0))
     c3_draw = ImageDraw.Draw(c3_img)
-    
+
     # تدرج متدرج أنيق للبطاقة الأمامية
     c3_draw.rounded_rectangle(
         [0, 0, card3_w, card3_h],

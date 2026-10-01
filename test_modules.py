@@ -11,14 +11,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-os.environ.setdefault("KIVY_NO_ARGS", "1")
+import numpy as np
+from PIL import Image
 
 try:
     import cv2
 except Exception:
     cv2 = None  # type: ignore
-import numpy as np
-from PIL import Image
 
 import classifier
 import face_classifier
@@ -28,6 +27,8 @@ import storage_backend
 import video_classifier
 from service import media_watcher_service
 from utils.arabic_helper import ar, get_arabic_font_path
+
+os.environ.setdefault("KIVY_NO_ARGS", "1")
 
 
 def test_arabic_helper() -> None:

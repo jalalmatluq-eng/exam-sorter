@@ -62,7 +62,7 @@ def ar(text: str) -> str:
             display_result = get_display(reshaped_text)
             if isinstance(display_result, bytes):
                 return display_result.decode("utf-8", errors="replace")
-            return str(display_result)
+            return display_result
         except (TypeError, ValueError, AttributeError, RuntimeError) as e:
             print("خطأ أثناء تشكيل النص العربي:", e)
             return text

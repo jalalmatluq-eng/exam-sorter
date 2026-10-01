@@ -212,7 +212,7 @@ def _android_get_video_metadata(video_path: str) -> dict[str, Any] | None:
 
         MediaMetadataRetriever = autoclass("android.media.MediaMetadataRetriever")
         retriever = MediaMetadataRetriever()
-        retriever.setDataSource(str(video_path))
+        retriever.setDataSource(video_path)
 
         meta: dict[str, Any] = {
             "duration_sec": 0.0,
@@ -272,7 +272,7 @@ def _android_read_frame(
         CompressFormat = autoclass("android.graphics.Bitmap$CompressFormat")
 
         retriever = MediaMetadataRetriever()
-        retriever.setDataSource(str(video_path))
+        retriever.setDataSource(video_path)
 
         dur_str = retriever.extractMetadata(9)
         dur_ms = float(dur_str) if dur_str else 0.0

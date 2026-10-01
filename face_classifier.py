@@ -119,8 +119,8 @@ def _safe_read_image(image_path: str, max_size: int = 800) -> np.ndarray | None:
 
     try:
         import storage_backend
-        cached_p = storage_backend.get_displayable_image_path(str(image_path))
-        if cached_p and cached_p != str(image_path) and Path(cached_p).exists():
+        cached_p = storage_backend.get_displayable_image_path(image_path)
+        if cached_p and cached_p != image_path and Path(cached_p).exists():
             return _safe_read_image(cached_p, max_size=max_size)
     except Exception:
         pass

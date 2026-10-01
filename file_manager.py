@@ -1241,7 +1241,7 @@ def _log_transfer_record(
         "category": category,
         "size_bytes": file_size,
         "is_copy": is_copy,
-        "is_saf_dest": bool(is_saf_dest or dest_path.startswith("content://")),
+        "is_saf_dest": is_saf_dest or dest_path.startswith("content://"),
         "timestamp": datetime.now(UTC).isoformat(),
     })
 
@@ -1331,7 +1331,7 @@ def remove_transfer_history_records_by_dest(dest_paths: list[str], base_path: Pa
             records = json.load(f)
         if not isinstance(records, list):
             return 0
-        norm_targets = {str(p).strip().lower() for p in dest_paths if p}
+        norm_targets = {p.strip().lower() for p in dest_paths if p}
         remaining = []
         removed_count = 0
         for rec in records:
@@ -1870,4 +1870,3 @@ def move_to_category(
         _update_last_transfer_record_to_copy(base_path)
 
     return dest
-
