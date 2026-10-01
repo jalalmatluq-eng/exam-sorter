@@ -144,6 +144,23 @@ if font_path and os.path.exists(font_path):
         except OSError as e:
             logger.warning("تنبيه أثناء تسجيل الخط %s: %s", f_name, e)
 
+# 2. درع حماية معالجات الرسوميات Adreno من انهيار FBO / Stencil داخل Ripple
+try:
+    import kivymd.uix.behaviors.ripple_behavior as rb
+
+    def _no_op_ripple(*args: Any, **kwargs: Any) -> None:
+        return None
+
+    if hasattr(rb, "M3CommonRipple"):
+        rb.M3CommonRipple.call_ripple_animation_methods = _no_op_ripple
+        rb.M3CommonRipple.lay_canvas_instructions = _no_op_ripple
+        rb.M3CommonRipple._call_ripple_animation_methods = _no_op_ripple
+        rb.M3CommonRipple.start_ripple = _no_op_ripple
+    if hasattr(rb, "CommonRipple"):
+        rb.CommonRipple.lay_canvas_instructions = _no_op_ripple
+except Exception as _e:
+    pass
+
 
 class CosmoSortApp(MDApp):
     title: str = "CosmoSort - جامع العوالم الذكي"
@@ -262,12 +279,6 @@ class CosmoSortApp(MDApp):
 
     def on_resume(self) -> None:
         """استئناف التطبيق عند العودة من الخلفية والتحقق من الفحص المعلق"""
-        if Window is not None:
-            try:
-                Window.update_viewport()
-            except Exception:
-                pass
-
         # استئناف أي فحص كان معلقاً بانتظار موافقة المستخدم على الصلاحيات
         try:
             is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()

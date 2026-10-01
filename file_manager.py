@@ -9,6 +9,7 @@
 """
 
 import json
+import logging
 import os
 import re
 import shutil
@@ -17,6 +18,8 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+
+logger = logging.getLogger("FileManager")
 
 
 def get_base_storage_path() -> Path:
@@ -450,21 +453,76 @@ DEFAULT_PREFERENCES: dict[str, object] = {
     "pending_source": "both",
     "pending_target": "internal",
     "api_key": "",
+    "detected_sdcard_path": "",
 }
 
 
-def get_prefs_file_path() -> Path:
-    """مسار ملف حفظ تفضيلات المستخدم الخاصة بالفرز والتخزين"""
+def get_app_private_storage_dir() -> Path:
+    """
+    تحديد مجلد التخزين الخاص بالتطبيق (App Private Storage) بشكل موحد وآمن:
+    - محمي تماماً من قيود الأذونات في التخزين المشترك.
+    - يحتوي ملفات النظام الداخلية: scanned_media_cache.db, sorter_prefs.json,
+      last_processing.json, service_control.json.
+    """
+    # 1. فحص متغير البيئة المعتمد من python-for-android
+    android_private = os.environ.get("ANDROID_PRIVATE")
+    if android_private and os.path.exists(android_private):
+        return Path(android_private)
+
+    # 2. تطبيق Kivy النشط في الذاكرة
     try:
         from kivy.app import App
         app = App.get_running_app()
         if app and hasattr(app, "user_data_dir") and app.user_data_dir:
-            p = Path(str(app.user_data_dir)) / "sorter_prefs.json"
-            p.parent.mkdir(parents=True, exist_ok=True)
+            p = Path(str(app.user_data_dir))
+            p.mkdir(parents=True, exist_ok=True)
             return p
-    except (ImportError, AttributeError, OSError):
+    except Exception:
         pass
-    return Path(__file__).resolve().parent / "sorter_prefs.json"
+
+    # 3. الوصول المباشر عبر pyjnius لتطبيق أندرويد أو الخدمة الخلفية
+    try:
+        from kivy.utils import platform
+        if platform == "android":
+            from jnius import autoclass
+            try:
+                PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                if PythonActivity.mActivity:
+                    return Path(PythonActivity.mActivity.getFilesDir().getAbsolutePath())
+            except Exception:
+                pass
+            try:
+                PythonService = autoclass("org.kivy.android.PythonService")
+                if PythonService.mService:
+                    return Path(PythonService.mService.getFilesDir().getAbsolutePath())
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # 4. مسارات التخزين الخاصة القياسية على نظام أندرويد
+    for std_path in [
+        "/data/user/0/com.cosmosort.ai.cosmosort/files",
+        "/data/data/com.cosmosort.ai.cosmosort/files",
+    ]:
+        p = Path(std_path)
+        if p.exists() and os.access(str(p), os.W_OK):
+            return p
+
+    # 5. للحاسوب وبيئة الاختبارات والتطوير
+    fallback = Path(__file__).resolve().parent / ".app_private"
+    fallback.mkdir(parents=True, exist_ok=True)
+    return fallback
+
+
+def get_prefs_file_path() -> Path:
+    """مسار ملف حفظ تفضيلات المستخدم الخاصة بالفرز والتخزين في التخزين الخاص"""
+    p = get_app_private_storage_dir() / "sorter_prefs.json"
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return p
 
 
 def get_sorter_preferences() -> dict[str, object]:
@@ -696,41 +754,125 @@ def open_all_files_permission_settings() -> bool:
         return False
 
 
+def is_directory_writable(dir_path: Path) -> bool:
+    """
+    التحقق الفعلي من إمكانية إنشاء وكتابة وحذف الملفات داخل المجلد المحدد.
+    هام: لا نختبر في جذر بطاقة SD مباشرة لأن نظام أندرويد يحظر إنشاء ملفات نقطية في الجذر.
+    """
+    try:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        test_file = dir_path / f".write_test_{int(time.time() * 1000)}"
+        test_file.write_text("ok", encoding="utf-8")
+        test_file.unlink(missing_ok=True)
+        return True
+    except (PermissionError, OSError) as e:
+        logger.debug("المجلد غير قابل للكتابة %s: %s", dir_path, e)
+        return False
+
+
 def find_external_sdcard_root() -> Path | None:
-    """اكتشاف مسار بطاقة الذاكرة الخارجية MicroSD القابلة للكتابة"""
+    """
+    اكتشاف مسار بطاقة الذاكرة الخارجية MicroSD بطرق Android الرسمية:
+    1. StorageManager.getStorageVolumes() عبر Pyjnius.
+    2. Context.getExternalFilesDirs(None) عبر Pyjnius.
+    3. فحص مجلد /storage عن أي معرف بطاقة غير emulated.
+    4. استرجاع المسار المحفوظ مسبقاً إذا كان متاحاً.
+    مع التأكد من إمكانية الكتابة داخل [مسار البطاقة]/الملفات المنظمة/ بدلاً من فحص جذر البطاقة.
+    """
     try:
         from kivy.utils import platform
         if platform == "android":
-            search_roots = [Path("/storage"), Path("/mnt/media_rw")]
-            for s_dir in search_roots:
-                if s_dir.exists() and s_dir.is_dir():
-                    try:
-                        for item in s_dir.iterdir():
-                            is_sys = item.name in (
-                                "emulated", "self", "knox", "sdcard0"
-                            )
-                            if item.is_dir() and not is_sys:
-                                test_file = item / ".write_perm_test"
-                                try:
-                                    test_file.touch()
-                                    test_file.unlink()
-                                    return item
-                                except (PermissionError, OSError):
-                                    pass
-                    except (PermissionError, OSError):
-                        pass
+            candidate_roots: list[Path] = []
 
-            sdcard1 = Path("/storage/sdcard1")
-            if sdcard1.exists() and sdcard1.is_dir():
-                test_file = sdcard1 / ".write_perm_test"
+            # 1. الطريقة الأولى: StorageManager / StorageVolume
+            try:
+                from android import mActivity
+                from jnius import autoclass
+                Context = autoclass("android.content.Context")
+                storage_manager = mActivity.getSystemService(Context.STORAGE_SERVICE)
+                if storage_manager is not None:
+                    volumes = storage_manager.getStorageVolumes()
+                    if volumes is not None:
+                        for i in range(volumes.size()):
+                            vol = volumes.get(i)
+                            if vol is not None and vol.isRemovable():
+                                uuid = vol.getUuid()
+                                if uuid:
+                                    p = Path(f"/storage/{uuid}")
+                                    if p not in candidate_roots:
+                                        candidate_roots.append(p)
+                                try:
+                                    dir_file = vol.getDirectory()
+                                    if dir_file is not None:
+                                        dir_path = Path(dir_file.getAbsolutePath())
+                                        if dir_path not in candidate_roots:
+                                            candidate_roots.append(dir_path)
+                                except Exception:
+                                    pass
+            except Exception as e:
+                logger.debug("StorageManager check: %s", e)
+
+            # 2. الطريقة الثانية: getExternalFilesDirs(None)
+            try:
+                from android import mActivity
+                ext_dirs = mActivity.getExternalFilesDirs(None)
+                if ext_dirs:
+                    for ed in ext_dirs:
+                        if ed is not None:
+                            p_str = ed.getAbsolutePath()
+                            if "/Android/data" in p_str and not p_str.startswith("/storage/emulated/"):
+                                root_part = p_str.split("/Android/data")[0]
+                                p = Path(root_part)
+                                if p not in candidate_roots:
+                                    candidate_roots.append(p)
+            except Exception as e:
+                logger.debug("getExternalFilesDirs check: %s", e)
+
+            # 3. الطريقة الثالثة: فحص محتويات /storage المباشرة
+            storage_dir = Path("/storage")
+            if storage_dir.exists() and storage_dir.is_dir():
                 try:
-                    test_file.touch()
-                    test_file.unlink()
-                    return sdcard1
-                except (PermissionError, OSError):
+                    for item in storage_dir.iterdir():
+                        is_sys = item.name in ("emulated", "self", "knox", "sdcard0")
+                        if item.is_dir() and not is_sys:
+                            if item not in candidate_roots:
+                                candidate_roots.append(item)
+                except Exception:
                     pass
-    except (ImportError, OSError, RuntimeError):
-        pass
+
+            # 4. الطريقة الرابعة: التحقق من المسار المحفوظ في التفضيلات
+            try:
+                saved_sd = str(get_sorter_preferences().get("detected_sdcard_path", "")).strip()
+                if saved_sd:
+                    p = Path(saved_sd)
+                    if p not in candidate_roots:
+                        candidate_roots.append(p)
+            except Exception:
+                pass
+
+            # فحص كل مسار مرشح: التحقق من وجوده وإمكانية إنشاء مجلد الملفات المنظمة داخله
+            for root_candidate in candidate_roots:
+                if not root_candidate.exists() or not root_candidate.is_dir():
+                    continue
+                # لا نختبر في جذر البطاقة مباشرة! نختبر مجلد [root]/الملفات المنظمة/
+                target_folder = root_candidate / ORGANIZED_FOLDER_NAME
+                writable = is_directory_writable(target_folder)
+                if writable:
+                    try:
+                        save_sorter_preferences({"detected_sdcard_path": str(root_candidate)})
+                    except Exception:
+                        pass
+                    return root_candidate
+                elif root_candidate.exists():
+                    try:
+                        save_sorter_preferences({"detected_sdcard_path": str(root_candidate)})
+                    except Exception:
+                        pass
+                    return root_candidate
+
+    except (ImportError, OSError, RuntimeError) as e:
+        logger.debug("find_external_sdcard_root error: %s", e)
+
     return None
 
 
@@ -759,6 +901,7 @@ def get_available_storage_destinations() -> dict[str, dict[str, object]]:
                 "name": "الذاكرة الداخلية المشتركة",
                 "path": str(internal_target),
                 "available": True,
+                "is_writable": is_directory_writable(internal_target),
                 "free_gb": int_free_gb,
                 "total_gb": int_total_gb,
                 "description": (
@@ -769,7 +912,7 @@ def get_available_storage_destinations() -> dict[str, dict[str, object]]:
 
             # 2. بطاقة الذاكرة الخارجية (MicroSD Card)
             sd_root = find_external_sdcard_root()
-            if sd_root:
+            if sd_root and sd_root.exists():
                 sd_target = sd_root / ORGANIZED_FOLDER_NAME
                 sd_free_gb, sd_total_gb = 0.0, 0.0
                 try:
@@ -779,11 +922,13 @@ def get_available_storage_destinations() -> dict[str, dict[str, object]]:
                 except OSError:
                     pass
 
+                is_writable = is_directory_writable(sd_target)
                 destinations["sdcard"] = {
                     "id": "sdcard",
                     "name": "بطاقة الذاكرة الخارجية (MicroSD)",
                     "path": str(sd_target),
                     "available": True,
+                    "is_writable": is_writable,
                     "free_gb": sd_free_gb,
                     "total_gb": sd_total_gb,
                     "description": (
@@ -794,12 +939,13 @@ def get_available_storage_destinations() -> dict[str, dict[str, object]]:
                 destinations["sdcard"] = {
                     "id": "sdcard",
                     "name": "بطاقة الذاكرة الخارجية (MicroSD)",
-                    "path": "غير متوفرة حالياً أو لا تقبل الكتابة",
+                    "path": "غير متوفرة حالياً",
                     "available": False,
+                    "is_writable": False,
                     "free_gb": 0.0,
                     "total_gb": 0.0,
                     "description": (
-                        "لم يتم العثور على كرت MicroSD صالح للكتابة"
+                        "لم يتم العثور على كرت MicroSD مركب في الجهاز"
                     ),
                 }
             return destinations
@@ -863,9 +1009,10 @@ def get_media_sorter_base_path() -> Path:
             )
             try:
                 internal_base.mkdir(parents=True, exist_ok=True)
+                return internal_base
             except OSError:
-                pass
-            return internal_base
+                if internal_base.exists():
+                    return internal_base
     except (ImportError, OSError, RuntimeError) as e:
         print("تنبيه أثناء تهيئة مسار الملفات المنظمة:", e)
 
@@ -1034,20 +1181,21 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     except (OSError, TypeError):
         pass
 
-    try:
-        cache_db = get_media_sorter_base_path() / "scanned_media_cache.db"
-        if cache_db.exists():
-            conn = sqlite3.connect(str(cache_db))
-            cursor = conn.cursor()
-            q = (
-                "DELETE FROM scanned_files "
-                "WHERE file_path = ? OR file_path = ?"
-            )
-            _ = cursor.execute(q, (str(src), str(dest)))
-            conn.commit()
-            conn.close()
-    except (sqlite3.Error, OSError):
-        pass
+    for db_dir in [get_app_private_storage_dir(), get_media_sorter_base_path()]:
+        try:
+            cache_db = db_dir / "scanned_media_cache.db"
+            if cache_db.exists():
+                conn = sqlite3.connect(str(cache_db))
+                cursor = conn.cursor()
+                q = (
+                    "DELETE FROM scanned_files "
+                    "WHERE file_path = ? OR file_path = ?"
+                )
+                _ = cursor.execute(q, (str(src), str(dest)))
+                conn.commit()
+                conn.close()
+        except (sqlite3.Error, OSError):
+            pass
 
     return True
 
@@ -1095,16 +1243,17 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
     except (OSError, TypeError):
         pass
 
-    try:
-        cache_db = get_media_sorter_base_path() / "scanned_media_cache.db"
-        if cache_db.exists():
-            conn = sqlite3.connect(str(cache_db))
-            cursor = conn.cursor()
-            _ = cursor.execute("DELETE FROM scanned_files")
-            conn.commit()
-            conn.close()
-    except (sqlite3.Error, OSError):
-        pass
+    for db_dir in [get_app_private_storage_dir(), get_media_sorter_base_path()]:
+        try:
+            cache_db = db_dir / "scanned_media_cache.db"
+            if cache_db.exists():
+                conn = sqlite3.connect(str(cache_db))
+                cursor = conn.cursor()
+                _ = cursor.execute("DELETE FROM scanned_files")
+                conn.commit()
+                conn.close()
+        except (sqlite3.Error, OSError):
+            pass
 
     return undone_count
 

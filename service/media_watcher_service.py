@@ -6,6 +6,7 @@
 """
 
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -48,9 +49,13 @@ WATCH_SUBDIRECTORIES = [
 
 
 def get_service_control_file() -> Path:
-    """ملف التحكم في تشغيل وإيقاف الخدمة"""
-    base = file_manager.get_media_sorter_base_path()
-    return base / "service_control.json"
+    """ملف التحكم في تشغيل وإيقاف الخدمة في التخزين الخاص بالتطبيق"""
+    p = file_manager.get_app_private_storage_dir() / "service_control.json"
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return p
 
 
 def set_service_desired_state(running: bool) -> None:

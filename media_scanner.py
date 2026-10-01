@@ -50,50 +50,81 @@ CATEGORY_UNCLASSIFIED = "خارج التصنيف"
 
 
 def get_cache_db_path() -> Path:
-    """مسار قاعدة بيانات التتبع لمنع إعادة فحص الملفات المكررة"""
-    base = file_manager.get_media_sorter_base_path()
-    return base / "scanned_media_cache.db"
+    """مسار قاعدة بيانات التتبع لمنع إعادة فحص الملفات المكررة في التخزين الخاص بالتطبيق"""
+    p = file_manager.get_app_private_storage_dir() / "scanned_media_cache.db"
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return p
 
 
-def init_cache_db() -> None:
-    """تهيئة جدول تتبع الملفات المفحوصة في SQLite"""
-    db_path = get_cache_db_path()
-    conn = sqlite3.connect(str(db_path))
-    cursor = conn.cursor()
-    _ = cursor.execute("""
-        CREATE TABLE IF NOT EXISTS scanned_files (
-            file_path TEXT PRIMARY KEY,
-            file_size INTEGER,
-            mtime REAL,
-            category TEXT,
-            processed_at REAL
-        )
-    """)
-    conn.commit()
-    conn.close()
+def init_cache_db() -> bool:
+    """تهيئة جدول تتبع الملفات المفحوصة في SQLite بشكل غير حاجب للفرز"""
+    try:
+        db_path = get_cache_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS scanned_files (
+                    file_path TEXT PRIMARY KEY,
+                    file_size INTEGER,
+                    mtime REAL,
+                    category TEXT,
+                    dest_path TEXT,
+                    dest_size INTEGER,
+                    processed_at REAL
+                )
+            """)
+            try:
+                cursor.execute("ALTER TABLE scanned_files ADD COLUMN dest_path TEXT")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute("ALTER TABLE scanned_files ADD COLUMN dest_size INTEGER")
+            except sqlite3.OperationalError:
+                pass
+            conn.commit()
+        return True
+    except Exception as e:
+        logger.warning("تنبيه: قاعدة بيانات الكاش غير متاحة (سيستمر الفرز بدون كاش): %s", e)
+        return False
 
 
 def is_file_already_processed(
     file_path: str, file_size: int, mtime: float
 ) -> bool:
-    """التحقق مما إذا كان الملف قد تمت معالجته مسبقاً دون تغيير"""
+    """
+    التحقق مما إذا كان الملف قد تمت معالجته مسبقاً وتأكيد وجود النسخة المنظمة في الوجهة:
+    إذا كان الملف مسجلاً لكن نسخته في الوجهة مفقودة أو غير مطابقة، يعتبر غير مكتمل ليعاد فرزه!
+    """
     try:
         db_path = get_cache_db_path()
         if not db_path.exists():
             return False
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        query = (
-            "SELECT file_size, mtime FROM scanned_files WHERE file_path = ?"
-        )
-        _ = cursor.execute(query, (file_path,))
-        row: object = cursor.fetchone()
-        conn.close()
-        if isinstance(row, (tuple, list)) and len(row) >= 2:
-            saved_size = int(str(row[0]))
-            saved_mtime = float(str(row[1]))
-            if saved_size == file_size and abs(saved_mtime - mtime) < 1.0:
-                return True
+        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+            cursor = conn.cursor()
+            query = (
+                "SELECT file_size, mtime, dest_path, dest_size FROM scanned_files WHERE file_path = ?"
+            )
+            cursor.execute(query, (file_path,))
+            row = cursor.fetchone()
+            if row and len(row) >= 2:
+                saved_size = int(str(row[0]))
+                saved_mtime = float(str(row[1]))
+                if saved_size == file_size and abs(saved_mtime - mtime) < 1.0:
+                    if len(row) >= 4 and row[2]:
+                        dest_str = str(row[2])
+                        dest_p = Path(dest_str)
+                        if dest_p.exists() and dest_p.is_file():
+                            if dest_p.stat().st_size == file_size:
+                                return True
+                            else:
+                                return False
+                        else:
+                            return False
+                    return True
     except (sqlite3.Error, OSError, ValueError) as e:
         logger.debug("خطأ أثناء قراءة سجل الملف المفحوص: %s", e)
     return False
@@ -106,39 +137,79 @@ def get_all_scanned_files_set() -> set[str]:
         db_path = get_cache_db_path()
         if not db_path.exists():
             return scanned
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        cursor.execute("SELECT file_path FROM scanned_files")
-        for row in cursor.fetchall():
-            if row and row[0]:
-                scanned.add(str(row[0]))
-        conn.close()
+        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT file_path FROM scanned_files")
+            for row in cursor.fetchall():
+                if row and row[0]:
+                    scanned.add(str(row[0]))
     except Exception as e:
         logger.debug("خطأ أثناء قراءة كاش الملفات: %s", e)
     return scanned
 
 
+def get_scanned_files_details() -> dict[str, dict[str, object]]:
+    """تحميل تفاصيل الملفات المفحوصة مسبقاً بما فيها مسارات الوجهة وأحجامها"""
+    details: dict[str, dict[str, object]] = {}
+    try:
+        db_path = get_cache_db_path()
+        if not db_path.exists():
+            return details
+        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT file_path, file_size, dest_path, dest_size FROM scanned_files"
+            )
+            for row in cursor.fetchall():
+                if row and row[0]:
+                    details[str(row[0])] = {
+                        "size": row[1],
+                        "dest_path": row[2] if len(row) > 2 else "",
+                        "dest_size": row[3] if len(row) > 3 else 0,
+                    }
+    except Exception as e:
+        logger.debug("خطأ أثناء قراءة تفاصيل كاش الملفات: %s", e)
+    return details
+
+
 def record_processed_file(
-    file_path: str, file_size: int, mtime: float, category: str
-) -> None:
-    """تسجيل الملف في قاعدة بيانات الملفات المعالجة"""
+    file_path: str,
+    file_size: int,
+    mtime: float,
+    category: str,
+    dest_path: str = "",
+    dest_size: int = 0
+) -> bool:
+    """تسجيل الملف في كاش التتبع بعد نجاح العملية فعلياً دون تعطيل الفرز عند الفشل"""
     try:
         init_cache_db()
         db_path = get_cache_db_path()
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        sql = """
-            INSERT OR REPLACE INTO scanned_files
-            (file_path, file_size, mtime, category, processed_at)
-            VALUES (?, ?, ?, ?, ?)
-        """
-        _ = cursor.execute(
-            sql, (file_path, file_size, mtime, category, time.time())
-        )
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+            cursor = conn.cursor()
+            sql = """
+                INSERT OR REPLACE INTO scanned_files
+                (file_path, file_size, mtime, category, dest_path, dest_size, processed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """
+            cursor.execute(
+                sql,
+                (
+                    file_path,
+                    file_size,
+                    mtime,
+                    category,
+                    dest_path,
+                    dest_size,
+                    time.time(),
+                ),
+            )
+            conn.commit()
+        return True
     except (sqlite3.Error, OSError) as e:
-        print("خطأ أثناء تسجيل الملف المفحوص:", e)
+        logger.warning(
+            "تنبيه: تعذر تسجيل الملف المفحوص في الكاش: %s (الفرز مستمر)", e
+        )
+        return False
 
 
 def unrecord_processed_file(
@@ -149,31 +220,30 @@ def unrecord_processed_file(
         db_path = get_cache_db_path()
         if not db_path.exists():
             return
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        del_sql = "DELETE FROM scanned_files WHERE file_path = ?"
-        _ = cursor.execute(del_sql, (file_path,))
-        if dest_path:
-            _ = cursor.execute(del_sql, (dest_path,))
-        conn.commit()
-        conn.close()
+        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+            cursor = conn.cursor()
+            del_sql = "DELETE FROM scanned_files WHERE file_path = ?"
+            cursor.execute(del_sql, (file_path,))
+            if dest_path:
+                cursor.execute(del_sql, (dest_path,))
+            conn.commit()
     except (sqlite3.Error, OSError) as e:
         logger.debug("خطأ أثناء إزالة الملف من قاعدة البيانات: %s", e)
 
 
-def clear_all_cache() -> None:
+def clear_all_cache() -> bool:
     """مسح كامل سجل التتبع المؤقت لتمكين إعادة الفحص الشامل"""
     try:
         db_path = get_cache_db_path()
-        if not db_path.exists():
-            return
-        conn = sqlite3.connect(str(db_path))
-        cursor = conn.cursor()
-        _ = cursor.execute("DELETE FROM scanned_files")
-        conn.commit()
-        conn.close()
+        if db_path.exists():
+            with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM scanned_files")
+                conn.commit()
+        return True
     except (sqlite3.Error, OSError) as e:
-        logger.debug("خطأ أثناء مسح قاعدة البيانات: %s", e)
+        logger.warning("خطأ أثناء مسح قاعدة البيانات: %s", e)
+        return False
 
 
 def scan_storage_roots(source_storage: str | None = None) -> list[Path]:
@@ -225,12 +295,16 @@ def scan_storage_roots(source_storage: str | None = None) -> list[Path]:
     return roots
 
 
-def _scan_android_mediastore(scanned_set: set[str]) -> list[Path]:
+def _scan_android_mediastore(
+    scanned_details: dict[str, dict[str, object]] | None = None,
+    force_rescan: bool = False,
+) -> list[Path]:
     """
     مسار بديل آمن: استعلام صور وفيديوهات الجهاز عبر MediaStore
     في حال لم تُمنح صلاحية إدارة كافة الملفات (Scoped Storage / All Files Access).
     """
     found: list[Path] = []
+    scanned_map = scanned_details or {}
     try:
         from android import mActivity  # type: ignore
         from jnius import autoclass  # type: ignore
@@ -250,16 +324,29 @@ def _scan_android_mediastore(scanned_set: set[str]) -> list[Path]:
                     col_idx = cursor.getColumnIndexOrThrow("_data")
                     while cursor.moveToNext():
                         raw_str = cursor.getString(col_idx)
-                        if raw_str and raw_str not in scanned_set:
-                            p = Path(raw_str)
-                            if (
-                                "الملفات المنظمة" not in raw_str
-                                and p.exists()
-                                and p.is_file()
-                            ):
-                                ext = p.suffix.lower()
-                                if ext in IMAGE_EXTENSIONS or ext in VIDEO_EXTENSIONS:
-                                    found.append(p)
+                        if not raw_str or "الملفات المنظمة" in raw_str:
+                            continue
+                        p = Path(raw_str)
+                        if not p.exists() or not p.is_file():
+                            continue
+                        ext = p.suffix.lower()
+                        if ext not in IMAGE_EXTENSIONS and ext not in VIDEO_EXTENSIONS:
+                            continue
+
+                        if not force_rescan and raw_str in scanned_map:
+                            info = scanned_map[raw_str]
+                            dest_str = str(info.get("dest_path", ""))
+                            if dest_str:
+                                dest_p = Path(dest_str)
+                                try:
+                                    if (
+                                        dest_p.exists()
+                                        and dest_p.stat().st_size == p.stat().st_size
+                                    ):
+                                        continue
+                                except OSError:
+                                    pass
+                        found.append(p)
                 finally:
                     cursor.close()
     except Exception as e:
@@ -270,22 +357,27 @@ def _scan_android_mediastore(scanned_set: set[str]) -> list[Path]:
 def find_unsorted_media(
     roots: list[Path] | None = None,
     max_depth: int = 8,
-    source_storage: str | None = None
+    source_storage: str | None = None,
+    force_rescan: bool = False,
 ) -> list[Path]:
     """
     البحث الشجري عن جميع الصور والفيديوهات غير المصنفة:
-    - استثناء مجلد الملفات المنظمة ومجلدات أندرويد المحمية.
-    - استثناء مجلد الحفظ المعتمد أياً كان مساره لمنع التكرار.
-    - استثناء الملفات المعالجة مسبقاً.
+    - فحص الذاكرة الداخلية / المشتركة وبطاقة SD بمرونة كاملة.
+    - استثناء مجلد الملفات المنظمة ومجلدات أندرويد المحمية والنظامية.
+    - استثناء الملف إذا كان قد نُسخ بالفعل وتأكدنا من وجود نسخته في الوجهة وتطابق حجمها.
+    - إعادة فحص الملف إذا كان مفقوداً في الوجهة أو إذا طُلب force_rescan.
     - مسار بديل عبر MediaStore إن لم تتوفر صلاحية الوصول الكامل للملفات.
     """
-    scanned_set = get_all_scanned_files_set()
+    scanned_details = get_scanned_files_details()
 
     # مسار بديل عبر MediaStore في حال حظر أو رفض إذن إدارة كل الملفات
     try:
         from kivy.utils import platform
         if platform == "android" and not file_manager.is_all_files_access_granted():
-            ms_files = _scan_android_mediastore(scanned_set)
+            ms_files = _scan_android_mediastore(
+                scanned_details=scanned_details,
+                force_rescan=force_rescan,
+            )
             if ms_files:
                 logger.info("تم العثور على %d ملف عبر MediaStore البديل", len(ms_files))
                 return ms_files
@@ -303,6 +395,13 @@ def find_unsorted_media(
         "امثلة_نسخة_احتياطية", "backup", "backups",
         "android", ".android", "data", "obb", "cache", ".thumbnails",
         "lost.dir", "alms",
+    }
+
+    # المجلدات ذات الأولوية الشائعة للوسائط ليتم فحصها أولاً
+    priority_dirs = {
+        "dcim", "pictures", "movies", "download", "whatsapp",
+        "telegram", "documents", "bluetooth", "snapseed", "camera",
+        "screenshots", "facebook", "instagram"
     }
 
     try:
@@ -351,6 +450,11 @@ def find_unsorted_media(
                     ):
                         continue
                     kept_dirs.append(d)
+
+                # ترتيب المجلدات لفرز مجلدات الوسائط الأساسية أولاً
+                kept_dirs.sort(
+                    key=lambda x: (0 if x.lower() in priority_dirs else 1, x.lower())
+                )
                 dirs[:] = kept_dirs
 
                 # فحص عمق التفرع
@@ -365,11 +469,37 @@ def find_unsorted_media(
                     if ext in IMAGE_EXTENSIONS or ext in VIDEO_EXTENSIONS:
                         full_path = Path(root) / f
                         str_full = str(full_path)
-                        if str_full in scanned_set:
-                            continue
+
+                        # التحقق الذكي من اكتمال فرز الملف سابقاً
+                        if not force_rescan and str_full in scanned_details:
+                            info = scanned_details[str_full]
+                            dest_path_str = str(info.get("dest_path", ""))
+                            if dest_path_str:
+                                dest_p = Path(dest_path_str)
+                                try:
+                                    if (
+                                        dest_p.exists()
+                                        and dest_p.is_file()
+                                        and dest_p.stat().st_size == full_path.stat().st_size
+                                    ):
+                                        continue
+                                except OSError:
+                                    pass
+                            else:
+                                if active_target_base and active_target_base.exists():
+                                    candidate = active_target_base / full_path.name
+                                    try:
+                                        if (
+                                            candidate.exists()
+                                            and candidate.stat().st_size == full_path.stat().st_size
+                                        ):
+                                            continue
+                                    except OSError:
+                                        pass
+
                         found_files.append(full_path)
         except (OSError, RuntimeError) as e:
-            print(f"خطأ أثناء فحص المجلد {root_dir}:", e)
+            logger.warning("خطأ أثناء فحص المجلد %s: %s", root_dir, e)
 
     return found_files
 
@@ -637,12 +767,33 @@ def _process_one_file_internal(
         dest_path = file_manager.move_to_category(
             p, target_category, copy_only=is_copy
         )
+        dest_p = Path(dest_path)
+        # التحقق الحاسم من نجاح الوجهة وتطابق الحجم بالبايت قبل اعتباره منجزاً
+        if not dest_p.exists():
+            raise IOError(f"الملف الوجهة غير موجود بعد النقل/النسخ: {dest_path}")
+        if dest_p.stat().st_size != orig_size:
+            raise IOError(
+                f"حجم الملف في الوجهة لا يطابق الأصل: {dest_p.stat().st_size} vs {orig_size}"
+            )
+
+        # تسجيل الملف في كاش التتبع بعد التأكد التام
         record_processed_file(
-            str(p), orig_size, orig_mtime, target_category
+            str(p),
+            orig_size,
+            orig_mtime,
+            target_category,
+            dest_path=str(dest_path),
+            dest_size=orig_size,
         )
-        record_processed_file(
-            str(dest_path), orig_size, orig_mtime, target_category
-        )
+        if not is_copy:
+            record_processed_file(
+                str(dest_path),
+                orig_size,
+                orig_mtime,
+                target_category,
+                dest_path=str(dest_path),
+                dest_size=orig_size,
+            )
         return {
             "success": True,
             "source": str(p),
@@ -652,7 +803,7 @@ def _process_one_file_internal(
             "mode": "copy" if is_copy else "move",
         }
     except (OSError, ValueError, RuntimeError) as e:
-        print(f"فشل معالجة الملف {p}:", e)
+        logger.error("فشل معالجة الملف %s: %s", p, e)
         return {
             "success": False,
             "source": str(p),
@@ -665,13 +816,20 @@ def run_batch_scan(
     max_files: int = 30,
     api_key: str | None = None,
     progress_callback: Callable[[int, int, str], None] | None = None,
-    source_storage: str | None = None
+    source_storage: str | None = None,
+    force_rescan: bool = False,
 ) -> dict[str, object]:
     """
     تشغيل فحص دفعي متحكم به لتجنب استهلاك البطارية أو تجميد الواجهة.
     """
-    init_cache_db()
-    media_files = find_unsorted_media(source_storage=source_storage)
+    try:
+        init_cache_db()
+    except Exception as e:
+        logger.warning("Cache DB init failed: %s (continuing scan)", e)
+
+    media_files = find_unsorted_media(
+        source_storage=source_storage, force_rescan=force_rescan
+    )
     total_found = len(media_files)
     batch = media_files[:max_files]
 
@@ -687,7 +845,6 @@ def run_batch_scan(
         if res.get("success"):
             processed_count += 1
 
-        # فترة راحة قصيرة جداً (30ms) بين الملفات لمنع رفع حرارة المعالج
         time.sleep(0.03)
 
     return {
@@ -703,19 +860,27 @@ def run_continuous_scan(
     api_key: str | None = None,
     progress_callback: Callable[[dict[str, object]], None] | None = None,
     stop_check: Callable[[], bool] | None = None,
-    source_storage: str | None = None
+    source_storage: str | None = None,
+    force_rescan: bool = False,
 ) -> dict[str, object]:
     """
     تشغيل فرز متواصل مستمر حتى الانتهاء من جميع الملفات المتاحة على الجهاز
     مع حماية متقدمة من نفاد الذاكرة وتحمل ضغط آلاف الملفات والصور الكبيرة.
     """
     import gc
-    init_cache_db()
+
+    try:
+        init_cache_db()
+    except Exception as e:
+        logger.warning("Cache DB init failed: %s (continuing scan)", e)
+
     total_processed = 0
     all_results: list[dict[str, object]] = []
 
     # استكشاف الملفات دفعة واحدة في البداية بدلاً من إعادة المسح البطيء
-    media_files = find_unsorted_media(source_storage=source_storage)
+    media_files = find_unsorted_media(
+        source_storage=source_storage, force_rescan=force_rescan
+    )
     total_files = len(media_files)
     if total_files == 0:
         return {

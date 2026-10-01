@@ -58,18 +58,20 @@ def get_storage_stats(base_path: Path | None = None) -> StorageStats:
         c["count"] for c in stats["categories"].values()
     )
     stats["total_size_mb"] = round(total_bytes / 1048576, 2)
-    try:
-        db_path = base / "scanned_media_cache.db"
-        if db_path.exists():
-            conn = sqlite3.connect(str(db_path))
-            row = conn.execute(
-                "SELECT MAX(processed_at) FROM scanned_files"
-            ).fetchone()
-            conn.close()
-            if row and row[0]:
-                stats["last_scan_time"] = float(row[0])
-    except (sqlite3.Error, OSError, ValueError):
-        pass
+    for test_dir in [file_manager.get_app_private_storage_dir(), base]:
+        try:
+            db_path = test_dir / "scanned_media_cache.db"
+            if db_path.exists():
+                conn = sqlite3.connect(str(db_path))
+                row = conn.execute(
+                    "SELECT MAX(processed_at) FROM scanned_files"
+                ).fetchone()
+                conn.close()
+                if row and row[0]:
+                    stats["last_scan_time"] = float(row[0])
+                    break
+        except (sqlite3.Error, OSError, ValueError):
+            pass
     return stats
 
 

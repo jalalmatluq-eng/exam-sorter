@@ -76,7 +76,7 @@ class HomeScreen(Screen):
             from kivy.app import App
             app = App.get_running_app()
             if hasattr(app, "request_android_permissions"):
-                Clock.schedule_once(lambda _dt: app.request_android_permissions(), 0.5)
+                Clock.schedule_once(lambda _dt: app.request_android_permissions(), 1.5)
 
     def start_cosmic_animation(self) -> None:
         """تم تعطيل الحركة الكونية المستمرة لحماية الأجهزة ذات GPU Adreno القديمة من SIGSEGV"""

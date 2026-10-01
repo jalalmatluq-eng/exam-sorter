@@ -456,7 +456,7 @@ class SettingsScreen(Screen):
                 ),
             )
 
-    def toggle_continuous_scan(self) -> None:
+    def toggle_continuous_scan(self, force_rescan: bool = False) -> None:
         """تشغيل أو إيقاف الفرز الشامل المتواصل لجميع وسائط الهاتف"""
         if self.is_continuous_scanning:
             self._stop_continuous_scan = True
@@ -500,6 +500,7 @@ class SettingsScreen(Screen):
                 progress_callback=on_progress,
                 stop_check=lambda: self._stop_continuous_scan,
                 source_storage=source_storage,
+                force_rescan=force_rescan,
             )
 
             def on_complete(_dt: float) -> None:
@@ -539,27 +540,26 @@ class SettingsScreen(Screen):
         threading.Thread(target=worker, daemon=True).start()
 
     def confirm_clear_cache(self) -> None:
-        """مسح قاعدة بيانات التتبع لتمكين إعادة فحص وسحب الملفات من الصفر"""
+        """إعادة فحص كافة الوسائط من الصفر وتصفير الكاش وبدء الفرز فوراً"""
 
         def do_clear():
             media_scanner.clear_all_cache()
-            show_app_dialog(
-                title="تم تصفير سجل التتبع",
-                text=(
-                    "تم مسح سجل الملفات المفحوصة بنجاح."
-                    " يمكنك الآن بدء الفحص"
-                    " الشامل من جديد."
-                ),
+            show_modern_notification(
+                "تصفير الكاش وبدء الفرز",
+                "تم مسح سجل التتبع، ويجري الآن إعادة فرز كافة وسائط الجهاز من جديد...",
+                icon="refresh-auto",
+                notif_type="magic",
             )
+            self.toggle_continuous_scan(force_rescan=True)
 
         show_confirm_dialog(
-            title="إعادة فحص كافة الملفات",
+            title="إعادة فحص جميع الوسائط",
             text=(
-                "هل تريد تصفير سجل التتبع؟ سيتيح هذا"
-                " للتطبيق إعادة فحص الوسائط القديمة."
+                "هل تريد تصفير سجل التتبع وإعادة فحص وفرز كافة الوسائط من الصفر؟\n"
+                "سيتيح هذا إعادة تنظيم أي صور وفيديوهات مسجلة سابقاً."
             ),
             on_confirm=do_clear,
-            confirm_text="نعم، إعادة الضبط",
+            confirm_text="نعم، بدء الفحص الشامل",
             cancel_text="إلغاء",
         )
 
@@ -618,24 +618,10 @@ class SettingsScreen(Screen):
             app.root.current = "people_setup_screen"
 
     def start_manual_scan(self) -> None:
-        """بدء الفحص الشامل للوسائط في خلفية منفصلة"""
-        if self.is_scanning:
+        """بدء الفحص الشامل للوسائط المستمر حتى النهاية بدلاً من الاقتصار على دفعة صغيرة"""
+        if self.is_continuous_scanning:
             return
-        self.is_scanning = True
-        if "text_single_batch_scan" in self.ids:
-            self.ids.text_single_batch_scan.text = ar("جاري...")
-
-        def worker() -> None:
-            app = self.get_app()
-            api_key = getattr(app, "api_key", None)
-            res = media_scanner.run_batch_scan(max_files=40, api_key=api_key)
-
-            def on_finish(_dt: float) -> None:
-                self._on_scan_finished(res)
-
-            Clock.schedule_once(on_finish, 0)
-
-        threading.Thread(target=worker, daemon=True).start()
+        self.toggle_continuous_scan()
 
     def _on_scan_finished(self, result: dict[str, object]) -> None:
         self.is_scanning = False
