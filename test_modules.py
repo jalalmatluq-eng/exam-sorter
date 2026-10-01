@@ -11,6 +11,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+os.environ.setdefault("KIVY_NO_ARGS", "1")
+
 try:
     import cv2
 except Exception:
@@ -1672,7 +1674,7 @@ def test_production_error_scenarios_and_resilience() -> None:
 
 def test_category_ui_details_and_layout_resilience() -> None:
     print("\n--- [اختبار 17] فحص تفاصيل واجهة الأقسام والمجلدات والتحقق من عدم تداخل النصوص ---")
-    from utils.ui_helper import get_category_icon_and_unit, get_category_ui_details
+    from utils.category_helper import get_category_icon_and_unit, get_category_ui_details
 
     # 1. فحص مجلدات الصور الشخصية وبصمة الوجه
     for name in ("صوري", "صوري الخاصة", "بصمة وجهي", "me", "Selfies"):
