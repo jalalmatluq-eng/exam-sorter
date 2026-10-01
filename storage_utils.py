@@ -184,28 +184,31 @@ def find_duplicate_files(
         if not tree_uri or not storage_backend.is_saf_uri_valid(tree_uri):
             return []
 
-        hash_map: dict[str, list[str]] = {}
+        # المرحلة 1: تجميع سريع حسب الحجم دون فحص دفق المحتوى لاستبعاد الملفات الفريدة
+        size_groups: dict[int, list[str]] = {}
         try:
             saf_items = storage_backend.scan_saf_tree_recursively(tree_uri, include_organized=True)
             for item in saf_items:
                 uri = item.uri or item.id
                 sz = int(item.size_bytes)
-
                 if sz <= 0:
                     continue
+                size_groups.setdefault(sz, []).append(uri)
 
-                # حساب بصمة المحتوى الفعلية عبر تدفق Content URI على دفعات
-                content_hash = storage_backend.compute_content_uri_hash(uri)
-                if not content_hash:
-                    # عند تعذر قراءة دفق Content URI، لا نعتبر الملف مكرراً بالاعتماد على الاسم والحجم لمنع الحذف الخاطئ
-                    logger.warning("تعذر قراءة دفق المحتوى لحساب الهاش للملف: %s. تم استبعاده من كشف المكررات لضمان سلامة البيانات.", uri)
-                    continue
-
-                # المفتاح الصارم: الحجم وبصمة المحتوى الحقيقية (SHA-256)
-                key = f"{sz}_{content_hash}"
-                if key not in hash_map:
-                    hash_map[key] = []
-                hash_map[key].append(uri)
+            # المرحلة 2: فحص الهاش (SHA-256) للملفات التي لها نفس الحجم فقط
+            candidates = {sz: uris for sz, uris in size_groups.items() if len(uris) > 1}
+            hash_map: dict[str, list[str]] = {}
+            for sz, uris in candidates.items():
+                for uri in uris:
+                    content_hash = storage_backend.compute_content_uri_hash(uri)
+                    if not content_hash:
+                        logger.warning(
+                            "تعذر قراءة دفق المحتوى لحساب الهاش للملف: %s. تم استبعاده من كشف المكررات لضمان سلامة البيانات.",
+                            uri,
+                        )
+                        continue
+                    key = f"{sz}_{content_hash}"
+                    hash_map.setdefault(key, []).append(uri)
         except Exception as e:
             logger.error("خطأ أثناء فحص مكررات SAF: %s", e)
             return []
@@ -218,10 +221,11 @@ def find_duplicate_files(
         if (target_location and target_location.path)
         else (base_path or file_manager.get_internal_media_sorter_base_path())
     )
-    hash_map: dict[str, list[str]] = {}
     if not base.exists():
         return []
 
+    # المرحلة 1: تجميع محلي سريع حسب الحجم
+    size_groups_local: dict[int, list[str]] = {}
     try:
         for f in base.rglob("*"):
             if not f.is_file() or f.suffix.lower() not in MEDIA_EXTS:
@@ -230,19 +234,24 @@ def find_duplicate_files(
                 sz = f.stat().st_size
                 if sz <= 0:
                     continue
-                content_hash = storage_backend.compute_content_uri_hash(str(f))
+                size_groups_local.setdefault(sz, []).append(str(f))
+            except OSError:
+                continue
+
+        # المرحلة 2: حساب الهاش الفعلي على دفعات للعينات المشتركة في الحجم فقط
+        candidates_local = {sz: paths for sz, paths in size_groups_local.items() if len(paths) > 1}
+        hash_map_local: dict[str, list[str]] = {}
+        for sz, paths in candidates_local.items():
+            for p_str in paths:
+                content_hash = storage_backend.compute_content_uri_hash(p_str)
                 if not content_hash:
                     continue
                 key = f"{sz}_{content_hash}"
-                if key not in hash_map:
-                    hash_map[key] = []
-                hash_map[key].append(str(f))
-            except OSError:
-                continue
+                hash_map_local.setdefault(key, []).append(p_str)
     except (OSError, PermissionError):
         pass
 
-    return [v for v in hash_map.values() if len(v) > 1]
+    return [v for v in hash_map_local.values() if len(v) > 1]
 
 
 def remove_duplicate_files(

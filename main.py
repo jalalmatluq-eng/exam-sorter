@@ -25,6 +25,7 @@ from kivy.utils import platform
 from kivymd.app import MDApp
 
 import file_manager
+import storage_backend
 from screens.capture_screen import CaptureScreen
 from screens.classifying_screen import ClassifyingScreen
 from screens.confirm_screen import ConfirmScreen
@@ -35,6 +36,7 @@ from screens.settings_screen import SettingsScreen
 from screens.subject_detail_screen import SubjectDetailScreen
 from service import media_watcher_service
 from utils.arabic_helper import ar, get_arabic_font_path
+from utils.ui_helper import show_app_dialog, show_confirm_dialog
 
 # مسار ملف التشخيص الدائم cosmosort_debug.log في التخزين الخاص للتطبيق (ANDROID_PRIVATE)
 DEBUG_LOG_FILE: Path | None = None
@@ -278,16 +280,8 @@ class CosmoSortApp(MDApp):
             # طلب الصلاحيات الأساسية بعد ظهور الواجهة
             Clock.schedule_once(lambda _dt: self.request_android_permissions(), 1.0)
 
-        # استرجاع أي عملية حذف معلقة لـ RecoverableSecurityException من التخزين الخاص بالتطبيق
-        try:
-            pending_rec = storage_backend.get_pending_recoverable_deletion()
-            if pending_rec:
-                logger.info(
-                    "توجد عملية حذف معلقة لـ RecoverableSecurityException محفوظة من جلسة سابقة (الملف: %s)",
-                    pending_rec.get("src_path"),
-                )
-        except Exception as e_p:
-            logger.debug("تنبيه فحص العملية المعلقة لـ RecoverableSecurityException: %s", e_p)
+        # استرجاع أي عملية حذف معلقة لـ RecoverableSecurityException وعرض حوار تفاعلي للمستخدم
+        Clock.schedule_once(lambda _dt: self.check_and_prompt_pending_recoverable_deletion(), 2.0)
 
         # 3. تشغيل خدمة المراقبة بالخلفية فقط إذا كانت مفعلة برغبة المستخدم بعد تأخير آمن
         if media_watcher_service.is_service_desired_running():
@@ -343,6 +337,51 @@ class CosmoSortApp(MDApp):
             logger.info("=== SYSTEM DIAGNOSTICS REPORT ===\n%s\n=================================", "\n".join(lines))
         except Exception as e:
             logger.debug("Failed writing diagnostics: %s", e)
+
+    def check_and_prompt_pending_recoverable_deletion(self) -> None:
+        """فحص وجود عملية حذف معلقة لـ RecoverableSecurityException وعرض حوار تفاعلي للمستخدم"""
+        try:
+            pending = storage_backend.get_pending_recoverable_deletion()
+            if not pending:
+                return
+
+            file_name = (
+                pending.get("file_name")
+                or Path(pending.get("src_path", "")).name
+                or "ملف وسائط"
+            )
+
+            def _on_retry() -> None:
+                logger.info("إعادة محاولة حذف الملف المعلق لـ RecoverableSecurityException: %s", file_name)
+                ok = storage_backend.retry_pending_recoverable_deletion()
+                if not ok:
+                    show_app_dialog(
+                        title="إعادة المحاولة",
+                        text="تعذر إتمام طلب الحذف، أو ربما تم حذف الملف مسبقاً من تطبيق آخر.",
+                    )
+
+            def _on_cancel_keep_copy() -> None:
+                logger.info("المستخدم اختار إلغاء الحذف والإبقاء كنسخة: %s", file_name)
+                storage_backend.clear_pending_recoverable_deletion()
+                show_app_dialog(
+                    title="تم الإلغاء",
+                    text=f"تم إبقاء الملف الأصلي وتم تسجيله كنسخة آمنة.",
+                )
+
+            show_confirm_dialog(
+                title="عملية نقل معلقة من جلسة سابقة",
+                text=(
+                    f"تم تنظيم ونسخ الملف:\n« {file_name} »\n\n"
+                    "لكن حذف الملف الأصلي من معرض الوسائط يتطلب موافقتك عبر إذن نظام أندرويد.\n\n"
+                    "هل تود إعادة محاولة حذفه الآن، أم إلغاء الحذف والإبقاء عليه كنسخة؟"
+                ),
+                on_confirm=_on_retry,
+                confirm_text="إعادة محاولة الحذف",
+                on_cancel=_on_cancel_keep_copy,
+                cancel_text="الإبقاء كنسخة (إلغاء)",
+            )
+        except Exception as e:
+            logger.debug("خطأ أثناء عرض حوار العملية المعلقة: %s", e)
 
     def on_activity_result(self, request_code: int, result_code: int, intent: Any) -> None:
         """معالجة نتيجة منتقي مجلدات بطاقة الذاكرة الخارجية عبر SAF (Request Code 4201)"""

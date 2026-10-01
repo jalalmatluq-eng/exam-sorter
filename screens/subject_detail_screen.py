@@ -343,8 +343,21 @@ class SubjectDetailScreen(Screen):
     def _execute_delete_subject(self):
         import storage_backend
         target_loc = storage_backend.get_active_target_location()
-        file_manager.delete_subject_folder(self.subject_name, target_location=target_loc)
-        self.go_back()
+        res = file_manager.delete_subject_folder(self.subject_name, target_location=target_loc)
+        if res.files_deleted and res.folder_deleted:
+            self.go_back()
+        elif res.files_deleted and not res.folder_deleted:
+            show_app_dialog(
+                title="تنبيه: حذف جزئي",
+                text=res.message or "تم حذف جميع أوراق المادة، ولكن تعذر حذف المجلد نفسه وبقي فارغاً في وحدة التخزين.",
+                on_confirm=self.go_back,
+            )
+        else:
+            show_app_dialog(
+                title="تعذر الحذف الكامل",
+                text=res.message or "فشل حذف بعض الملفات أو المجلد.",
+                on_confirm=self.go_back,
+            )
 
     def open_in_explorer(self):
         """فتح مجلد المادة في مستكشف النظام دون تحويل SAF URI لمسار لينكس"""

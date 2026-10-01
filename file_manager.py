@@ -18,6 +18,7 @@ import shutil
 import sqlite3
 import sys
 import time
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -495,12 +496,30 @@ def delete_image_file(image_path: str, target_location: Any | None = None) -> bo
         return False
 
 
+@dataclass
+class DeleteFolderResult:
+    """نتيجة تفصيلية لعملية حذف مجلد المادة تميز بين حذف الملفات وحذف المجلد نفسه"""
+    files_deleted: bool = False
+    folder_deleted: bool = False
+    deleted_files_count: int = 0
+    total_files_count: int = 0
+    message: str = ""
+
+    def __bool__(self) -> bool:
+        # لا يعتبر الحذف كاملاً وناجحاً إلا بحذف الملفات والمجلد معاً
+        return bool(self.files_deleted and self.folder_deleted)
+
+
 def delete_subject_folder(
     subject_name: str,
     base_path: Path | None = None,
     target_location: Any | None = None,
-) -> bool:
-    """حذف مجلد مادة بالكامل وجميع الصور بداخله بأمان عبر Path أو SAF وتحديث السجل"""
+) -> DeleteFolderResult:
+    """
+    حذف مجلد مادة بالكامل وجميع الصور بداخله بأمان عبر Path أو SAF وتحديث السجل:
+    - يميز بدقة بين نجاح حذف الملفات ونجاح حذف مجلد المادة.
+    - إذا بقيت الملفات أو بقي المجلد فارغاً دون حذف، يصدر تحذيراً صريحاً ورسالة توضيحية.
+    """
     import storage_backend
     if target_location is None:
         if base_path is not None:
@@ -520,15 +539,18 @@ def delete_subject_folder(
     if target_location and target_location.is_saf:
         tree_uri = target_location.tree_uri or target_location.saf_uri
         if not tree_uri or not storage_backend.is_saf_uri_valid(tree_uri):
-            logger.warning("تعذر حذف مجلد المادة: إذن SAF غير صالح أو البطاقة مفصولة")
-            return False
+            msg = "تعذر حذف مجلد المادة: إذن SAF غير صالح أو بطاقة SD مفصولة"
+            logger.warning(msg)
+            return DeleteFolderResult(files_deleted=False, folder_deleted=False, message=msg)
 
-        # أ) حذف جميع الملفات أولاً
+        # أ) حذف جميع الملفات الموجودة داخل المادة أولاً
         imgs = get_subject_images(clean_name, target_location=target_location)
         deleted_count = 0
         for img in imgs:
             if delete_image_file(img, target_location=target_location):
                 deleted_count += 1
+
+        files_deleted = (deleted_count == len(imgs))
 
         # ب) البحث عن مجلد المادة في شجرة SAF وحذفه كـ Document
         folder_uri = storage_backend.saf_find_directory(tree_uri, clean_name)
@@ -539,7 +561,34 @@ def delete_subject_folder(
         if folder_uri:
             folder_deleted = storage_backend.delete_media_item(folder_uri)
 
-        return folder_deleted or (deleted_count == len(imgs))
+        if files_deleted and folder_deleted:
+            return DeleteFolderResult(
+                files_deleted=True,
+                folder_deleted=True,
+                deleted_files_count=deleted_count,
+                total_files_count=len(imgs),
+                message="تم حذف جميع أوراق المادة ومجلدها بنجاح من بطاقة SD",
+            )
+        elif files_deleted and not folder_deleted:
+            warn_msg = f"تم حذف {deleted_count} ورقة بنجاح، لكن تعذر حذف مجلد المادة وبقي فارغاً في بطاقة SD."
+            logger.warning(warn_msg)
+            return DeleteFolderResult(
+                files_deleted=True,
+                folder_deleted=False,
+                deleted_files_count=deleted_count,
+                total_files_count=len(imgs),
+                message=warn_msg,
+            )
+        else:
+            fail_msg = f"فشل حذف بعض ملفات المادة (تم حذف {deleted_count} من {len(imgs)})."
+            logger.warning(fail_msg)
+            return DeleteFolderResult(
+                files_deleted=False,
+                folder_deleted=folder_deleted,
+                deleted_files_count=deleted_count,
+                total_files_count=len(imgs),
+                message=fail_msg,
+            )
 
     # 2. إذا كانت الوجهة مسار محلي فيزيائي
     base = target_location.path if (target_location and target_location.path) else (Path(base_path) if base_path else get_internal_media_sorter_base_path())
@@ -557,13 +606,27 @@ def delete_subject_folder(
         files_to_delete = [str(f) for f in target_dir.rglob("*") if f.is_file()]
         try:
             shutil.rmtree(target_dir)
+            if target_dir.exists():
+                warn_msg = "تم حذف محتويات المادة ولكن بقي المجلد فارغاً على القرص."
+                logger.warning(warn_msg)
+                return DeleteFolderResult(
+                    files_deleted=True, folder_deleted=False, deleted_files_count=len(files_to_delete), message=warn_msg
+                )
             if files_to_delete:
                 remove_transfer_history_records_by_dest(files_to_delete)
-            return True
+            return DeleteFolderResult(
+                files_deleted=True,
+                folder_deleted=True,
+                deleted_files_count=len(files_to_delete),
+                total_files_count=len(files_to_delete),
+                message="تم حذف مجلد المادة بالكامل",
+            )
         except OSError as e:
-            logger.warning("خطأ أثناء حذف مجلد المادة: %s", e)
-            return False
-    return False
+            err_msg = f"خطأ أثناء حذف مجلد المادة: {e}"
+            logger.warning(err_msg)
+            return DeleteFolderResult(files_deleted=False, folder_deleted=False, message=err_msg)
+
+    return DeleteFolderResult(files_deleted=True, folder_deleted=True, message="مجلد المادة غير موجود أصلاً")
 
 
 def clean_empty_subject_folders(base_path: Path | None = None) -> int:

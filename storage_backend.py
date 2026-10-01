@@ -866,21 +866,34 @@ def saf_find_or_create_directory(tree_uri: str, category_name: str) -> str:
 def saf_find_directory(tree_uri: str, category_name: str) -> str:
     """
     البحث عن مجلد داخل بطاقة الذاكرة الخارجية عبر SAF دون إنشائه.
-    يبحث عن المجلد تحت 'الملفات المنظمة' أولاً أو مباشرة.
+    يدعم المسارات بمختلف صيغها:
+    1. 'الملفات المنظمة/صور الاختبارات/اسم المادة'
+    2. 'صور الاختبارات/اسم المادة'
+    3. 'اسم المادة'
     العائد: Document URI للمجلد كـ string أو فارغ إذا لم يكن موجوداً.
     """
     if not tree_uri:
         return ""
 
+    clean_parts = [p.strip() for p in category_name.replace("\\", "/").split("/") if p.strip()]
+    if clean_parts and clean_parts[0] == ORGANIZED_FOLDER_NAME:
+        clean_parts = clean_parts[1:]
+
+    # إعداد مسارات البحث المحتملة: المسار المحدد، وتحت صور الاختبارات إن لم تكن مذكورة
+    possible_paths = [clean_parts]
+    if clean_parts and clean_parts[0] != CATEGORY_EXAMS_ROOT:
+        possible_paths.append([CATEGORY_EXAMS_ROOT] + clean_parts)
+
     if tree_uri.startswith("mock_saf://"):
         base_dir = Path(tree_uri.replace("mock_saf://", ""))
-        candidates = [
-            base_dir / ORGANIZED_FOLDER_NAME / category_name,
-            base_dir / category_name,
-        ]
-        for c in candidates:
-            if c.exists() and c.is_dir():
-                return f"mock_doc://{c}"
+        for p_parts in possible_paths:
+            sub = "/".join(p_parts)
+            cand1 = base_dir / ORGANIZED_FOLDER_NAME / sub
+            if cand1.exists() and cand1.is_dir():
+                return f"mock_doc://{cand1}"
+            cand2 = base_dir / sub
+            if cand2.exists() and cand2.is_dir():
+                return f"mock_doc://{cand2}"
         return ""
 
     if _get_platform() != "android":
@@ -899,36 +912,48 @@ def saf_find_directory(tree_uri: str, category_name: str) -> str:
             if not root_doc:
                 return ""
             target_org = root_doc.findFile(ORGANIZED_FOLDER_NAME)
-            sub_dir = target_org if target_org else root_doc
-            for part in category_name.replace("\\", "/").split("/"):
-                p_clean = part.strip()
-                if not p_clean:
-                    continue
-                next_d = sub_dir.findFile(p_clean)
-                if not next_d:
-                    return ""
-                sub_dir = next_d
-            return str(sub_dir.getUri().toString())
+            search_roots = [target_org] if target_org else [root_doc]
+            if target_org and target_org != root_doc:
+                search_roots.append(root_doc)
 
+            for s_root in search_roots:
+                for p_parts in possible_paths:
+                    curr_doc = s_root
+                    found = True
+                    for part in p_parts:
+                        next_doc = curr_doc.findFile(part)
+                        if not next_doc:
+                            found = False
+                            break
+                        curr_doc = next_doc
+                    if found and curr_doc:
+                        return str(curr_doc.getUri().toString())
+            return ""
+
+        # DocumentsContract Fallback
         DocumentsContract = autoclass("android.provider.DocumentsContract")
         tree_doc_id = DocumentsContract.getTreeDocumentId(parsed_tree)
         root_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, tree_doc_id)
 
-        curr_uri = root_doc_uri
         org_child = _contract_find_child_only(cr, parsed_tree, root_doc_uri, ORGANIZED_FOLDER_NAME)
-        if org_child:
-            curr_uri = org_child
+        search_root_uris = [org_child] if org_child else [root_doc_uri]
+        if org_child and org_child != root_doc_uri:
+            search_root_uris.append(root_doc_uri)
 
-        for part in category_name.replace("\\", "/").split("/"):
-            p_clean = part.strip()
-            if not p_clean:
-                continue
-            child_uri = _contract_find_child_only(cr, parsed_tree, curr_uri, p_clean)
-            if not child_uri:
-                return ""
-            curr_uri = child_uri
+        for s_root_uri in search_root_uris:
+            for p_parts in possible_paths:
+                curr_uri = s_root_uri
+                found = True
+                for part in p_parts:
+                    child_uri = _contract_find_child_only(cr, parsed_tree, curr_uri, part)
+                    if not child_uri:
+                        found = False
+                        break
+                    curr_uri = child_uri
+                if found and curr_uri:
+                    return str(curr_uri.toString())
 
-        return str(curr_uri.toString())
+        return ""
     except Exception as e:
         logger.debug("خطأ أثناء البحث عن مجلد SAF: %s", e)
         return ""
@@ -1946,6 +1971,18 @@ def clear_pending_recoverable_deletion() -> None:
         logger.debug("تعذر مسح ملف pending recoverable deletion: %s", e)
 
 
+def retry_pending_recoverable_deletion() -> bool:
+    """إعادة إطلاق طلب حذف الملف المعلق عبر نظام أندرويد مع إظهار نافذة إذن النظام إذا لزم"""
+    pending = get_pending_recoverable_deletion()
+    if not pending:
+        return False
+    item_uri = pending.get("item_uri", "")
+    if not item_uri:
+        return False
+    logger.info("إعادة محاولة حذف الملف المعلق لـ RecoverableSecurityException: %s", item_uri)
+    return delete_media_item(item_uri)
+
+
 def handle_recoverable_deletion_result(result_ok: bool) -> bool:
     """
     معالجة نتيجة استجابة المستخدم لـ RecoverableSecurityException (Request Code 4202):
@@ -2095,38 +2132,57 @@ def get_displayable_image_path(uri_or_path: str) -> str:
 
 
 def open_media_file_native(uri_or_path: str) -> bool:
-    """تشغيل أو فتح ملف الوسائط في التطبيق الرسمي للنظام بأمان سواء كان مساراً أو Content URI"""
+    """تشغيل أو فتح ملف الوسائط (فيديو أو صورة) في التطبيق الرسمي للنظام بأمان سواء كان مساراً أو Content URI"""
     if not uri_or_path:
         return False
-    if uri_or_path.startswith("mock_doc://"):
-        p = uri_or_path.replace("mock_doc://", "")
-        import file_manager
-        return file_manager.open_folder_native(p)
-    if not uri_or_path.startswith("content://"):
-        import file_manager
-        return file_manager.open_folder_native(uri_or_path)
 
-    # Content URI على أندرويد
-    if _get_platform() == "android":
-        try:
-            from android import mActivity
-            from jnius import autoclass
-            Intent = autoclass("android.content.Intent")
-            Uri = autoclass("android.net.Uri")
-            parsed_uri = Uri.parse(uri_or_path)
-            details = query_content_uri_details(uri_or_path)
-            mime = details.get("mime_type") or ("video/mp4" if details.get("is_video") else "image/jpeg")
+    # 1. إذا كان Content URI على أندرويد
+    if str(uri_or_path).startswith("content://"):
+        if _get_platform() == "android":
+            try:
+                from android import mActivity
+                from jnius import autoclass
+                Intent = autoclass("android.content.Intent")
+                Uri = autoclass("android.net.Uri")
+                parsed_uri = Uri.parse(str(uri_or_path))
+                details = query_content_uri_details(str(uri_or_path))
+                display_name = details.get("display_name", "") or Path(str(uri_or_path)).name
+                raw_mime = details.get("mime_type", "")
+                mime = resolve_media_mime_type(display_name, raw_mime)
 
-            intent = Intent(Intent.ACTION_VIEW)
-            intent.setDataAndType(parsed_uri, mime)
-            intent.addFlags(
-                Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_ACTIVITY_NEW_TASK
-            )
-            mActivity.startActivity(intent)
+                intent = Intent(Intent.ACTION_VIEW)
+                intent.setDataAndType(parsed_uri, mime)
+                intent.addFlags(
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    | Intent.FLAG_ACTIVITY_NEW_TASK
+                )
+                mActivity.startActivity(intent)
+                return True
+            except Exception as e:
+                logger.debug("فشل فتح Content URI في مشغل النظام: %s", e)
+                return False
+        return True
+
+    # 2. إذا كان mock_doc:// أو مسار محلي
+    clean_p = str(uri_or_path).replace("mock_doc://", "")
+    p = Path(clean_p)
+    if not p.exists():
+        return False
+
+    try:
+        import subprocess
+        import sys
+        if sys.platform.startswith("win"):
+            os.startfile(str(p))
             return True
-        except Exception as e:
-            logger.debug("فشل فتح Content URI في مشغل النظام: %s", e)
-    return False
+        elif sys.platform.startswith("darwin"):
+            subprocess.run(["open", str(p)], check=False)
+            return True
+        else:
+            subprocess.run(["xdg-open", str(p)], check=False)
+            return True
+    except Exception as e:
+        logger.debug("تعذر تشغيل الملف في مشغل النظام: %s", e)
+        return False
 
 

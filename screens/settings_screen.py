@@ -37,6 +37,7 @@ class SettingsScreen(Screen):
         self.is_scanning: bool = False
         self.is_continuous_scanning: bool = False
         self._stop_continuous_scan: bool = False
+        self._is_deduping: bool = False
 
     def on_enter(self, *args: object) -> None:
         self.apply_arabic_texts()
@@ -852,65 +853,104 @@ class SettingsScreen(Screen):
         )
 
     def find_duplicates_action(self) -> None:
-        """كشف الملفات المكررة داخل مجلدات التخزين مع خيار الحذف الآمن المباشر"""
-        try:
-            import storage_backend
-            import storage_utils
+        """كشف الملفات المكررة وحساب بصمة SHA-256 داخل Worker Thread لمنع تجميد واجهة Kivy"""
+        if getattr(self, "_is_deduping", False):
+            return
+        self._is_deduping = True
 
-            target_loc = storage_backend.get_active_target_location()
-            dupes = storage_utils.find_duplicate_files(target_location=target_loc)
-            if not dupes:
-                _ = show_app_dialog(
-                    title="لا توجد مكررات ✓",
-                    text=(
-                        "ممتاز! لم يتم اكتشاف أي"
-                        " ملفات مكررة في مجلداتك المنظمة."
-                    ),
-                )
-                return
+        btn_text_orig = "تنظيف المكرر"
+        if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
+            self.ids.text_find_duplicates.text = ar("جارٍ الفحص...")
 
-            total_dupes = sum(len(g) - 1 for g in dupes)
-            total_bytes = 0
-            for g in dupes:
-                for f in g[1:]:
-                    if str(f).startswith("content://") or str(f).startswith("mock_doc://"):
-                        total_bytes += storage_backend.get_uri_file_size(str(f))
-                    else:
-                        try:
-                            total_bytes += Path(f).stat().st_size
-                        except OSError:
-                            pass
-            size_mb = round(total_bytes / 1048576, 2)
+        def _worker() -> None:
+            try:
+                import storage_backend
+                import storage_utils
 
-            def _do_remove_dupes() -> None:
-                del_count, freed = storage_utils.remove_duplicate_files(dupes, target_location=target_loc)
-                freed_mb = round(freed / 1048576, 2)
-                _ = show_app_dialog(
-                    title="تم التنظيف بنجاح ✓",
-                    text=(
-                        f"تم حذف {del_count} ملف مكرر بأمان،"
-                        f" وتم تحرير {freed_mb} MB من مساحة التخزين.\n"
-                        "ملفاتك الأصلية الأولى بقيت بأمان تام دون أي مساس."
-                    ),
-                )
+                target_loc = storage_backend.get_active_target_location()
+                dupes = storage_utils.find_duplicate_files(target_location=target_loc)
 
-            sample_text = "\n".join(
-                f"• {storage_backend.query_content_uri_details(str(g[0])).get('display_name') or Path(g[0]).name}"
-                for g in dupes[:3]
-            )
-            _ = show_confirm_dialog(
-                title="كشف ملفات مكررة",
-                text=(
-                    f"تم العثور على {total_dupes} ملف مكرر تستهلك قرابة {size_mb} MB.\n\n"
-                    f"أمثلة:\n{sample_text}\n\n"
-                    "هل ترغب بحذف النسخ المكررة مع إبقاء النسخة الأصلية لكل ملف؟"
-                ),
-                on_confirm=_do_remove_dupes,
-                confirm_text="حذف المكرر وتحرير المساحة",
-                cancel_text="إلغاء",
-            )
-        except (OSError, RuntimeError, ValueError) as e:
-            _ = show_app_dialog(title="خطأ", text=f"تعذر فحص المكررات: {e}")
+                def _on_finish(_dt: float) -> None:
+                    self._is_deduping = False
+                    if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
+                        self.ids.text_find_duplicates.text = ar(btn_text_orig)
+
+                    if not dupes:
+                        _ = show_app_dialog(
+                            title="لا توجد مكررات ✓",
+                            text=(
+                                "ممتاز! لم يتم اكتشاف أي"
+                                " ملفات مكررة في مجلداتك المنظمة."
+                            ),
+                        )
+                        return
+
+                    total_dupes = sum(len(g) - 1 for g in dupes)
+                    total_bytes = 0
+                    for g in dupes:
+                        for f in g[1:]:
+                            if str(f).startswith("content://") or str(f).startswith("mock_doc://"):
+                                total_bytes += storage_backend.get_uri_file_size(str(f))
+                            else:
+                                try:
+                                    total_bytes += Path(f).stat().st_size
+                                except OSError:
+                                    pass
+                    size_mb = round(total_bytes / 1048576, 2)
+
+                    def _do_remove_dupes() -> None:
+                        if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
+                            self.ids.text_find_duplicates.text = ar("جارٍ الحذف...")
+
+                        def _remove_worker() -> None:
+                            del_count, freed = storage_utils.remove_duplicate_files(dupes, target_location=target_loc)
+                            freed_mb = round(freed / 1048576, 2)
+
+                            def _on_removed(_dt2: float) -> None:
+                                if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
+                                    self.ids.text_find_duplicates.text = ar(btn_text_orig)
+                                self.refresh_history()
+                                _ = show_app_dialog(
+                                    title="تم التنظيف بنجاح ✓",
+                                    text=(
+                                        f"تم حذف {del_count} ملف مكرر بأمان،"
+                                        f" وتم تحرير {freed_mb} MB من مساحة التخزين.\n"
+                                        "ملفاتك الأصلية الأولى بقيت بأمان تام دون أي مساس."
+                                    ),
+                                )
+
+                            Clock.schedule_once(_on_removed, 0)
+
+                        threading.Thread(target=_remove_worker, daemon=True).start()
+
+                    sample_text = "\n".join(
+                        f"• {storage_backend.query_content_uri_details(str(g[0])).get('display_name') or Path(g[0]).name}"
+                        for g in dupes[:3]
+                    )
+                    _ = show_confirm_dialog(
+                        title="كشف ملفات مكررة",
+                        text=(
+                            f"تم العثور على {total_dupes} ملف مكرر تستهلك قرابة {size_mb} MB.\n\n"
+                            f"أمثلة:\n{sample_text}\n\n"
+                            "هل ترغب بحذف النسخ المكررة مع إبقاء النسخة الأصلية لكل ملف؟"
+                        ),
+                        on_confirm=_do_remove_dupes,
+                        confirm_text="حذف المكرر وتحرير المساحة",
+                        cancel_text="إلغاء",
+                    )
+
+                Clock.schedule_once(_on_finish, 0)
+
+            except Exception as e:
+                def _on_err(_dt: float) -> None:
+                    self._is_deduping = False
+                    if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
+                        self.ids.text_find_duplicates.text = ar(btn_text_orig)
+                    _ = show_app_dialog(title="خطأ", text=f"تعذر فحص المكررات: {e}")
+
+                Clock.schedule_once(_on_err, 0)
+
+        threading.Thread(target=_worker, daemon=True).start()
 
     def replay_intro(self) -> None:
         """إعادة تشغيل شاشة البداية الكونية والاستمتاع بالمؤثرات"""

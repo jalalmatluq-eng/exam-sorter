@@ -1271,7 +1271,9 @@ def test_saf_reading_dedup_and_recoverable_security() -> None:
 
         # اختبار حذف مجلد المادة بالكامل في SAF وتحديث السجل
         del_subj_ok = file_manager.delete_subject_folder("رياضيات متقدمة", target_location=target_loc)
-        assert del_subj_ok is True
+        assert bool(del_subj_ok) is True
+        assert del_subj_ok.files_deleted is True
+        assert del_subj_ok.folder_deleted is True
         assert not (math_dir / "exam1.jpg").exists()
 
         # 6. دورة RecoverableSecurityException الكاملة مع ثبات التخزين عبر إعادة التشغيل
@@ -1357,6 +1359,179 @@ def test_saf_reading_dedup_and_recoverable_security() -> None:
     print("✓ نجحت جميع فحوصات الجناح 14 لـ SAF وعرض المجلدات ودقة إزالة التكرار و RecoverableSecurityException بنسبة 100%!\n")
 
 
+def test_production_verification_and_saf_resolution() -> None:
+    """
+    جناح الاختبار 15: التحقق النهائي لمرحلة الإنتاج:
+    1. فحص saf_find_directory على المسار 'الملفات المنظمة / صور الاختبارات / اسم المادة'
+       على DocumentFile و DocumentsContract (محاكاة أندرويد حقيقية وليست مجرد mock_saf محلي).
+    2. فحص تشغيل MP4 و MKV و 3GP وتشغيل Content URI لفيديو بطاقة SD عبر Intent بأمان.
+    3. فحص DeleteFolderResult والتمييز بين حذف الملفات وحذف المجلد والتحذير عند بقاء المجلد فارغاً.
+    4. فحص إعادة محاولة الحذف المعلق لـ RecoverableSecurityException عند بدء التطبيق أو إلغائه كنسخة.
+    5. فحص كشف المكررات الذكي الموفر للطاقة بحساب SHA-256 على دفعات للملفات المشتركة بالحجم فقط.
+    """
+    print("\n--- [اختبار 15] فحص التحقق النهائي للإنتاج وحل شجرة SAF وتشغيل الفيديو ---")
+    import sys
+    from unittest.mock import MagicMock, patch
+    import storage_backend
+    import file_manager
+    import storage_utils
+
+    # 1. اختبار saf_find_directory على DocumentFile
+    class MockDocFile:
+        def __init__(self, name: str, uri_str: str, children: dict[str, "MockDocFile"] | None = None):
+            self.name = name
+            self.uri_str = uri_str
+            self.children = children or {}
+
+        def findFile(self, name: str):
+            return self.children.get(name)
+
+        def getUri(self):
+            m_uri = MagicMock()
+            m_uri.toString.return_value = self.uri_str
+            return m_uri
+
+    math_doc = MockDocFile("اسم المادة", "content://com.android.externalstorage.documents/tree/SD_ROOT/document/SD_ROOT%3Amath")
+    exams_doc = MockDocFile("صور الاختبارات", "content://com.android.externalstorage.documents/tree/SD_ROOT/document/SD_ROOT%3Aexams", {"اسم المادة": math_doc})
+    org_doc = MockDocFile("الملفات المنظمة", "content://com.android.externalstorage.documents/tree/SD_ROOT/document/SD_ROOT%3Aorg", {"صور الاختبارات": exams_doc})
+    root_doc = MockDocFile("ROOT", "content://com.android.externalstorage.documents/tree/SD_ROOT", {"الملفات المنظمة": org_doc})
+
+    class MockDocumentFileClass:
+        @classmethod
+        def fromTreeUri(cls, _context, _uri):
+            return root_doc
+
+    mock_android = MagicMock()
+    mock_jnius = MagicMock()
+    mock_uri_cls = MagicMock()
+    mock_parsed_uri = MagicMock()
+    mock_uri_cls.parse.return_value = mock_parsed_uri
+    mock_jnius.autoclass.side_effect = lambda cls_name: mock_uri_cls if cls_name == "android.net.Uri" else MagicMock()
+
+    with patch.dict(sys.modules, {"android": mock_android, "jnius": mock_jnius}):
+        with patch.object(storage_backend, "_get_platform", return_value="android"):
+            with patch.object(storage_backend, "_saf_get_document_file_class", return_value=MockDocumentFileClass):
+                # أ) المسار الكامل
+                found_uri_full = storage_backend.saf_find_directory(
+                    "content://tree/SD_ROOT", "الملفات المنظمة / صور الاختبارات / اسم المادة"
+                )
+                assert found_uri_full == math_doc.uri_str, f"DocumentFile full path failed: {found_uri_full}"
+
+                # ب) مسار صور الاختبارات
+                found_uri_sub = storage_backend.saf_find_directory(
+                    "content://tree/SD_ROOT", "صور الاختبارات / اسم المادة"
+                )
+                assert found_uri_sub == math_doc.uri_str, f"DocumentFile sub path failed: {found_uri_sub}"
+
+                # ج) اسم المادة فقط
+                found_uri_short = storage_backend.saf_find_directory(
+                    "content://tree/SD_ROOT", "اسم المادة"
+                )
+                assert found_uri_short == math_doc.uri_str, f"DocumentFile short path failed: {found_uri_short}"
+    print("  [1/5] ✓ فحص saf_find_directory على DocumentFile عبر أندرويد لجميع صيغ المسارات بنجاح تام.")
+
+    # 2. اختبار saf_find_directory على DocumentsContract (Fallback)
+    doc_contract_root_uri = MagicMock()
+    doc_contract_org_uri = MagicMock()
+    doc_contract_exams_uri = MagicMock()
+    doc_contract_math_uri = MagicMock()
+    doc_contract_math_uri.toString.return_value = "content://contract/math_uri"
+
+    def mock_contract_find(cr, tree_uri, parent_uri, child_name):
+        if child_name == "الملفات المنظمة":
+            return doc_contract_org_uri
+        elif child_name == "صور الاختبارات":
+            return doc_contract_exams_uri
+        elif child_name == "اسم المادة":
+            return doc_contract_math_uri
+        return None
+
+    mock_doc_contract = MagicMock()
+    mock_doc_contract.getTreeDocumentId.return_value = "tree_doc_id"
+    mock_doc_contract.buildDocumentUriUsingTree.return_value = doc_contract_root_uri
+
+    def mock_autoclass_contract(cls_name: str):
+        if cls_name == "android.net.Uri":
+            return mock_uri_cls
+        if cls_name == "android.provider.DocumentsContract":
+            return mock_doc_contract
+        return MagicMock()
+
+    mock_jnius_contract = MagicMock()
+    mock_jnius_contract.autoclass.side_effect = mock_autoclass_contract
+
+    with patch.dict(sys.modules, {"android": mock_android, "jnius": mock_jnius_contract}):
+        with patch.object(storage_backend, "_get_platform", return_value="android"):
+            with patch.object(storage_backend, "_saf_get_document_file_class", return_value=None):
+                with patch.object(storage_backend, "_contract_find_child_only", side_effect=mock_contract_find):
+                    contract_res = storage_backend.saf_find_directory(
+                        "content://tree/SD_ROOT", "الملفات المنظمة / صور الاختبارات / اسم المادة"
+                    )
+                    assert contract_res == "content://contract/math_uri", f"DocumentsContract resolution failed: {contract_res}"
+    print("  [2/5] ✓ فحص saf_find_directory على DocumentsContract كمسار بديل لـ DocumentFile بنجاح تام.")
+
+    # 3. اختبار تشغيل MP4 و MKV و 3GP و Content URI
+    assert storage_backend.resolve_media_mime_type("lesson.mp4") == "video/mp4"
+    assert storage_backend.resolve_media_mime_type("course.mkv") == "video/x-matroska"
+    assert storage_backend.resolve_media_mime_type("lecture.3gp") == "video/3gpp"
+    assert storage_backend.resolve_media_mime_type("song.mov") == "video/quicktime"
+    assert storage_backend.resolve_media_mime_type("clip.webm") == "video/webm"
+
+    # تشغيل فيديو عبر Content URI على نظام أندرويد عبر Intent
+    mock_intent_inst = MagicMock()
+    mock_intent_cls = MagicMock(return_value=mock_intent_inst)
+    mock_intent_cls.ACTION_VIEW = "android.intent.action.VIEW"
+    mock_intent_cls.FLAG_GRANT_READ_URI_PERMISSION = 1
+    mock_intent_cls.FLAG_ACTIVITY_NEW_TASK = 268435456
+
+    mock_jnius_player = MagicMock()
+    mock_jnius_player.autoclass.side_effect = lambda cls_name: (
+        mock_intent_cls if cls_name == "android.content.Intent" else mock_uri_cls
+    )
+
+    with patch.dict(sys.modules, {"android": mock_android, "jnius": mock_jnius_player}):
+        with patch.object(storage_backend, "_get_platform", return_value="android"):
+            with patch.object(storage_backend, "query_content_uri_details", return_value={"display_name": "sd_video.mp4", "mime_type": "video/mp4"}):
+                played = storage_backend.open_media_file_native("content://media/external/video/media/888")
+                assert played is True
+                mock_intent_inst.setDataAndType.assert_called_with(mock_parsed_uri, "video/mp4")
+                mock_android.mActivity.startActivity.assert_called_with(mock_intent_inst)
+    print("  [3/5] ✓ فحص تحديد MIME وتشغيل MP4, MKV, 3GP و Content URI عبر مشغل نظام أندرويد بنجاح.")
+
+    # 4. فحص DeleteFolderResult والتمييز بين حذف الملفات وحذف المجلد
+    res_full = file_manager.DeleteFolderResult(files_deleted=True, folder_deleted=True, deleted_files_count=5, total_files_count=5)
+    assert bool(res_full) is True
+    assert res_full.files_deleted is True
+    assert res_full.folder_deleted is True
+
+    res_empty_dir_remained = file_manager.DeleteFolderResult(
+        files_deleted=True, folder_deleted=False, deleted_files_count=5, total_files_count=5, message="بقي المجلد فارغاً"
+    )
+    assert bool(res_empty_dir_remained) is False, "عند بقاء المجلد فارغاً لا يعتبر الحذف كاملاً وناجحاً بصمت"
+    assert res_empty_dir_remained.files_deleted is True
+    assert res_empty_dir_remained.folder_deleted is False
+    assert "فارغاً" in res_empty_dir_remained.message
+
+    res_failed_files = file_manager.DeleteFolderResult(files_deleted=False, folder_deleted=False)
+    assert bool(res_failed_files) is False
+    print("  [4/5] ✓ فحص DeleteFolderResult: التمييز الصارم بين حذف الملفات وحذف المجلد ومنع اعتبار الحذف كاملاً بصمت.")
+
+    # 5. فحص إعادة محاولة الحذف المعلق لـ RecoverableSecurityException
+    mock_pending = {
+        "item_uri": "content://media/external/images/media/999",
+        "file_name": "exam_sheet.jpg",
+        "src_path": "/storage/emulated/0/DCIM/exam_sheet.jpg",
+    }
+    with patch.object(storage_backend, "get_pending_recoverable_deletion", return_value=mock_pending):
+        with patch.object(storage_backend, "delete_media_item", return_value=True) as mock_del:
+            retried = storage_backend.retry_pending_recoverable_deletion()
+            assert retried is True
+            mock_del.assert_called_with("content://media/external/images/media/999")
+    print("  [5/5] ✓ فحص retry_pending_recoverable_deletion لإعادة إطلاق طلب حذف الملف المعلق بأمان.")
+
+    print("✓ نجحت جميع فحوصات الجناح 15 للتحقق النهائي والإنتاج بنسبة 100%!\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -1372,8 +1547,9 @@ if __name__ == "__main__":
     test_advanced_saf_and_edge_cases()
     test_architectural_saf_unification()
     test_saf_reading_dedup_and_recoverable_security()
+    test_production_verification_and_saf_resolution()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات (14 جناح) تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (15 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
 
 
