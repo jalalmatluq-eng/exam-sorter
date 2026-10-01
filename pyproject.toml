@@ -27,4 +27,5 @@ ignore = [
     "SIM102", # nested if statements
     "DTZ005", # datetime.now without tz
     "B007",   # Loop control variable not used
+    "RUF100", # Unused noqa directive
 ]
