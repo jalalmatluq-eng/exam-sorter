@@ -393,12 +393,27 @@ class SettingsScreen(Screen):
             )
 
     def refresh_permission_ui(self) -> None:
-        """فحص وتحديث شارة صلاحية الوصول لكافة الملفات"""
-        granted = file_manager.is_all_files_access_granted()
-        if granted:
+        """فحص وتحديث تشخيص كافة الصلاحيات (الصور، الفيديو، جميع الملفات، وإذن SAF) بدقة"""
+        import android_permissions
+        diag = android_permissions.get_permissions_diagnostic_summary()
+
+        img_ok = diag.get("images_permission", False)
+        vid_ok = diag.get("videos_permission", False)
+        all_ok = diag.get("all_files_permission", False)
+        saf_ok = diag.get("saf_sdcard_permission", False)
+
+        all_granted = img_ok and vid_ok and all_ok
+        status_lines = [
+            f"• صلاحية الصور: {'ممنوحة ✓' if img_ok else 'مرفوضة ✗'}",
+            f"• صلاحية الفيديو: {'ممنوحة ✓' if vid_ok else 'مرفوضة ✗'}",
+            f"• وصول كافة الملفات: {'ممنوح ✓' if all_ok else 'مقيد ⚠️'}",
+            f"• إذن SAF لبطاقة SD: {'صالح ومفعل ✓' if saf_ok else 'غير مفعل / منتهي'}",
+        ]
+
+        if all_granted:
             if "perm_desc_label" in self.ids:
                 self.ids.perm_desc_label.text = ar(
-                    "الحالة: الصلاحية ممنوحة بالكامل وتغطي كافة المجلدات ✓"
+                    "الحالة: الصلاحيات مكتملة وتغطي الوسائط وكافة المجلدات ✓\n" + "\n".join(status_lines)
                 )
                 self.ids.perm_desc_label.text_color = (0.063, 0.780, 0.549, 1)
             if "perm_icon" in self.ids:
@@ -406,13 +421,12 @@ class SettingsScreen(Screen):
                 self.ids.perm_icon.icon_color = (0.063, 0.780, 0.549, 1)
             if "btn_permission_text" in self.ids:
                 self.ids.btn_permission_text.text = ar(
-                    "الصلاحية مفعلة (انقر لإدارة الإذن)"
+                    "الصلاحيات مفعلة (انقر لإدارة الإذن)"
                 )
         else:
             if "perm_desc_label" in self.ids:
                 self.ids.perm_desc_label.text = ar(
-                    "الحالة: الصلاحية مقيدة ⚠️"
-                    " (مطلوبة لدخول WhatsApp و Bluetooth)"
+                    "الحالة: بعض الصلاحيات ناقصة أو مقيدة ⚠️\n" + "\n".join(status_lines)
                 )
                 self.ids.perm_desc_label.text_color = (0.980, 0.647, 0.102, 1)
             if "perm_icon" in self.ids:
@@ -420,11 +434,20 @@ class SettingsScreen(Screen):
                 self.ids.perm_icon.icon_color = (0.980, 0.647, 0.102, 1)
             if "btn_permission_text" in self.ids:
                 self.ids.btn_permission_text.text = ar(
-                    "منح صلاحية الوصول لكافة الملفات الآن"
+                    "منح الصلاحيات الناقصة الآن"
                 )
 
     def request_all_files_permission(self) -> None:
-        """فتح صفحة النظام لمنح صلاحية MANAGE_ALL_FILES_ACCESS_PERMISSION"""
+        """طلب الصلاحيات الناقصة (صور/فيديو أو الوصول الشامل لكافة الملفات)"""
+        import android_permissions
+        diag = android_permissions.get_permissions_diagnostic_summary()
+
+        if not diag.get("images_permission") or not diag.get("videos_permission"):
+            def _after_media(_p, _r):
+                Clock.schedule_once(lambda _dt: self.refresh_permission_ui(), 0.5)
+            android_permissions.request_media_permissions(_after_media)
+            return
+
         opened = file_manager.open_all_files_permission_settings()
         if opened:
             show_app_dialog(
@@ -443,7 +466,7 @@ class SettingsScreen(Screen):
                     " أو يتم إدارتها تلقائياً."
                 ),
             )
-        Clock.schedule_once(lambda _dt: self.refresh_permission_ui(), 2.0)
+        Clock.schedule_once(lambda _dt: self.refresh_permission_ui(), 1.0)
 
     def refresh_operation_mode_ui(self) -> None:
         """تحديث حالة أزرار نمط الفرز (نسخ أم نقل)"""

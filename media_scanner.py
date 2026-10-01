@@ -28,7 +28,11 @@ try:
     import cv2
 except Exception:
     cv2 = None  # type: ignore
-import numpy as np
+
+try:
+    import numpy as np
+except Exception:
+    np = None  # type: ignore
 
 import classifier
 import face_classifier
@@ -380,6 +384,12 @@ def _scan_android_mediastore(
                 ]
 
         cr = mActivity.getContentResolver()
+        # تحديد الأعمدة المطلوبة صراحة لتسريع الاستعلام ومنع أخطاء الأعمدة غير المعروفة
+        proj_list = ["_id", "_display_name", "mime_type", "_size", "date_modified", "_data"]
+        if sdk_int >= 29:
+            proj_list.extend(["relative_path", "volume_name"])
+        projection_arr = [str(col) for col in proj_list]
+
         for target_info in targets:
             base_table_uri = target_info[0]
             _media_kind = target_info[1]
@@ -387,8 +397,12 @@ def _scan_android_mediastore(
 
             cursor = None
             try:
-                # استعلام بأعمدة آمنة لا ترمي استثناء getColumnIndexOrThrow
-                cursor = cr.query(base_table_uri, None, None, None, None)
+                try:
+                    cursor = cr.query(base_table_uri, projection_arr, None, None, None)
+                except Exception:
+                    # في حال تعذر بعض الأعمدة، الاستعلام الاحتياطي
+                    cursor = cr.query(base_table_uri, None, None, None, None)
+
                 if cursor is None:
                     continue
 
@@ -429,8 +443,13 @@ def _scan_android_mediastore(
                     if not is_img and not is_vid:
                         continue
 
+                    # استبعاد المجلدات المحمية ومجلدات النظام والتطبيقات والملفات المنظمة
                     full_check_str = f"{rel_path or ''}/{data_path or ''}/{display_name}".lower()
-                    if "الملفات المنظمة" in full_check_str or "mediasorter" in full_check_str:
+                    excluded_markers = [
+                        "android/data", "android/obb", ".thumbnails", ".trashed",
+                        "lost.dir", "الملفات المنظمة", "mediasorter", "examsorter",
+                    ]
+                    if any(m in full_check_str for m in excluded_markers):
                         continue
 
                     # تصنيف التخزين بدقة عبر VOLUME_NAME والمسار (internal أو sdcard)
@@ -450,7 +469,7 @@ def _scan_android_mediastore(
                     if source_storage == "sdcard" and not is_sdcard:
                         continue
 
-                    cache_key = data_path if (data_path and os.path.exists(data_path)) else item_uri_str
+                    cache_key = data_path if (data_path and storage_backend.is_path_readable(data_path)) else item_uri_str
                     if not force_rescan and cache_key in scanned_map:
                         info = scanned_map[cache_key]
                         dest_str = str(info.get("dest_path", ""))
@@ -462,10 +481,20 @@ def _scan_android_mediastore(
                             except OSError:
                                 pass
 
+                    # التحقق الاستباقي الخفيف من قابلية قراءة الملف
+                    is_directly_readable = bool(data_path and storage_backend.is_path_readable(data_path))
+                    if not is_directly_readable:
+                        # لا نتخطى الملف هنا — نتركه في القائمة لمعالجته فعلياً عبر ContentResolver
+                        # الفشل الحقيقي سيُسجَّل لاحقاً في process_one_file بتفصيل كامل
+                        logger.debug(
+                            "الملف غير مقروء مباشرة، سيُعالج عبر Content URI: %s",
+                            item_uri_str[:80],
+                        )
+
                     item = storage_backend.MediaItem(
                         id=item_uri_str,
-                        source_type="content_uri" if not (data_path and os.path.exists(data_path)) else "path",
-                        path=data_path if (data_path and os.path.exists(data_path)) else "",
+                        source_type="path" if is_directly_readable else "content_uri",
+                        path=data_path if is_directly_readable else "",
                         uri=item_uri_str,
                         display_name=display_name,
                         mime_type=mime_val or ("image/jpeg" if is_img else "video/mp4"),
@@ -962,7 +991,12 @@ def process_one_file(
         )
     except Exception as e:
         logger.error("استثناء غير متوقع أثناء معالجة الملف %s: %s", item_id, e, exc_info=True)
-        fail_reason = storage_backend.classify_failure_reason(e)
+        active_target = None
+        try:
+            active_target = storage_backend.get_active_target_location()
+        except Exception:
+            pass
+        fail_reason = storage_backend.classify_failure_reason(e, target_location=active_target)
         return {
             "success": False,
             "source": item_id,
@@ -986,20 +1020,26 @@ def _process_one_file_internal(
 
     if isinstance(file_item, storage_backend.MediaItem):
         source_key = file_item.uri or file_item.path or file_item.id
-        if file_item.path and Path(file_item.path).exists():
+        if file_item.path and storage_backend.is_path_readable(file_item.path):
             p = Path(file_item.path).resolve()
         else:
             # نسخ Content URI إلى temp خاص بالتطبيق بطريقة streaming
             is_uri_source = True
             temp_dir = file_manager.get_temp_dir()
-            temp_stream_file = temp_dir / f"stream_{int(time.time() * 1000)}_{file_item.name}"
-            copied = storage_backend.copy_uri_to_path(file_item.uri, temp_stream_file)
-            if not copied or not temp_stream_file.exists():
+            safe_name = file_item.name or f"media_{int(time.time() * 1000)}.jpg"
+            temp_stream_file = temp_dir / f"stream_{int(time.time() * 1000)}_{safe_name}"
+            read_res = storage_backend.copy_uri_to_path_detailed(file_item.uri, temp_stream_file)
+            if not read_res.success or not temp_stream_file.exists():
+                fail_reason = storage_backend.classify_failure_reason(
+                    read_res.error_message or "فشل قراءة الملف من مزود وسائط الجهاز",
+                    stage="source_read",
+                    source_uri=file_item.uri,
+                )
                 return {
                     "success": False,
                     "source": source_key,
-                    "error": "تعذر قراءة دفق Content URI أو اكتماله",
-                    "failure_reason": "فشل القراءة",
+                    "error": read_res.error_message or "تعذر قراءة دفق Content URI أو اكتماله",
+                    "failure_reason": fail_reason,
                 }
             p = temp_stream_file
     elif isinstance(file_item, Path):
@@ -1110,19 +1150,42 @@ def _process_one_file_internal(
         # =====================================================================
         target_location = storage_backend.get_active_target_location()
         if not target_location.is_valid:
-            raise OSError(f"وجهة التخزين المحددة غير صالحة: {target_location.error_message}")
+            fail_reason = storage_backend.classify_failure_reason(
+                target_location.error_message,
+                target_location=target_location,
+                stage="target_write",
+            )
+            return {
+                "success": False,
+                "source": source_key,
+                "error": target_location.error_message,
+                "failure_reason": fail_reason,
+            }
 
         item_to_process = (
             file_item
             if isinstance(file_item, storage_backend.MediaItem)
             else (file_item if is_uri_source else p)
         )
-        dest_res = file_manager.copy_to_category(
-            item_to_process,
-            target_category,
-            target_location=target_location,
-            is_copy=is_copy,
-        )
+        try:
+            dest_res = file_manager.copy_to_category(
+                item_to_process,
+                target_category,
+                target_location=target_location,
+                is_copy=is_copy,
+            )
+        except Exception as e_trans:
+            fail_reason = storage_backend.classify_failure_reason(
+                e_trans,
+                target_location=target_location,
+                stage="target_write",
+            )
+            return {
+                "success": False,
+                "source": source_key,
+                "error": str(e_trans),
+                "failure_reason": fail_reason,
+            }
 
         dest_str = str(dest_res)
         dest_size = orig_size
@@ -1303,7 +1366,7 @@ def run_continuous_scan(
 
         if progress_callback:
             progress_callback({
-                "current_file": f.name,
+                "current_file": getattr(f, "name", None) or getattr(f, "display_name", None) or str(f)[:60],
                 "batch_index": idx + 1,
                 "batch_total": total_files,
                 "total_processed": total_processed,

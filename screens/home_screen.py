@@ -702,12 +702,48 @@ class HomeScreen(Screen):
     def start_scan_with_options(
         self, source_choice: str, target_choice: str
     ) -> None:
-        """بدء الفحص والفرز الشامل التلقائي وفق المصدر والوجهة المحددين"""
+        """بدء الفحص والفرز الشامل التلقائي وفق المصدر والوجهة المحددين مع فحص استباقي للصلاحيات"""
         import threading
-
+        import android_permissions
         import media_scanner
+        from utils.ui_helper import show_rich_results_dialog
 
         if getattr(self, "_is_scanning", False):
+            return
+
+        # 1. الفحص الاستباقي للصلاحيات لمنع التشغيل الكاذب والإخفاقات المتكررة
+        can_proceed, issue_code, issue_msg, action_req = android_permissions.preflight_scan_access(
+            source_choice, target_choice
+        )
+        if not can_proceed:
+            preflight_buttons = []
+            if action_req == "request_media":
+                def _on_grant():
+                    def _after_perms(_p, _r):
+                        Clock.schedule_once(lambda _dt: self.start_scan_with_options(source_choice, target_choice), 0.5)
+                    android_permissions.request_media_permissions(_after_perms)
+
+                preflight_buttons.append({
+                    "text": "منح صلاحيات الصور والفيديو",
+                    "callback": _on_grant,
+                    "filled": True,
+                    "bg_color": (0.486, 0.302, 0.988, 1),
+                })
+            elif action_req == "request_saf_sdcard":
+                preflight_buttons.append({
+                    "text": "اختيار مجلد بطاقة SD (SAF)",
+                    "callback": lambda: self.choose_sdcard_saf_folder(),
+                    "filled": True,
+                    "bg_color": (0.02, 0.52, 0.80, 1),
+                })
+            preflight_buttons.append({"text": "إلغاء", "callback": None, "filled": False})
+
+            show_rich_results_dialog(
+                title="مطلوب إذن وصول للتخزين",
+                stats_dict={"total_found": 0, "success_count": 0, "failed_count": 0},
+                failures_by_reason={issue_msg: 1},
+                buttons=preflight_buttons,
+            )
             return
 
         self._is_scanning = True
@@ -755,39 +791,89 @@ class HomeScreen(Screen):
                 success_count = res.get("total_processed", 0)
                 failed_count = res.get("failed_count", 0)
                 failures_by_reason = res.get("failures_by_reason", {})
+                total_files = success_count + failed_count
 
-                details_lines = [
-                    f"الناجحة: {success_count} ملف",
-                    f"الفاشلة: {failed_count} ملف",
-                ]
-                if failures_by_reason:
-                    details_lines.append("\nأسباب الفشل بالتفصيل:")
-                    for r_name, r_cnt in failures_by_reason.items():
-                        details_lines.append(f"• {r_name}: {r_cnt} ملف")
+                # تحديد أزرار الإجراء المناسبة بناءً على نوع الأخطاء
+                dlg_buttons = []
+                has_perm_issue = any("صلاحية" in r or "permission" in r.lower() for r in failures_by_reason)
+                has_saf_issue = any("saf" in r.lower() or "إذن" in r or "بطاقة" in r for r in failures_by_reason)
 
-                summary_text = "\n".join(details_lines)
+                if has_perm_issue:
+                    dlg_buttons.append({
+                        "text": "منح صلاحيات الوسائط",
+                        "callback": lambda: android_permissions.request_media_permissions(
+                            lambda _p, _r: self.start_scan_with_options(source_choice, target_choice)
+                        ),
+                        "filled": True,
+                        "bg_color": (0.486, 0.302, 0.988, 1),
+                    })
+                if has_saf_issue:
+                    dlg_buttons.append({
+                        "text": "إعادة اختيار بطاقة SD",
+                        "callback": lambda: self.choose_sdcard_saf_folder(),
+                        "filled": True,
+                        "bg_color": (0.02, 0.52, 0.80, 1),
+                    })
+                if failed_count > 0:
+                    dlg_buttons.append({
+                        "text": "إعادة محاولة الفاشلة",
+                        "callback": lambda: self.start_scan_with_options(source_choice, target_choice),
+                        "filled": not (has_perm_issue or has_saf_issue),
+                        "bg_color": (0.15, 0.65, 0.45, 1),
+                    })
 
-                if failed_count == 0:
+                # زر تصدير تقرير التشخيص
+                def _export_report():
+                    try:
+                        import file_manager
+                        rep_path = file_manager.get_app_private_storage_dir() / "diagnostic_report.txt"
+                        with open(rep_path, "w", encoding="utf-8") as rf:
+                            rf.write("=== تقرير تشخيص فرز الوسائط ===\n")
+                            rf.write(f"المصدر: {src_name} | الوجهة: {tgt_name}\n")
+                            rf.write(f"إجمالي الملفات: {total_files}\n")
+                            rf.write(f"الناجحة: {success_count}\n")
+                            rf.write(f"الفاشلة: {failed_count}\n\n")
+                            rf.write("تفصيل الإخفاقات:\n")
+                            for r_k, r_v in failures_by_reason.items():
+                                rf.write(f"- {r_k}: {r_v} ملف\n")
+                        show_modern_notification("تقرير التشخيص", f"تم حفظ التقرير في:\n{rep_path.name}", notif_type="info")
+                    except Exception as ex_rep:
+                        logger.error("تعذر تصدير تقرير التشخيص: %s", ex_rep)
+
+                dlg_buttons.append({"text": "تصدير التقرير", "callback": _export_report, "filled": False})
+                dlg_buttons.append({"text": "إغلاق", "callback": None, "filled": False})
+
+                if failed_count == 0 and success_count > 0:
                     show_modern_notification(
                         "اكتمل الفرز والتنظيم",
                         f"تم بنجاح تنظيم {success_count} ملف دون أي أخطاء!",
                         notif_type="success",
                     )
-                    dialog_title = "اكتمل الفرز والتنظيم بنجاح"
+                    dialog_title = "اكتمل الفرز والتنظيم بنجاح ✓"
+                elif success_count == 0 and failed_count > 0:
+                    show_modern_notification(
+                        "فشل الفرز بالكامل",
+                        f"فشل معالجة {failed_count} ملف. يرجى مراجعة الصلاحيات.",
+                        notif_type="error",
+                    )
+                    dialog_title = f"فشل الفرز (0 ناجح / {failed_count} فشل)"
                 else:
                     show_modern_notification(
                         "اكتمل الفرز مع تنبيهات",
                         f"تم تنظيم {success_count} ملف، وفشل {failed_count} ملف.",
                         notif_type="warning",
                     )
-                    dialog_title = "اكتمل الفرز مع وجود أخطاء"
+                    dialog_title = f"اكتمل الفرز ({success_count} ناجح / {failed_count} فشل)"
 
-                _ = show_app_dialog(
+                show_rich_results_dialog(
                     title=dialog_title,
-                    text=(
-                        f"نتائج فحص وسائط ({src_name}) والحفظ في ({tgt_name}):\n\n"
-                        f"{summary_text}"
-                    ),
+                    stats_dict={
+                        "total_found": total_files,
+                        "success_count": success_count,
+                        "failed_count": failed_count,
+                    },
+                    failures_by_reason=failures_by_reason,
+                    buttons=dlg_buttons,
                 )
 
             Clock.schedule_once(on_finish, 0)

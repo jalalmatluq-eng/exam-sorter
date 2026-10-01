@@ -145,50 +145,110 @@ def resolve_media_mime_type(filename_or_path: str, explicit_mime: str = "") -> s
     return "image/jpeg"
 
 
-def classify_failure_reason(error: Exception | str, target_location: Any = None) -> str:
-    """تصنيف دقيق وموحد لسبب فشل معالجة الملف لعرضه للمستخدم في الواجهة"""
-    err_str = str(error).lower()
+@dataclass
+class TransferReadResult:
+    """نتيجة تفصيلية لعملية قراءة أو نسخ دفق Content URI"""
+    success: bool = False
+    reason: str = ""  # "success", "permission_denied", "file_not_found", "io_error", "stream_corrupted", "size_mismatch"
+    source_uri: str = ""
+    display_name: str = ""
+    bytes_read: int = 0
+    expected_bytes: int = 0
+    retryable: bool = True
+    error_class: str = ""
+    error_message: str = ""
 
-    # فحص مخصص إذا كانت الوجهة تعتمد على SAF وفشلت عمليات الإخراج أو الإنشاء أو الحذف أو الصلاحية
+
+def is_path_readable(path_obj: Path | str) -> bool:
+    """التحقق العملي من إمكانية فتح وقراءة أول بايت من المسار فيزيائياً دون إلقاء PermissionError"""
+    if not path_obj:
+        return False
+    try:
+        p = Path(path_obj)
+        if not p.is_file():
+            return False
+        with open(p, "rb") as f:
+            f.read(4)
+        return True
+    except (OSError, PermissionError):
+        return False
+
+
+def classify_failure_reason(
+    error: Exception | str,
+    target_location: Any = None,
+    source_uri: str = "",
+    stage: str = "",
+) -> str:
+    """
+    تصنيف دقيق وموحد لسبب فشل معالجة الملف لعرضه للمستخدم في الواجهة:
+    - يميز بدقة بين:
+      1. رفض إذن قراءة المصدر (Android Media Permissions).
+      2. انتهاء أو فقدان إذن مجلد بطاقة SD (SAF Tree URI).
+      3. فشل إنشاء مجلد الوجهة.
+      4. فشل القراءة الحقيقي (ملف تالف أو غير متاح).
+      5. امتلاء المساحة التخزينية.
+      6. فصل بطاقة SD الفيزيائية.
+    """
+    err_str = str(error).lower()
+    stage_lower = (stage or "").lower()
+
+    # 1. إذا كان الفشل في مرحلة قراءة المصدر
+    if stage_lower == "source_read" or "openinputstream" in err_str or "in_stream" in err_str:
+        if any(k in err_str for k in ("securityexception", "permission denied", "eacces", "operation not permitted", "صلاحية")):
+            return "رفض صلاحية قراءة الملف"
+        if any(k in err_str for k in ("filenotfound", "غير موجود", "no such file")):
+            return "الملف غير موجود"
+        return "فشل القراءة"
+
+    # 2. فحص مخصص إذا كانت الوجهة تعتمد على SAF
     is_saf_target = bool(target_location and getattr(target_location, "is_saf", False))
     tree_uri = getattr(target_location, "tree_uri", "") or getattr(target_location, "saf_uri", "") if target_location else ""
     is_target_valid = getattr(target_location, "is_valid", True) if target_location else True
 
-    is_perm_issue = any(k in err_str for k in ("permission denied", "operation not permitted", "securityexception", "eacces", "uri permission", "permission"))
-    is_io_target_issue = any(k in err_str for k in ("openoutputstream", "createdocument", "delete", "saf", "document"))
+    is_perm_issue = any(k in err_str for k in ("permission denied", "operation not permitted", "securityexception", "eacces", "uri permission", "permission", "صلاحية", "إذن"))
+    is_io_target_issue = any(k in err_str for k in ("openoutputstream", "createdocument", "saf", "document", "كتابة"))
 
-    if is_saf_target and (is_perm_issue or is_io_target_issue):
-        # التحقق من حالة URI للبطاقة
+    if is_saf_target and (is_perm_issue or is_io_target_issue or not is_target_valid):
         if not is_target_valid or (tree_uri and not is_saf_uri_valid(tree_uri)):
-            return "فصل بطاقة SD"
-        if "permission" in err_str or "denied" in err_str or "not permitted" in err_str or "security" in err_str or "صلاحية" in err_str:
-            return "انتهاء SAF permission"
+            return "انتهاء إذن مجلد بطاقة SD (SAF)"
+        if is_perm_issue:
+            return "انتهاء إذن مجلد بطاقة SD (SAF)"
         return "فصل بطاقة SD"
 
     if "enospc" in err_str or "no space" in err_str or "امتلاء" in err_str or "disk full" in err_str:
         return "امتلاء المساحة"
+
     if (
         "securityexception" in err_str
-        or "saf" in err_str and ("permission" in err_str or "إذن" in err_str or "صلاحية" in err_str)
+        or ("saf" in err_str and ("permission" in err_str or "إذن" in err_str or "صلاحية" in err_str))
         or "uri permission" in err_str
     ):
-        return "انتهاء SAF permission"
+        return "انتهاء إذن مجلد بطاقة SD (SAF)" if is_saf_target else "رفض الصلاحية"
+
     if target_location and getattr(target_location, "storage_type", "") == "sdcard" and not getattr(target_location, "is_valid", True):
         msg = getattr(target_location, "error_message", "").lower()
         if "saf" in msg or "إذن" in msg:
-            return "انتهاء SAF permission"
+            return "انتهاء إذن مجلد بطاقة SD (SAF)"
         return "فصل بطاقة SD"
+
     if (
         "sdcard" in err_str or "sd card" in err_str or "enodev" in err_str
         or "بطاقة" in err_str or "غير مركبة" in err_str or "disconnected" in err_str
     ):
         return "فصل بطاقة SD"
+
     if "مجلد" in err_str or "mkdir" in err_str or "createdirectory" in err_str or "directory" in err_str:
         return "فشل إنشاء المجلد"
-    if "قراءة" in err_str or "دفق" in err_str or "stream" in err_str or "read" in err_str or "openinputstream" in err_str:
+
+    if "قراءة" in err_str or "دفق" in err_str or "stream" in err_str or "read" in err_str:
         return "فشل القراءة"
+
     if "permission" in err_str or "eacces" in err_str or "صلاحية" in err_str:
-        return "انتهاء SAF permission" if is_saf_target else "رفض الصلاحية"
+        if is_saf_target or stage_lower in ("target_write", "target_mkdir"):
+            return "انتهاء إذن مجلد بطاقة SD (SAF)"
+        return "رفض الصلاحية"
+
     return f"فشل: {error}"
 
 
@@ -1381,27 +1441,94 @@ def copy_path_to_path(src_file: Path, dest_file: Path) -> bool:
         return False
 
 
-def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
-    """نسخ ملف من Content URI (MediaStore / SAF) إلى مسار محلي عبر دفق آمن مع التحقق الصارم من الحجم"""
+def find_content_uri_for_path(path_str: str) -> str:
+    """البحث عن Content URI لمسار ملف في MediaStore على أندرويد عند تعذر فتحه المباشر"""
+    if _get_platform() != "android" or not path_str:
+        return ""
+    try:
+        from android import mActivity
+        from jnius import autoclass
+        MediaStoreImages = autoclass("android.provider.MediaStore$Images$Media")
+        MediaStoreVideo = autoclass("android.provider.MediaStore$Video$Media")
+        ContentUris = autoclass("android.content.ContentUris")
+        cr = mActivity.getContentResolver()
+
+        for base_table in [MediaStoreImages.EXTERNAL_CONTENT_URI, MediaStoreVideo.EXTERNAL_CONTENT_URI]:
+            cursor = cr.query(
+                base_table,
+                ["_id"],
+                "_data = ?",
+                [str(path_str)],
+                None,
+            )
+            if cursor is not None:
+                try:
+                    if cursor.moveToFirst():
+                        item_id = cursor.getLong(0)
+                        if item_id > 0:
+                            return str(ContentUris.withAppendedId(base_table, item_id).toString())
+                finally:
+                    cursor.close()
+    except Exception as e:
+        logger.debug("تعذر استخراج Content URI للمسار %s: %s", path_str, e)
+    return ""
+
+
+def copy_uri_to_path_detailed(content_uri: str, dest_file: Path) -> TransferReadResult:
+    """
+    نسخ ملف من Content URI إلى مسار محلي مع إرجاع كائن TransferReadResult تفصيلي:
+    - إغلاق كافة التدفقات في finally دوماً.
+    - حذف الملف المؤقت التالف عند أي فشل فورياً.
+    - التقاط SecurityException و FileNotFoundException و PermissionError بتفصيل ودقة.
+    """
     dest_file.parent.mkdir(parents=True, exist_ok=True)
     temp_dest = dest_file.parent / f".tmp_uri_{dest_file.name}_{int(time.time() * 1000)}"
-
-    # الحصول على الحجم المتوقع من Content URI
     expected_size = get_uri_file_size(content_uri)
 
-    # دعم المحاكاة لبيئات الاختبار
+    # 1. بيئة المحاكاة
     if content_uri.startswith("mock_doc://"):
         src_mock = Path(content_uri.replace("mock_doc://", ""))
         ok = copy_path_to_path(src_mock, temp_dest)
         if not ok:
             temp_dest.unlink(missing_ok=True)
-            return False
+            return TransferReadResult(
+                success=False,
+                reason="file_not_found",
+                source_uri=content_uri,
+                display_name=dest_file.name,
+                bytes_read=0,
+                expected_bytes=expected_size,
+                error_message="فشل نسخ الملف الوهمي في المحاكاة",
+            )
         if expected_size > 0 and temp_dest.stat().st_size != expected_size:
-            logger.error("عدم تطابق حجم الملف المؤقت في المحاكاة: المتوقع %d vs الفعلي %d", expected_size, temp_dest.stat().st_size)
+            sz = temp_dest.stat().st_size
             temp_dest.unlink(missing_ok=True)
-            return False
+            return TransferReadResult(
+                success=False,
+                reason="size_mismatch",
+                source_uri=content_uri,
+                display_name=dest_file.name,
+                bytes_read=sz,
+                expected_bytes=expected_size,
+                error_message="عدم تطابق حجم الملف في المحاكاة",
+            )
         temp_dest.replace(dest_file)
-        return True
+        return TransferReadResult(
+            success=True,
+            reason="success",
+            source_uri=content_uri,
+            display_name=dest_file.name,
+            bytes_read=expected_size,
+            expected_bytes=expected_size,
+        )
+
+    # 2. أندرويد الحقيقي عبر ContentResolver
+    in_stream = None
+    is_success = False
+    total_written = 0
+    err_cls = ""
+    err_msg = ""
+    fail_reason = "io_error"
 
     try:
         if _get_platform() == "android":
@@ -1410,12 +1537,45 @@ def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
             Uri = autoclass("android.net.Uri")
             parsed_uri = Uri.parse(content_uri)
             cr = mActivity.getContentResolver()
-            in_stream = cr.openInputStream(parsed_uri)
-            if in_stream is None:
-                logger.error("تعذر فتح دفق القراءة للـ URI: %s", content_uri)
-                return False
 
-            total_written = 0
+            try:
+                in_stream = cr.openInputStream(parsed_uri)
+            except Exception as e_open:
+                cls_name = type(e_open).__name__
+                msg_lower = str(e_open).lower()
+                if "securityexception" in msg_lower or "permission" in msg_lower:
+                    return TransferReadResult(
+                        success=False,
+                        reason="permission_denied",
+                        source_uri=content_uri,
+                        display_name=dest_file.name,
+                        expected_bytes=expected_size,
+                        error_class=cls_name,
+                        error_message=f"رفض إذن القراءة من مزود الوسائط: {e_open}",
+                        retryable=True,
+                    )
+                return TransferReadResult(
+                    success=False,
+                    reason="file_not_found" if "filenotfound" in msg_lower else "stream_open_failed",
+                    source_uri=content_uri,
+                    display_name=dest_file.name,
+                    expected_bytes=expected_size,
+                    error_class=cls_name,
+                    error_message=f"تعذر فتح دفق المصدر: {e_open}",
+                    retryable=False,
+                )
+
+            if in_stream is None:
+                return TransferReadResult(
+                    success=False,
+                    reason="stream_null",
+                    source_uri=content_uri,
+                    display_name=dest_file.name,
+                    expected_bytes=expected_size,
+                    error_message="دفق القراءة من ContentResolver أعاد Null",
+                    retryable=True,
+                )
+
             CHUNK_SIZE = 64 * 1024
             buffer = bytearray(CHUNK_SIZE)
 
@@ -1427,43 +1587,108 @@ def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
                     out_f.write(buffer[:read_bytes])
                     total_written += read_bytes
 
-            in_stream.close()
-
-            # التحقق الصارم من اكتمال الدفق والحجم
             if total_written == 0:
-                logger.error("تم قراءة 0 بايت من URI: %s", content_uri)
-                temp_dest.unlink(missing_ok=True)
-                return False
+                return TransferReadResult(
+                    success=False,
+                    reason="stream_empty",
+                    source_uri=content_uri,
+                    display_name=dest_file.name,
+                    bytes_read=0,
+                    expected_bytes=expected_size,
+                    error_message="تم قراءة 0 بايت من Content URI",
+                    retryable=True,
+                )
 
             if expected_size > 0 and total_written != expected_size:
-                logger.error("عدم تطابق حجم الدفق المقروء مع المتوقع: مقروء %d vs متوقع %d", total_written, expected_size)
-                temp_dest.unlink(missing_ok=True)
-                return False
-
-            if not temp_dest.exists() or (expected_size > 0 and temp_dest.stat().st_size != expected_size):
-                logger.error("عدم تطابق الحجم النهائي للملف المؤقت: المتوقع %d", expected_size)
-                temp_dest.unlink(missing_ok=True)
-                return False
+                return TransferReadResult(
+                    success=False,
+                    reason="size_mismatch",
+                    source_uri=content_uri,
+                    display_name=dest_file.name,
+                    bytes_read=total_written,
+                    expected_bytes=expected_size,
+                    error_message=f"عدم تطابق الحجم: مقروء {total_written} vs متوقع {expected_size}",
+                    retryable=True,
+                )
 
             temp_dest.replace(dest_file)
-            return True
+            is_success = True
+            return TransferReadResult(
+                success=True,
+                reason="success",
+                source_uri=content_uri,
+                display_name=dest_file.name,
+                bytes_read=total_written,
+                expected_bytes=expected_size,
+            )
         else:
+            # بيئات غير أندرويد (اختبارات المسارات المحلية)
             p = Path(content_uri)
-            if p.exists():
+            if p.exists() and p.is_file():
                 ok = copy_path_to_path(p, temp_dest)
-                if not ok:
-                    temp_dest.unlink(missing_ok=True)
-                    return False
-                if expected_size > 0 and temp_dest.stat().st_size != expected_size:
-                    temp_dest.unlink(missing_ok=True)
-                    return False
-                temp_dest.replace(dest_file)
-                return True
-            return False
-    except Exception as e:
-        logger.error("فشل نسخ Content URI إلى مسار محلي: %s", e)
-        temp_dest.unlink(missing_ok=True)
-        return False
+                if ok and (expected_size <= 0 or temp_dest.stat().st_size == expected_size):
+                    temp_dest.replace(dest_file)
+                    is_success = True
+                    return TransferReadResult(
+                        success=True,
+                        reason="success",
+                        source_uri=content_uri,
+                        display_name=dest_file.name,
+                        bytes_read=dest_file.stat().st_size,
+                        expected_bytes=expected_size,
+                    )
+            return TransferReadResult(
+                success=False,
+                reason="file_not_found",
+                source_uri=content_uri,
+                display_name=dest_file.name,
+                error_message="الملف غير موجود في بيئة الاختبار",
+            )
+
+    except (PermissionError, OSError) as e_sys:
+        err_cls = type(e_sys).__name__
+        err_msg = str(e_sys)
+        fail_reason = "permission_denied" if isinstance(e_sys, PermissionError) else "io_error"
+        logger.error("خطأ أثناء نسخ Content URI (%s): %s", content_uri, e_sys)
+        return TransferReadResult(
+            success=False,
+            reason=fail_reason,
+            source_uri=content_uri,
+            display_name=dest_file.name,
+            bytes_read=total_written,
+            expected_bytes=expected_size,
+            error_class=err_cls,
+            error_message=err_msg,
+            retryable=True,
+        )
+    except Exception as e_all:
+        err_cls = type(e_all).__name__
+        err_msg = str(e_all)
+        logger.error("استثناء غير متوقع أثناء نسخ Content URI (%s): %s", content_uri, e_all)
+        return TransferReadResult(
+            success=False,
+            reason="unexpected_exception",
+            source_uri=content_uri,
+            display_name=dest_file.name,
+            bytes_read=total_written,
+            expected_bytes=expected_size,
+            error_class=err_cls,
+            error_message=err_msg,
+            retryable=True,
+        )
+    finally:
+        if in_stream is not None:
+            try:
+                in_stream.close()
+            except Exception:
+                pass
+        if not is_success and temp_dest.exists():
+            temp_dest.unlink(missing_ok=True)
+
+
+def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
+    """نسخ ملف من Content URI إلى مسار محلي (غلاف متوافق يعيد bool)"""
+    return copy_uri_to_path_detailed(content_uri, dest_file).success
 
 
 def compute_content_uri_hash(uri_or_path: str, chunk_size: int = 65536) -> str | None:

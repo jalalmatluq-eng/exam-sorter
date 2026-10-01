@@ -528,32 +528,12 @@ class CosmoSortApp(MDApp):
             logger.debug("تنبيه أثناء فحص الفحص المعلق في on_resume: %s", e)
 
     def request_android_permissions(self) -> None:
-        """طلب صلاحيات الكاميرا والوسائط الأساسية على أجهزة أندرويد (تغطي أندرويد 8 حتى 15)"""
+        """طلب صلاحيات الكاميرا والوسائط الأساسية عبر المدير الموحد (تغطي أندرويد 8 حتى 15)"""
         try:
-            from android.permissions import (  # type: ignore
-                Permission,
-                request_permissions,
-            )
-
-            perms = [
-                Permission.CAMERA,
-                Permission.READ_EXTERNAL_STORAGE,
-                Permission.WRITE_EXTERNAL_STORAGE,
-            ]
-            # دعم أندرويد 13+ و 14+ للصور والفيديوهات والصوتيات
-            for extra_perm in [
-                "READ_MEDIA_IMAGES",
-                "READ_MEDIA_VIDEO",
-                "READ_MEDIA_AUDIO",
-                "READ_MEDIA_VISUAL_USER_SELECTED",
-                "POST_NOTIFICATIONS",
-            ]:
-                if hasattr(Permission, extra_perm):
-                    perms.append(getattr(Permission, extra_perm))
-
-            request_permissions(perms)
+            import android_permissions
+            android_permissions.request_media_permissions()
         except Exception as e:
-            logger.warning("تنبيه: تعذر استدعاء مكتبة صلاحيات أندرويد: %s", e)
+            logger.warning("تنبيه: تعذر استدعاء مدير صلاحيات أندرويد الموحد: %s", e)
 
     def check_and_request_all_files_permission(self) -> None:
         """طلب إذن الوصول الكامل لكافة الملفات عبر المعالج الآمن في file_manager"""

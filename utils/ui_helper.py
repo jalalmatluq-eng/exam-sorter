@@ -275,3 +275,103 @@ def show_modern_notification(
     except Exception:
         # إذا تعذر الـ Snackbar (مثل نقص دعم FBO في بعض المعالجات) نفتح Dialog لطيف
         _ = show_app_dialog(title=title, text=message)
+
+
+def show_rich_results_dialog(
+    title: str,
+    stats_dict: dict[str, Any],
+    failures_by_reason: dict[str, int],
+    buttons: list[dict[str, Any]],
+) -> MDDialog:
+    """
+    عرض نافذة نتائج تشخيصية متقدمة وغنية متوافقة مع KivyMD 2:
+    - إحصائيات منفصلة (المكتشف، الناجح، الفاشل، القابل للقراءة، المنقول، المنسوخ).
+    - تفصيل أسباب الفشل دون تداخل في النصوص.
+    - دعم أزرار إجرائية متعددة (إعادة المحاولة، منح الصلاحية، اختيار SAF، تصدير التقرير).
+    """
+    dialog: MDDialog | None = None
+
+    success_cnt = stats_dict.get("success_count", 0)
+    failed_cnt = stats_dict.get("failed_count", 0)
+    total_cnt = stats_dict.get("total_found", success_cnt + failed_cnt)
+
+    # تحديد لون العنوان حسب النتيجة
+    if failed_cnt > 0 and success_cnt == 0:
+        head_color = (0.85, 0.20, 0.30, 1)  # أحمر واضح
+    elif failed_cnt > 0:
+        head_color = (0.95, 0.55, 0.10, 1)  # برتقالي تحذيري
+    else:
+        head_color = (0.05, 0.65, 0.40, 1)  # أخضر نجاح
+
+    lines = [
+        f"• إجمالي الملفات المكتشفة: {total_cnt} ملف",
+        f"• تم بنجاح: {success_cnt} ملف",
+        f"• فشل المعالجة: {failed_cnt} ملف",
+    ]
+
+    if "readable_count" in stats_dict:
+        lines.append(f"• الملفات القابلة للقراءة: {stats_dict['readable_count']} ملف")
+    if "copied_count" in stats_dict and stats_dict["copied_count"] > 0:
+        lines.append(f"• تم نسخها: {stats_dict['copied_count']} ملف")
+    if "moved_count" in stats_dict and stats_dict["moved_count"] > 0:
+        lines.append(f"• تم نقلها وحذف الأصل: {stats_dict['moved_count']} ملف")
+
+    if failures_by_reason:
+        lines.append("\nأسباب الفشل المشخصة:")
+        for r_name, r_cnt in failures_by_reason.items():
+            lines.append(f"  - {r_name}: {r_cnt} ملف")
+
+    body_text = "\n".join(lines)
+
+    md_buttons: list[MDButton] = []
+    for btn_spec in buttons:
+        btn_text = btn_spec.get("text", "إغلاق")
+        cb = btn_spec.get("callback")
+        is_filled = btn_spec.get("filled", False)
+        bg_col = btn_spec.get("bg_color", (0.02, 0.52, 0.80, 1) if is_filled else (0.92, 0.95, 1.0, 1))
+        txt_col = btn_spec.get("text_color", (1, 1, 1, 1) if is_filled else (0.2, 0.4, 0.7, 1))
+
+        def make_handler(callback_fn: Any):
+            def _handler(_w: object) -> None:
+                if dialog:
+                    dialog.dismiss()
+                if callback_fn:
+                    callback_fn()
+            return _handler
+
+        btn_widget = MDButton(
+            MDButtonText(
+                text=ar(btn_text),
+                bold=True,
+                theme_text_color="Custom",
+                text_color=txt_col,
+            ),
+            style="filled" if is_filled else "outlined",
+            theme_bg_color="Custom",
+            md_bg_color=bg_col,
+            on_release=make_handler(cb),
+        )
+        md_buttons.append(btn_widget)
+
+    dialog = MDDialog(
+        MDDialogHeadlineText(
+            text=ar(title),
+            bold=True,
+            theme_text_color="Custom",
+            text_color=head_color,
+        ),
+        MDDialogSupportingText(
+            text=ar(body_text),
+            theme_text_color="Custom",
+            text_color=(0.30, 0.40, 0.55, 1),
+        ),
+        MDDialogButtonContainer(
+            *md_buttons,
+            spacing="8dp",
+        ),
+        theme_bg_color="Custom",
+        md_bg_color=(1.0, 1.0, 1.0, 0.98),
+        radius=[24, 24, 24, 24],
+    )
+    dialog.open()
+    return dialog

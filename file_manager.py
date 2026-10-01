@@ -1640,12 +1640,16 @@ def copy_to_category(
         filename = actual_item.name
         src_size = actual_item.size_bytes
         src_mime = getattr(actual_item, "mime_type", "")
-        if actual_item.path and os.path.exists(actual_item.path):
+        # فحص إمكانية القراءة المباشرة أولاً لتجنب حظر Scoped Storage
+        if actual_item.path and storage_backend.is_path_readable(actual_item.path):
             resolved_src_path = Path(actual_item.path)
             is_uri_source = False
         elif actual_item.uri:
             src_uri = actual_item.uri
             is_uri_source = True
+        elif actual_item.path and os.path.exists(actual_item.path):
+            resolved_src_path = Path(actual_item.path)
+            is_uri_source = False
         else:
             raise FileNotFoundError(f"العنصر غير متاح: {actual_item}")
     elif isinstance(actual_item, str) and actual_item.startswith("content://"):
@@ -1661,7 +1665,15 @@ def copy_to_category(
             raise FileNotFoundError(f"الملف المصدر غير موجود: {resolved_src_path}")
         filename = resolved_src_path.name
         src_size = resolved_src_path.stat().st_size
-        is_uri_source = False
+        if not storage_backend.is_path_readable(resolved_src_path):
+            matched_uri = storage_backend.find_content_uri_for_path(str(resolved_src_path))
+            if matched_uri:
+                src_uri = matched_uri
+                is_uri_source = True
+            else:
+                is_uri_source = False
+        else:
+            is_uri_source = False
         src_mime = storage_backend.resolve_media_mime_type(filename)
 
     # تنظيف اسم المجلد الفرعي

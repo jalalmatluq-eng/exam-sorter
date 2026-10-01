@@ -209,12 +209,19 @@ def classify_with_claude(
             method="POST",
         )
 
-        # مهلة 20 ثانية للاتصال بالشبكة
-        with urllib.request.urlopen(req, timeout=20) as response:
+        # فحص قاطع الدائرة لتجنب تجميد الواجهة عند انقطاع الإنترنت
+        import offline_classifier
+        if offline_classifier.is_circuit_breaker_open():
+            raise ClassificationError("الخدمة السحابية غير متاحة حالياً بسبب انقطاع الإنترنت (قاطع الدائرة مفعل).")
+
+        # مهلة قصيرة 3.5 ثانية للاتصال بالشبكة لضمان سلاسة التطبيق
+        with urllib.request.urlopen(req, timeout=3.5) as response:
             raw_response = response.read().decode("utf-8")
             result = cast(
                 dict[str, Any], json.loads(raw_response)
             )
+
+            offline_classifier.record_cloud_api_success()
 
             # استخراج النص الناتج من استجابة Claude
             content_blocks = cast(
@@ -234,6 +241,8 @@ def classify_with_claude(
             )
 
     except urllib.error.HTTPError as e:
+        import offline_classifier
+        offline_classifier.record_cloud_api_failure()
         error_msg = f"خطأ في خادم الذكاء الاصطناعي (رمز {e.code})"
         try:
             err_body = cast(
@@ -254,18 +263,24 @@ def classify_with_claude(
         raise ClassificationError(error_msg)
 
     except urllib.error.URLError:
+        import offline_classifier
+        offline_classifier.record_cloud_api_failure()
         raise ClassificationError(
             "تعذر الاتصال بالإنترنت. يرجى التحقق من اتصال الشبكة."
         )
 
     except TimeoutError:
+        import offline_classifier
+        offline_classifier.record_cloud_api_failure()
         raise ClassificationError(
-            "استغرق الطلب وقتاً طويلاً (انتهت مهلة الاتصال)."
+            "استغرق الطلب وقتاً طويلاً (انتهت مهلة الاتصال 3.5 ثانية)."
         )
 
     except Exception as ex:
         if isinstance(ex, ClassificationError):
             raise
+        import offline_classifier
+        offline_classifier.record_cloud_api_failure()
         raise ClassificationError(
             f"حدث خطأ غير متوقع أثناء التصنيف: {ex!s}"
         )
@@ -292,8 +307,14 @@ COMMON_SUBJECT_KEYWORDS = [
 def classify_with_local_ocr(image_path: str) -> str:
     """
     استخراج النص باستخدام pytesseract محلياً، ومطابقة الكلمات.
-    تُستخدم هذه الدالة كبديل عند عدم توفر إنترنت.
+    تُستخدم هذه الدالة كبديل عند عدم توفر إنترنت وفقط إن كانت البيئة تدعم Tesseract فعلياً.
     """
+    import offline_classifier
+    if not offline_classifier.is_offline_ocr_runtime_available():
+        raise ClassificationError(
+            "ميزة التعرف الضوئي OCR غير مفعلة لعدم توفر حزمة Tesseract وبيانات اللغة العربية داخل التطبيق (أوفلاين غير متاح)."
+        )
+
     try:
         pytesseract = importlib.import_module("pytesseract")
     except ModuleNotFoundError:

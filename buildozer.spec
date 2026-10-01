@@ -16,7 +16,8 @@ orientation = portrait
 services = MediaWatcher:service/media_watcher_service.py:foreground:foregroundServiceType=dataSync
 
 # Android specific settings
-android.permissions = CAMERA,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,INTERNET,MANAGE_EXTERNAL_STORAGE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_DATA_SYNC,POST_NOTIFICATIONS
+android.permissions = CAMERA,READ_EXTERNAL_STORAGE,WRITE_EXTERNAL_STORAGE,READ_MEDIA_IMAGES,READ_MEDIA_VIDEO,READ_MEDIA_VISUAL_USER_SELECTED,INTERNET,MANAGE_EXTERNAL_STORAGE,FOREGROUND_SERVICE,FOREGROUND_SERVICE_DATA_SYNC,POST_NOTIFICATIONS
+android.manifest.application = android:requestLegacyExternalStorage="true"
 android.api = 34
 android.minapi = 24
 android.ndk = 28c
