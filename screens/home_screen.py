@@ -546,6 +546,35 @@ class HomeScreen(Screen):
             if dialog:
                 dialog.dismiss()
 
+            # 1. إذا اختار المستخدم بطاقة SD كوجهة: التحقق الصارم من توفر إذن SAF دون أي fallback صامت
+            if state["target"] == "sdcard":
+                import storage_backend
+                target_loc = storage_backend.get_active_target_location("sdcard")
+                if not target_loc.is_valid:
+                    file_manager.set_pending_scan(
+                        True, source=state["source"], target="sdcard"
+                    )
+
+                    def open_saf_picker_for_home() -> None:
+                        _ = storage_backend.request_saf_folder_picker()
+
+                    def on_cancel_saf_home() -> None:
+                        file_manager.clear_pending_scan()
+
+                    show_confirm_dialog(
+                        title="إذن مجلد بطاقة الذاكرة (SAF)",
+                        text=(
+                            "لقد اخترت بطاقة الذاكرة الخارجية (MicroSD) كوجهة لحفظ وترتيب الوسائط.\n\n"
+                            "على نظام أندرويد الحديث، تتطلب الكتابة في بطاقة SD اختيار مجلد الحفظ عبر منتقي النظام الرسمي (Storage Access Framework).\n\n"
+                            "اضغط 'اختيار المجلد (SAF)' ثم حدد بطاقتك واضغط 'استخدام هذا المجلد'. سيبدأ الفحص تلقائياً بمجرد منح الإذن."
+                        ),
+                        on_confirm=open_saf_picker_for_home,
+                        on_cancel=on_cancel_saf_home,
+                        confirm_text="اختيار المجلد (SAF)",
+                        cancel_text="إلغاء",
+                    )
+                    return
+
             # حفظ التفضيلات
             file_manager.save_sorter_preferences(
                 {

@@ -3,7 +3,8 @@
 - عزل منطق التخزين عن التعامل المباشر مع Path وأنظمة الملفات التقليدية.
 - دعم كامل لتخزين أندرويد الحديث (Scoped Storage, MediaStore, Storage Access Framework).
 - دعم بطاقات MicroSD الخارجية عبر المسار المباشر أو Document URI (SAF).
-- التحقق الفعلي من إمكانية القراءة والكتابة دون افتراضات خاطئة.
+- كائن TargetLocation لدعم المسارات الفيزيائية وعناوين SAF Tree URIs معاً.
+- التحقق الفعلي من إمكانية القراءة والكتابة دون افتراضات خاطئة أو fallback صامت.
 - توحيد أسماء التصنيفات ومهاجرة المجلدات القديمة تلقائياً.
 """
 
@@ -89,6 +90,15 @@ MIME_TYPE_MAP: dict[str, str] = {
 }
 
 
+def _get_platform() -> str:
+    """الحصول على المنصة بأمان دون إلقاء استثناء عند غياب Kivy"""
+    try:
+        from kivy.utils import platform
+        return str(platform)
+    except Exception:
+        return "win" if os.name == "nt" else "linux"
+
+
 @dataclass
 class StorageLocation:
     """كائن بيانات يمثل موقع تخزين على الجهاز بدقة وتفصيل كامل"""
@@ -105,6 +115,38 @@ class StorageLocation:
     total_gb: float = 0.0
     failure_reason: str = ""
     description: str = ""
+
+
+@dataclass
+class TargetLocation:
+    """
+    كائن بيانات يمثل الوجهة الفعلية المعتمدة لحفظ وترتيب الملفات المنظمة:
+    - يدعم المسار الفيزيائي (path) للذاكرة الداخلية أو الأقراص المباشرة.
+    - يدعم Document Tree URI (SAF) لبطاقات MicroSD في أندرويد الحديث.
+    - يمنع أي fallback صامت عند اختيار المستخدم لبطاقة SD.
+    """
+    storage_type: str  # "internal" أو "sdcard" أو "custom"
+    is_saf: bool = False  # True إذا كانت الوجهة تعتمد على SAF Document Tree URI
+    path: Path | None = None  # مسار محلي فيزيائي إن كانت كتابة مباشرة
+    tree_uri: str = ""  # URI شجرة SAF للبطاقة الخارجية
+    display_name: str = ""
+    is_valid: bool = True
+    error_message: str = ""
+
+    @property
+    def is_writable(self) -> bool:
+        if not self.is_valid:
+            return False
+        if self.is_saf:
+            return is_saf_uri_valid(self.tree_uri)
+        if self.path:
+            return is_directory_writable(self.path)
+        return False
+
+    def __str__(self) -> str:
+        if self.is_saf:
+            return f"SAF_Tree({self.tree_uri})"
+        return str(self.path) if self.path else f"TargetLocation({self.storage_type})"
 
 
 @dataclass
@@ -149,7 +191,6 @@ class MediaItem:
         return self.path if self.path else (self.uri if self.uri else self.id)
 
 
-
 def normalize_category_name(raw_name: str) -> str:
     """توحيد اسم التصنيف وإرجاع الاسم القياسي المعتمد"""
     if not raw_name:
@@ -179,12 +220,10 @@ def migrate_legacy_folders(base_path: Path) -> int:
                 for item in list(old_dir.iterdir()):
                     if item.is_file():
                         target_file = std_dir / item.name
-                        # حل تعارض الأسماء
                         if target_file.exists():
                             target_file = std_dir / f"{item.stem}_{int(time.time())}{item.suffix}"
                         shutil.move(str(item), str(target_file))
                         migrated_count += 1
-                # حذف المجلد القديم الفارغ
                 try:
                     old_dir.rmdir()
                 except OSError:
@@ -235,9 +274,14 @@ def is_saf_uri_valid(uri_str: str) -> bool:
     """التحقق مما إذا كان URI الممنوح عبر SAF لا يزال صالحاً وممنوحاً"""
     if not uri_str:
         return False
+
+    # دعم المحاكاة في بيئة الاختبارات
+    if uri_str.startswith("mock_saf://"):
+        mock_path = uri_str.replace("mock_saf://", "")
+        return os.path.exists(mock_path)
+
     try:
-        from kivy.utils import platform
-        if platform == "android":
+        if _get_platform() == "android":
             from android import mActivity
             from jnius import autoclass
             Uri = autoclass("android.net.Uri")
@@ -262,8 +306,7 @@ def request_saf_folder_picker() -> bool:
     لاختيار مجلد بطاقة الذاكرة الخارجية ومنح إذن دائم للكتابة والقراءة.
     """
     try:
-        from kivy.utils import platform
-        if platform != "android":
+        if _get_platform() != "android":
             return False
         from android import mActivity
         from jnius import autoclass
@@ -276,7 +319,6 @@ def request_saf_folder_picker() -> bool:
             | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
         )
         intent.addFlags(take_flags)
-        # كود الطلب المخصص لـ SAF
         SAF_REQUEST_CODE = 4201
         mActivity.startActivityForResult(intent, SAF_REQUEST_CODE)
         logger.info("تم إطلاق منتقي المجلدات SAF بنجاح (Request Code: %d)", SAF_REQUEST_CODE)
@@ -294,8 +336,7 @@ def detect_storage_locations() -> dict[str, StorageLocation]:
     locations: dict[str, StorageLocation] = {}
 
     try:
-        from kivy.utils import platform
-        if platform == "android":
+        if _get_platform() == "android":
             # 1. الذاكرة الداخلية المشتركة (/storage/emulated/0)
             int_path = Path("/storage/emulated/0")
             int_target = int_path / ORGANIZED_FOLDER_NAME
@@ -418,7 +459,6 @@ def _detect_android_sdcard() -> StorageLocation:
     except Exception as e:
         logger.debug("getExternalFilesDirs: %s", e)
 
-    # فحص مسارات /storage
     storage_dir = Path("/storage")
     if storage_dir.exists() and storage_dir.is_dir():
         try:
@@ -443,7 +483,7 @@ def _detect_android_sdcard() -> StorageLocation:
                 pass
             break
 
-    if not found_root:
+    if not found_root and not has_valid_saf:
         return StorageLocation(
             id="sdcard",
             name="بطاقة الذاكرة الخارجية (MicroSD)",
@@ -457,11 +497,9 @@ def _detect_android_sdcard() -> StorageLocation:
             description="غير متوفرة حالياً",
         )
 
-    # فحص الكتابة المباشرة في مجلد الملفات المنظمة
-    sd_target = found_root / ORGANIZED_FOLDER_NAME
-    direct_writable = is_directory_writable(sd_target)
+    sd_target = (found_root / ORGANIZED_FOLDER_NAME) if found_root else Path("/storage/sdcard_saf")
+    direct_writable = is_directory_writable(sd_target) if found_root else False
 
-    # هل تتوفر كتابة مباشرة أم يلزم SAF؟
     is_writable = direct_writable or has_valid_saf
     requires_saf = not direct_writable and not has_valid_saf
     fail_reason = ""
@@ -491,14 +529,238 @@ def _detect_android_sdcard() -> StorageLocation:
     )
 
 
+def get_active_target_location(target_choice: str | None = None) -> TargetLocation:
+    """
+    إرجاع كائن TargetLocation الفعلي والحقيقي لوجهة الحفظ الحالية:
+    - لا يعمل Fallback صامتاً إلى الذاكرة الداخلية إطلاقاً.
+    - إذا اختار المستخدم بطاقة SD ولم تكن صالحة، يرجع TargetLocation بحالة is_valid=False مع سبب الخطأ الدقيق.
+    """
+    if target_choice is None:
+        try:
+            from file_manager import get_sorter_preferences
+            prefs = get_sorter_preferences()
+            target_choice = str(prefs.get("target_storage", "internal")).strip().lower()
+        except Exception:
+            target_choice = "internal"
+
+    if target_choice == "sdcard":
+        locs = detect_storage_locations()
+        sd = locs.get("sdcard")
+
+        if not sd or not sd.detected:
+            # التحقق هل يوجد إذن SAF صالح مسبقاً حتى لو فشل كشف الروت الفيزيائي
+            saf_uri = get_saf_persisted_uri()
+            if is_saf_uri_valid(saf_uri):
+                return TargetLocation(
+                    storage_type="sdcard",
+                    is_saf=True,
+                    tree_uri=saf_uri,
+                    display_name="بطاقة الذاكرة الخارجية (SAF)",
+                    is_valid=True,
+                )
+            return TargetLocation(
+                storage_type="sdcard",
+                is_saf=False,
+                is_valid=False,
+                error_message="بطاقة الذاكرة الخارجية (MicroSD) غير متوفرة أو غير مركبة بالجهاز.",
+            )
+
+        # إذا كانت قابلة للكتابة المباشرة (مثل بيئات Android 9 أو مجلد التطبيق المخصص)
+        if sd.writable and not sd.requires_saf and sd.path and sd.path != "غير متوفرة حالياً":
+            target_p = Path(sd.path)
+            return TargetLocation(
+                storage_type="sdcard",
+                is_saf=False,
+                path=target_p,
+                display_name=sd.name,
+                is_valid=True,
+            )
+
+        # بطاقة SD تتطلب SAF
+        saf_uri = sd.uri or get_saf_persisted_uri()
+        if is_saf_uri_valid(saf_uri):
+            return TargetLocation(
+                storage_type="sdcard",
+                is_saf=True,
+                tree_uri=saf_uri,
+                display_name="بطاقة الذاكرة الخارجية عبر SAF",
+                is_valid=True,
+            )
+
+        return TargetLocation(
+            storage_type="sdcard",
+            is_saf=True,
+            tree_uri=saf_uri,
+            is_valid=False,
+            error_message="تتطلب بطاقة SD تحديد مجلد الحفظ ومنح إذن الكتابة عبر Storage Access Framework (SAF).",
+        )
+
+    # الذاكرة الداخلية المشتركة
+    locs = detect_storage_locations()
+    internal_loc = locs.get("internal")
+    int_path = Path(internal_loc.path) if (internal_loc and internal_loc.path) else (Path.cwd() / ORGANIZED_FOLDER_NAME)
+    return TargetLocation(
+        storage_type="internal",
+        is_saf=False,
+        path=int_path,
+        display_name=internal_loc.name if internal_loc else "الذاكرة الداخلية",
+        is_valid=True,
+    )
+
+
+# =========================================================================
+# دعم Storage Access Framework (SAF) عبر DocumentFile و DocumentsContract
+# =========================================================================
+
+def _saf_get_document_file_class() -> Any:
+    """استرجاع androidx.documentfile.provider.DocumentFile إن وجد"""
+    try:
+        from jnius import autoclass
+        return autoclass("androidx.documentfile.provider.DocumentFile")
+    except Exception:
+        return None
+
+
+def saf_find_or_create_directory(tree_uri: str, category_name: str) -> str:
+    """
+    إنشاء أو جلب مجلد الوجهة داخل بطاقة SD عبر SAF:
+    يبحث عن 'الملفات المنظمة' أولاً، ثم مجلد التصنيف (مثل 'محاضرات ودروس').
+    العائد: Document URI للمجلد كـ string، أو فارغ عند الفشل.
+    """
+    if not tree_uri:
+        return ""
+
+    # دعم المحاكاة لبيئات الاختبار
+    if tree_uri.startswith("mock_saf://"):
+        base_dir = Path(tree_uri.replace("mock_saf://", ""))
+        target_dir = base_dir / ORGANIZED_FOLDER_NAME / category_name
+        target_dir.mkdir(parents=True, exist_ok=True)
+        return f"mock_doc://{target_dir}"
+
+    if _get_platform() != "android":
+        return ""
+
+    try:
+        from android import mActivity
+        from jnius import autoclass
+        Uri = autoclass("android.net.Uri")
+        cr = mActivity.getContentResolver()
+        parsed_tree = Uri.parse(tree_uri)
+
+        DocFileClass = _saf_get_document_file_class()
+        if DocFileClass is not None:
+            root_doc = DocFileClass.fromTreeUri(mActivity, parsed_tree)
+            if not root_doc or not root_doc.canWrite():
+                logger.error("مجلد SAF غير قابل للكتابة عبر DocumentFile!")
+                return ""
+
+            target_org = root_doc.findFile(ORGANIZED_FOLDER_NAME)
+            if not target_org:
+                target_org = root_doc.createDirectory(ORGANIZED_FOLDER_NAME)
+
+            sub_dir = target_org
+            for part in category_name.replace("\\", "/").split("/"):
+                p_clean = part.strip()
+                if not p_clean:
+                    continue
+                next_d = sub_dir.findFile(p_clean)
+                if not next_d:
+                    next_d = sub_dir.createDirectory(p_clean)
+                sub_dir = next_d
+
+            return str(sub_dir.getUri().toString())
+
+        # Fallback رسمي أصيل عبر DocumentsContract بدون androidx
+        DocumentsContract = autoclass("android.provider.DocumentsContract")
+        tree_doc_id = DocumentsContract.getTreeDocumentId(parsed_tree)
+        root_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, tree_doc_id)
+
+        # 1. إنشاء أو جلب مجلد الملفات المنظمة
+        MIME_DIR = "vnd.android.document/directory"
+        org_uri = _contract_find_or_create_child(cr, parsed_tree, root_doc_uri, ORGANIZED_FOLDER_NAME, MIME_DIR)
+        if not org_uri:
+            return ""
+
+        # 2. إنشاء مجلد التصنيف
+        cat_uri = org_uri
+        for part in category_name.replace("\\", "/").split("/"):
+            p_clean = part.strip()
+            if not p_clean:
+                continue
+            cat_uri = _contract_find_or_create_child(cr, parsed_tree, cat_uri, p_clean, MIME_DIR)
+            if not cat_uri:
+                return ""
+
+        return str(cat_uri.toString())
+
+    except Exception as e:
+        logger.error("فشل إنشاء مجلد التصنيف في SAF: %s", e, exc_info=True)
+        return ""
+
+
+def _contract_find_or_create_child(cr: Any, tree_uri: Any, parent_doc_uri: Any, name: str, mime_type: str) -> Any:
+    """مساعد DocumentsContract للبحث عن مجلد فرعي أو إنشائه"""
+    from jnius import autoclass
+    DocumentsContract = autoclass("android.provider.DocumentsContract")
+    parent_doc_id = DocumentsContract.getDocumentId(parent_doc_uri)
+    children_uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree_uri, parent_doc_id)
+
+    cursor = None
+    try:
+        cursor = cr.query(children_uri, None, None, None, None)
+        if cursor is not None:
+            name_idx = cursor.getColumnIndex("_display_name")
+            id_idx = cursor.getColumnIndex("document_id")
+            while cursor.moveToNext():
+                c_name = cursor.getString(name_idx) if name_idx >= 0 else ""
+                if c_name == name:
+                    c_id = cursor.getString(id_idx) if id_idx >= 0 else ""
+                    return DocumentsContract.buildDocumentUriUsingTree(tree_uri, c_id)
+    except Exception as e:
+        logger.debug("DocumentsContract query child: %s", e)
+    finally:
+        if cursor is not None:
+            cursor.close()
+
+    # لم يتم العثور عليه، نقوم بإنشائه
+    return DocumentsContract.createDocument(cr, parent_doc_uri, mime_type, name)
+
+
+def get_uri_file_size(uri_str: str) -> int:
+    """استرجاع حجم الملف بالبايت لـ Content URI أو SAF Document URI"""
+    if not uri_str:
+        return 0
+
+    if uri_str.startswith("mock_doc://"):
+        p = Path(uri_str.replace("mock_doc://", ""))
+        return p.stat().st_size if p.exists() else 0
+
+    try:
+        if _get_platform() == "android":
+            from android import mActivity
+            from jnius import autoclass
+            Uri = autoclass("android.net.Uri")
+            cr = mActivity.getContentResolver()
+            cursor = cr.query(Uri.parse(uri_str), None, None, None, None)
+            if cursor is not None:
+                try:
+                    if cursor.moveToFirst():
+                        size_idx = cursor.getColumnIndex("_size")
+                        if size_idx >= 0:
+                            return int(cursor.getLong(size_idx))
+                finally:
+                    cursor.close()
+    except Exception as e:
+        logger.debug("تعذر جلب حجم URI: %s: %s", uri_str, e)
+    return 0
+
+
 # =========================================================================
 # دوال النسخ والنقل الموحدة (Unified Stream Transfer Layer)
 # =========================================================================
 
 def copy_path_to_path(src_file: Path, dest_file: Path) -> bool:
-    """
-    نسخ آمن من مسار إلى مسار مع كتابة مؤقتة (Atomic Copy) والتحقق من الحجم.
-    """
+    """نسخ آمن من مسار إلى مسار مع كتابة مؤقتة (Atomic Copy) والتحقق من الحجم"""
     if not src_file.exists() or not src_file.is_file():
         logger.error("الملف المصدر غير موجود: %s", src_file)
         return False
@@ -516,7 +778,6 @@ def copy_path_to_path(src_file: Path, dest_file: Path) -> bool:
             temp_dest.unlink(missing_ok=True)
             return False
 
-        # استبدال ذري بالملف النهائي
         temp_dest.replace(dest_file)
         return True
     except Exception as e:
@@ -526,16 +787,17 @@ def copy_path_to_path(src_file: Path, dest_file: Path) -> bool:
 
 
 def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
-    """
-    نسخ ملف من Content URI (أندرويد MediaStore / SAF) إلى مسار محلي
-    عبر تدفق آمن ContentResolver.openInputStream.
-    """
+    """نسخ ملف من Content URI (MediaStore / SAF) إلى مسار محلي عبر دفق آمن"""
     dest_file.parent.mkdir(parents=True, exist_ok=True)
     temp_dest = dest_file.parent / f".tmp_uri_{dest_file.name}_{int(time.time() * 1000)}"
 
+    # دعم المحاكاة لبيئات الاختبار
+    if content_uri.startswith("mock_doc://"):
+        src_mock = Path(content_uri.replace("mock_doc://", ""))
+        return copy_path_to_path(src_mock, dest_file)
+
     try:
-        from kivy.utils import platform
-        if platform == "android":
+        if _get_platform() == "android":
             from android import mActivity
             from jnius import autoclass
             Uri = autoclass("android.net.Uri")
@@ -568,7 +830,6 @@ def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
             temp_dest.replace(dest_file)
             return True
         else:
-            # محاكاة لسطح المكتب
             p = Path(content_uri)
             if p.exists():
                 return copy_path_to_path(p, dest_file)
@@ -579,42 +840,37 @@ def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
         return False
 
 
-def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, subfolder: str, filename: str) -> str:
+def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filename: str) -> str:
     """
-    نسخ ملف محلي إلى بطاقة SD عبر إذن Storage Access Framework و DocumentFile.
-    العائد: URI الملف المنشأ في الوجهة كـ string، أو فارغ عند الفشل.
+    نسخ ملف محلي إلى بطاقة SD عبر Storage Access Framework و DocumentFile/DocumentsContract.
+    العائد: Document URI للملف المنشأ في الوجهة كـ string، أو فارغ عند الفشل.
     """
     if not src_file.exists():
         return ""
+
+    src_size = src_file.stat().st_size
+
+    # بيئة المحاكاة
+    if saf_tree_uri.startswith("mock_saf://"):
+        cat_uri = saf_find_or_create_directory(saf_tree_uri, category)
+        dest_dir = Path(cat_uri.replace("mock_doc://", ""))
+        dest_file = dest_dir / filename
+        ok = copy_path_to_path(src_file, dest_file)
+        return f"mock_doc://{dest_file}" if ok else ""
+
     try:
-        from kivy.utils import platform
-        if platform == "android":
+        if _get_platform() == "android":
             from android import mActivity
             from jnius import autoclass
             Uri = autoclass("android.net.Uri")
-            DocumentFile = autoclass("androidx.documentfile.provider.DocumentFile")
+            cr = mActivity.getContentResolver()
 
-            parsed_tree = Uri.parse(saf_tree_uri)
-            root_doc = DocumentFile.fromTreeUri(mActivity, parsed_tree)
-            if not root_doc or not root_doc.canWrite():
-                logger.error("مجلد SAF غير قابل للكتابة!")
+            cat_doc_uri_str = saf_find_or_create_directory(saf_tree_uri, category)
+            if not cat_doc_uri_str:
+                logger.error("تعذر تهيئة مجلد التصنيف في SAF للوجهة!")
                 return ""
 
-            # البحث عن المجلد المنظم أو إنشاؤه
-            target_dir = root_doc.findFile(ORGANIZED_FOLDER_NAME)
-            if not target_dir:
-                target_dir = root_doc.createDirectory(ORGANIZED_FOLDER_NAME)
-
-            # المجلد الفرعي للتصنيف
-            sub_dir = target_dir
-            for part in subfolder.replace("\\", "/").split("/"):
-                part_clean = part.strip()
-                if not part_clean:
-                    continue
-                next_d = sub_dir.findFile(part_clean)
-                if not next_d:
-                    next_d = sub_dir.createDirectory(part_clean)
-                sub_dir = next_d
+            parsed_cat_uri = Uri.parse(cat_doc_uri_str)
 
             # تخمين نوع الوسائط
             ext = src_file.suffix.lower()
@@ -622,19 +878,35 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, subfolder: str, file
             if ext in VIDEO_EXTENSIONS:
                 mime = "video/mp4"
 
-            # إنشاء الملف الهدف
-            new_file_doc = sub_dir.createFile(mime, filename)
-            if not new_file_doc:
-                logger.error("فشل إنشاء ملف الوجهة في SAF Document!")
+            # إنشاء الملف
+            new_file_uri = None
+            DocFileClass = _saf_get_document_file_class()
+            if DocFileClass is not None:
+                cat_doc = DocFileClass.fromTreeUri(mActivity, parsed_cat_uri)
+                if cat_doc:
+                    # تفادي التكرار
+                    existing = cat_doc.findFile(filename)
+                    if existing and existing.exists():
+                        if existing.length() == src_size:
+                            return str(existing.getUri().toString())
+                    new_doc = cat_doc.createFile(mime, filename)
+                    if new_doc:
+                        new_file_uri = new_doc.getUri()
+
+            if new_file_uri is None:
+                DocumentsContract = autoclass("android.provider.DocumentsContract")
+                new_file_uri = DocumentsContract.createDocument(cr, parsed_cat_uri, mime, filename)
+
+            if not new_file_uri:
+                logger.error("فشل إنشاء ملف الوجهة في SAF!")
                 return ""
 
-            dest_uri = new_file_doc.getUri()
-            cr = mActivity.getContentResolver()
-            out_stream = cr.openOutputStream(dest_uri)
+            out_stream = cr.openOutputStream(new_file_uri)
             if not out_stream:
-                logger.error("تعذر فتح دفق الكتابة للـ DocumentFile!")
+                logger.error("تعذر فتح دفق الكتابة لملف SAF!")
                 return ""
 
+            total_written = 0
             with open(src_file, "rb") as in_f:
                 buf = bytearray(64 * 1024)
                 while True:
@@ -642,58 +914,180 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, subfolder: str, file
                     if not chunk:
                         break
                     out_stream.write(chunk)
+                    total_written += len(chunk)
 
             out_stream.close()
-            return str(dest_uri.toString())
+
+            # التحقق الصارم من الحجم
+            if total_written != src_size:
+                logger.error("عدم تطابق الحجم أثناء النسخ إلى SAF: كتب %d من %d", total_written, src_size)
+                delete_media_item(str(new_file_uri.toString()))
+                return ""
+
+            return str(new_file_uri.toString())
         return ""
     except Exception as e:
-        logger.error("فشل نسخ الملف إلى SAF Document: %s", e)
+        logger.error("فشل نسخ الملف إلى SAF: %s", e, exc_info=True)
+        return ""
+
+
+def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, filename: str, expected_size: int = 0) -> str:
+    """
+    نسخ ملف من Content URI (MediaStore) مباشرة إلى Document URI في بطاقة SD عبر SAF.
+    التحقق الصارم من دفق البيانات وتطابق الحجم بالبايت.
+    """
+    # بيئة المحاكاة
+    if saf_tree_uri.startswith("mock_saf://"):
+        cat_uri = saf_find_or_create_directory(saf_tree_uri, category)
+        dest_dir = Path(cat_uri.replace("mock_doc://", ""))
+        dest_file = dest_dir / filename
+        ok = copy_uri_to_path(src_content_uri, dest_file)
+        return f"mock_doc://{dest_file}" if ok else ""
+
+    try:
+        if _get_platform() == "android":
+            from android import mActivity
+            from jnius import autoclass
+            Uri = autoclass("android.net.Uri")
+            cr = mActivity.getContentResolver()
+
+            cat_doc_uri_str = saf_find_or_create_directory(saf_tree_uri, category)
+            if not cat_doc_uri_str:
+                return ""
+
+            parsed_cat_uri = Uri.parse(cat_doc_uri_str)
+            src_parsed = Uri.parse(src_content_uri)
+
+            in_stream = cr.openInputStream(src_parsed)
+            if not in_stream:
+                logger.error("تعذر فتح دفق المصدر للـ URI: %s", src_content_uri)
+                return ""
+
+            ext = Path(filename).suffix.lower()
+            mime = "image/jpeg"
+            if ext in VIDEO_EXTENSIONS:
+                mime = "video/mp4"
+
+            DocFileClass = _saf_get_document_file_class()
+            new_file_uri = None
+            if DocFileClass is not None:
+                cat_doc = DocFileClass.fromTreeUri(mActivity, parsed_cat_uri)
+                if cat_doc:
+                    new_doc = cat_doc.createFile(mime, filename)
+                    if new_doc:
+                        new_file_uri = new_doc.getUri()
+
+            if new_file_uri is None:
+                DocumentsContract = autoclass("android.provider.DocumentsContract")
+                new_file_uri = DocumentsContract.createDocument(cr, parsed_cat_uri, mime, filename)
+
+            if not new_file_uri:
+                in_stream.close()
+                return ""
+
+            out_stream = cr.openOutputStream(new_file_uri)
+            if not out_stream:
+                in_stream.close()
+                return ""
+
+            total_written = 0
+            buf = bytearray(64 * 1024)
+            while True:
+                read_bytes = in_stream.read(buf)
+                if read_bytes == -1 or read_bytes == 0:
+                    break
+                out_stream.write(buf[:read_bytes])
+                total_written += read_bytes
+
+            in_stream.close()
+            out_stream.close()
+
+            if expected_size > 0 and total_written != expected_size:
+                logger.error("عدم تطابق الحجم عند نسخ URI إلى SAF: كتب %d من %d", total_written, expected_size)
+                delete_media_item(str(new_file_uri.toString()))
+                return ""
+
+            return str(new_file_uri.toString())
+        return ""
+    except Exception as e:
+        logger.error("فشل نسخ Content URI إلى SAF: %s", e, exc_info=True)
         return ""
 
 
 def delete_media_item(item: MediaItem | Path | str) -> bool:
-    """حذف الملف المصدر بأمان (لنمط النقل Move) سواء كان مساراً فيزيائياً أو Content URI"""
+    """
+    حذف الملف المصدر أو وجهة تراجع بأمان:
+    - يتعامل مع المسارات الفيزيائية (Path).
+    - يتعامل مع Document URIs عبر DocumentsContract.
+    - يتعامل مع MediaStore Content URIs ويحمي من RecoverableSecurityException في أندرويد الحديث.
+    - إذا فشل الحذف، يعيد False دون التسبب في Crash.
+    """
     try:
+        # 1. إذا كان MediaItem
         if isinstance(item, MediaItem):
             if item.source_type == "path" and item.path:
                 p = Path(item.path)
                 if p.exists():
                     p.unlink()
                     return True
-            elif item.source_type == "content_uri" and item.uri:
-                from kivy.utils import platform
-                if platform == "android":
-                    from android import mActivity
-                    from jnius import autoclass
-                    Uri = autoclass("android.net.Uri")
-                    cr = mActivity.getContentResolver()
-                    deleted = cr.delete(Uri.parse(item.uri), None, None)
-                    return deleted > 0
-                return False
+            elif item.uri:
+                return delete_media_item(item.uri)
+            return False
 
-        elif isinstance(item, Path):
+        # 2. إذا كان Path
+        if isinstance(item, Path):
             if item.exists():
                 item.unlink()
                 return True
+            return True
 
-        elif isinstance(item, str):
-            if item.startswith("content://"):
-                from kivy.utils import platform
-                if platform == "android":
-                    from android import mActivity
-                    from jnius import autoclass
-                    Uri = autoclass("android.net.Uri")
-                    cr = mActivity.getContentResolver()
-                    deleted = cr.delete(Uri.parse(item), None, None)
+        # 3. إذا كان نصاً (مسار أو Content URI)
+        item_str = str(item).strip()
+        if not item_str:
+            return False
+
+        if item_str.startswith("mock_doc://"):
+            mock_p = Path(item_str.replace("mock_doc://", ""))
+            if mock_p.exists():
+                mock_p.unlink()
+            return True
+
+        if item_str.startswith("content://"):
+            if _get_platform() == "android":
+                from android import mActivity
+                from jnius import autoclass
+                Uri = autoclass("android.net.Uri")
+                parsed_uri = Uri.parse(item_str)
+                cr = mActivity.getContentResolver()
+
+                # فحص هل هو SAF Document
+                if "document" in item_str or "tree" in item_str:
+                    try:
+                        DocumentsContract = autoclass("android.provider.DocumentsContract")
+                        return bool(DocumentsContract.deleteDocument(cr, parsed_uri))
+                    except Exception as e:
+                        logger.debug("DocumentsContract delete failed, fallback to cr.delete: %s", e)
+
+                # حذف من MediaStore مع معالجة RecoverableSecurityException
+                try:
+                    deleted = cr.delete(parsed_uri, None, None)
                     return deleted > 0
-                return False
-            else:
-                p = Path(item)
-                if p.exists():
-                    p.unlink()
-                    return True
+                except Exception as sec_e:
+                    err_name = type(sec_e).__name__
+                    if "RecoverableSecurityException" in err_name or "RecoverableSecurityException" in str(sec_e):
+                        logger.info("حذف MediaStore يتطلب إذن المستخدم عبر RecoverableSecurityException: %s", sec_e)
+                    else:
+                        logger.warning("فشل حذف Content URI: %s (%s)", item_str, sec_e)
+                    return False
+            return False
 
-        return False
+        # مسار محلي عادي
+        p = Path(item_str)
+        if p.exists():
+            p.unlink()
+            return True
+        return True
+
     except Exception as e:
-        logger.warning("تعذر حذف الملف المصدر %s: %s", item, e)
+        logger.warning("استثناء أثناء حذف العنصر %s: %s", item, e)
         return False

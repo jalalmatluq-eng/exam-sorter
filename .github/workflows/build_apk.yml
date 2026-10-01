@@ -33,9 +33,9 @@ jobs:
         run: |
           pip install --upgrade pip
           # opencv headless: same API as opencv-python, no system libGL needed on CI runners
-          pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless
+          pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless kivy kivymd
 
-      - name: Run test_modules.py (7 suites)
+      - name: Run test_modules.py (11 suites including SAF & SD card simulation)
         run: |
           python test_modules.py
 

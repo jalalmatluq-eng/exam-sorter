@@ -8,6 +8,8 @@
 5. استرجاع صور مادة معينة لعرضها في المعرض.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import os
@@ -18,6 +20,7 @@ import sys
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger("FileManager")
 
@@ -897,9 +900,10 @@ def _log_transfer_record(
     category: str,
     file_size: int,
     base_path: Path | None = None,
-    is_copy: bool = True
+    is_copy: bool = True,
+    is_saf_dest: bool = False,
 ) -> None:
-    """تسجيل عملية نسخ/فرز في سجل المعاملات JSON"""
+    """تسجيل عملية نسخ/فرز في سجل المعاملات JSON مع دعم المسارات وعناوين URIs"""
     log_file = get_transfer_log_path(base_path)
     records: list[dict[str, object]] = []
     if log_file.exists():
@@ -915,11 +919,12 @@ def _log_transfer_record(
 
     records.append({
         "id": int(datetime.now(UTC).timestamp() * 1000),
-        "source": src_path,
-        "destination": dest_path,
+        "source": str(src_path),
+        "destination": str(dest_path),
         "category": category,
         "size_bytes": file_size,
         "is_copy": is_copy,
+        "is_saf_dest": bool(is_saf_dest or str(dest_path).startswith("content://")),
         "timestamp": datetime.now(UTC).isoformat(),
     })
 
@@ -928,7 +933,23 @@ def _log_transfer_record(
         with open(log_file, "w", encoding="utf-8") as f:
             json.dump(records, f, ensure_ascii=False, indent=2)
     except (OSError, TypeError) as e:
-        print("تعذر تحديث سجل العمليات:", e)
+        logger.warning("تعذر تحديث سجل العمليات: %s", e)
+
+
+def _update_last_transfer_record_to_copy(base_path: Path | None = None) -> None:
+    """تحديث آخر عملية مسجلة لتكون is_copy=True عند تعذر حذف المصدر لضمان عدم فقدانه في Undo"""
+    log_file = get_transfer_log_path(base_path)
+    if not log_file.exists():
+        return
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            records = json.load(f)
+        if records and isinstance(records, list):
+            records[-1]["is_copy"] = True
+            with open(log_file, "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.debug("تعذر تحديث سجل النقل إلى نسخ: %s", e)
 
 
 def get_transfer_history(
@@ -954,10 +975,11 @@ def get_transfer_history(
 def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     """
     التراجع عن عملية تصنيف/نسخ معينة:
-    1. حذف النسخة من مجلد MediaSorter مع بقاء الأصل دون مساس.
-    2. حذف السجل من transfer_history.json.
-    3. إزالة الملف من scanned_media_cache.db لإتاحة فحصه مجدداً.
+    - يدعم كلاً من المسارات العادية و Content URIs عبر SAF.
+    - يحذف النسخة من الوجهة بأمان دون مساس بالأصل.
+    - يعيد الأصل إلى مكانه في حال كانت العملية Move.
     """
+    import storage_backend
     log_file = get_transfer_log_path(base_path)
     if not log_file.exists():
         return False
@@ -982,21 +1004,32 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     if target_record is None:
         return False
 
-    dest = Path(str(target_record["destination"]))
-    src = Path(str(target_record["source"]))
+    dest_str = str(target_record["destination"])
+    src_str = str(target_record["source"])
     is_copy = bool(target_record.get("is_copy", True))
 
-    if is_copy or src.exists():
-        if dest.exists():
-            try:
-                dest.unlink()
-            except OSError as e:
-                print(f"تعذر حذف النسخة {dest}:", e)
-                return False
+    if is_copy:
+        # عملية نسخ: نحذف الوجهة فقط
+        _ = storage_backend.delete_media_item(dest_str)
     else:
-        if dest.exists():
-            src.parent.mkdir(parents=True, exist_ok=True)
-            _ = shutil.move(str(dest), str(src))
+        # عملية نقل: استعادة المصدر أولاً إن كان مساراً محلياً
+        if not src_str.startswith("content://"):
+            src_p = Path(src_str)
+            src_p.parent.mkdir(parents=True, exist_ok=True)
+            if not dest_str.startswith("content://"):
+                dest_p = Path(dest_str)
+                if dest_p.exists():
+                    try:
+                        shutil.move(str(dest_p), str(src_p))
+                    except OSError:
+                        pass
+            else:
+                # الوجهة كانت SAF: نسخ محتواها إلى مسار المصدر ثم حذفها
+                storage_backend.copy_uri_to_path(dest_str, src_p)
+                storage_backend.delete_media_item(dest_str)
+        else:
+            # المصدر كان Content URI، نحذف الوجهة فقط
+            storage_backend.delete_media_item(dest_str)
 
     _ = records.pop(found_idx)
     try:
@@ -1013,9 +1046,9 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
                 cursor = conn.cursor()
                 q = (
                     "DELETE FROM scanned_files "
-                    "WHERE file_path = ? OR file_path = ?"
+                    "WHERE file_path = ? OR file_path = ? OR dest_path = ?"
                 )
-                _ = cursor.execute(q, (str(src), str(dest)))
+                _ = cursor.execute(q, (src_str, dest_str, dest_str))
                 conn.commit()
                 conn.close()
         except (sqlite3.Error, OSError):
@@ -1025,7 +1058,8 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
 
 
 def undo_all_transfers(base_path: Path | None = None) -> int:
-    """التراجع عن جميع عمليات النسخ/الفرز دفعة واحدة"""
+    """التراجع عن جميع عمليات النسخ/الفرز دفعة واحدة مع دعم SAF و Content URIs"""
+    import storage_backend
     log_file = get_transfer_log_path(base_path)
     if not log_file.exists():
         return 0
@@ -1041,25 +1075,32 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
 
     undone_count = 0
     for r in records:
-        dest = Path(str(r["destination"]))
-        src = Path(str(r["source"]))
+        dest_str = str(r["destination"])
+        src_str = str(r["source"])
         is_copy = bool(r.get("is_copy", True))
 
-        if is_copy or src.exists():
-            if dest.exists():
-                try:
-                    dest.unlink()
-                    undone_count += 1
-                except OSError:
-                    pass
+        if is_copy:
+            if storage_backend.delete_media_item(dest_str):
+                undone_count += 1
         else:
-            if dest.exists():
-                try:
-                    src.parent.mkdir(parents=True, exist_ok=True)
-                    _ = shutil.move(str(dest), str(src))
+            if not src_str.startswith("content://"):
+                src_p = Path(src_str)
+                src_p.parent.mkdir(parents=True, exist_ok=True)
+                if not dest_str.startswith("content://"):
+                    dest_p = Path(dest_str)
+                    if dest_p.exists():
+                        try:
+                            shutil.move(str(dest_p), str(src_p))
+                            undone_count += 1
+                        except OSError:
+                            pass
+                else:
+                    storage_backend.copy_uri_to_path(dest_str, src_p)
+                    storage_backend.delete_media_item(dest_str)
                     undone_count += 1
-                except OSError:
-                    pass
+            else:
+                if storage_backend.delete_media_item(dest_str):
+                    undone_count += 1
 
     try:
         with open(log_file, "w", encoding="utf-8") as f:
@@ -1083,119 +1124,254 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
 
 
 def copy_to_category(
-    src_path: str | Path,
-    category_name: str,
+    src_path: str | Path | Any = None,
+    category_name: str = "",
+    target_location: Any | None = None,
     base_path: Path | None = None,
-    is_copy: bool = True
-) -> Path:
+    is_copy: bool = True,
+    *,
+    src_item: str | Path | Any = None,
+) -> Path | str:
     """
-    نسخ الملف بأمان إلى مجلد التصنيف المحدد مع الحفاظ التام على الملف الأصلي:
-    1. توحيد اسم التصنيف وهجرة أي تسميات قديمة.
-    2. إنشاء مجلد التصنيف إن لم يكن موجوداً.
-    3. حل تعارض الأسماء تلقائياً.
-    4. النسخ عبر دفق آمن (Atomic Streaming Copy) مع التحقق من الحجم.
-    5. توثيق العملية في transfer_history.json.
+    نسخ الملف بأمان إلى مجلد التصنيف المحدد مع دعم كامل لـ:
+    1. Path source -> Path destination (الذاكرة الداخلية)
+    2. Content URI source -> Path destination (الذاكرة الداخلية من MediaStore)
+    3. Path source -> SAF Tree URI destination (بطاقة SD عبر DocumentFile/DocumentsContract)
+    4. Content URI source -> SAF Tree URI destination (بطاقة SD من MediaStore)
+    مع التحقق الصارم من الحجم بالبايت ومنع الـ fallback الصامت.
     """
     import storage_backend
+
+    actual_item = src_path if src_path is not None else src_item
+    if actual_item is None:
+        raise ValueError("يجب تحديد الملف المصدر المراد نسخه (src_path)")
+
+    # 1. تحديد الوجهة الفعلية TargetLocation
+    if target_location is None:
+        if base_path is not None:
+            target_location = storage_backend.TargetLocation(
+                storage_type="custom",
+                is_saf=False,
+                path=Path(base_path),
+                display_name=str(base_path),
+                is_valid=True,
+            )
+        else:
+            target_location = storage_backend.get_active_target_location()
+
+    if not target_location.is_valid:
+        raise OSError(f"وجهة التخزين المحددة غير صالحة: {target_location.error_message}")
+
     clean_cat = storage_backend.normalize_category_name(category_name)
-    src = Path(src_path).resolve()
-    if not src.exists() or not src.is_file():
-        raise FileNotFoundError(f"الملف المصدر غير موجود: {src}")
 
-    target_base = (
-        base_path if base_path is not None
-        else get_media_sorter_base_path()
-    )
+    # 2. تحليل المصدر (Path أو MediaItem أو Content URI)
+    resolved_src_path: Path | None = None
+    src_uri: str = ""
+    filename: str = ""
+    src_size: int = 0
+    is_uri_source: bool = False
 
+    if isinstance(actual_item, storage_backend.MediaItem):
+        filename = actual_item.name
+        src_size = actual_item.size_bytes
+        if actual_item.path and os.path.exists(actual_item.path):
+            resolved_src_path = Path(actual_item.path)
+            is_uri_source = False
+        elif actual_item.uri:
+            src_uri = actual_item.uri
+            is_uri_source = True
+        else:
+            raise FileNotFoundError(f"العنصر غير متاح: {actual_item}")
+    elif isinstance(actual_item, str) and actual_item.startswith("content://"):
+        src_uri = actual_item
+        is_uri_source = True
+        filename = f"media_{int(time.time() * 1000)}.jpg"
+        src_size = storage_backend.get_uri_file_size(src_uri)
+    else:
+        resolved_src_path = Path(actual_item).resolve()
+        if not resolved_src_path.exists() or not resolved_src_path.is_file():
+            raise FileNotFoundError(f"الملف المصدر غير موجود: {resolved_src_path}")
+        filename = resolved_src_path.name
+        src_size = resolved_src_path.stat().st_size
+        is_uri_source = False
+
+    # تنظيف اسم المجلد الفرعي
     clean_parts = [
         sanitize_folder_name(p)
         for p in clean_cat.replace("\\", "/").split("/")
         if p.strip()
     ]
+    rel_category_str = "/".join(clean_parts) if clean_parts else "خارج التصنيف"
+
+    # =========================================================================
+    # الحالة الأولى: الوجهة بطاقة SD عبر Storage Access Framework (SAF Tree URI)
+    # =========================================================================
+    if target_location.is_saf:
+        tree_uri = target_location.tree_uri
+        if not tree_uri:
+            raise OSError("تم اختيار بطاقة الذاكرة الخارجية لكن لم يتم تحديد URI الصالح عبر SAF")
+
+        if is_uri_source:
+            dest_uri = storage_backend.copy_uri_to_saf_uri(
+                src_uri,
+                tree_uri,
+                category=rel_category_str,
+                filename=filename,
+                expected_size=src_size,
+            )
+        else:
+            assert resolved_src_path is not None
+            dest_uri = storage_backend.copy_path_to_saf_uri(
+                resolved_src_path,
+                tree_uri,
+                category=rel_category_str,
+                filename=filename,
+            )
+
+        if not dest_uri:
+            raise OSError(f"فشل إتمام نسخ الملف إلى بطاقة SD عبر SAF: {filename}")
+
+        # توثيق العملية
+        _log_transfer_record(
+            src_path=str(src_uri if is_uri_source else resolved_src_path),
+            dest_path=dest_uri,
+            category=clean_cat,
+            file_size=src_size,
+            base_path=base_path,
+            is_copy=is_copy,
+            is_saf_dest=True,
+        )
+        return dest_uri
+
+    # =========================================================================
+    # الحالة الثانية: الوجهة مسار محلي فيزيائي (الذاكرة الداخلية أو قرص مباشر)
+    # =========================================================================
+    target_base = target_location.path or get_media_sorter_base_path()
     target_folder = target_base
     for part in clean_parts:
         target_folder = target_folder / part
     target_folder.mkdir(parents=True, exist_ok=True)
 
-    stem = src.stem
-    suffix = src.suffix
-    src_size = src.stat().st_size
+    stem = Path(filename).stem
+    suffix = Path(filename).suffix
 
-    # إذا كان الملف موجوداً مسبقاً بنفس الحجم، لا داعي لتكرار نسخه
+    # حل تعارض الأسماء
     primary_dest = target_folder / f"{stem}{suffix}"
     if primary_dest.exists() and primary_dest.stat().st_size == src_size:
         _log_transfer_record(
-            str(src),
-            str(primary_dest),
-            clean_cat,
-            src_size,
+            src_path=str(src_uri if is_uri_source else resolved_src_path),
+            dest_path=str(primary_dest),
+            category=clean_cat,
+            file_size=src_size,
             base_path=target_base,
             is_copy=is_copy,
+            is_saf_dest=False,
         )
         return primary_dest
 
-    # حل تعارض الأسماء
     dest = primary_dest
     counter = 1
     while dest.exists():
         if dest.stat().st_size == src_size:
             _log_transfer_record(
-                str(src),
-                str(dest),
-                clean_cat,
-                src_size,
+                src_path=str(src_uri if is_uri_source else resolved_src_path),
+                dest_path=str(dest),
+                category=clean_cat,
+                file_size=src_size,
                 base_path=target_base,
                 is_copy=is_copy,
+                is_saf_dest=False,
             )
             return dest
         dest = target_folder / f"{stem}_{counter:02d}{suffix}"
         counter += 1
 
-    # نسخ مطابق وذري عبر دفق تدفقي مع التحقق الحاسم من تطابق الحجم بالبايت
-    success = storage_backend.copy_path_to_path(src, dest)
+    # تنفيذ النسخ بالدفق
+    if is_uri_source:
+        success = storage_backend.copy_uri_to_path(src_uri, dest)
+    else:
+        assert resolved_src_path is not None
+        success = storage_backend.copy_path_to_path(resolved_src_path, dest)
+
     if not success or not dest.exists():
         raise OSError(f"فشل التحقق: تعذر إتمام نسخ الملف إلى الوجهة: {dest}")
 
     dest_size = dest.stat().st_size
-    if dest_size != src_size:
+    if src_size > 0 and dest_size != src_size:
         dest.unlink(missing_ok=True)
         raise OSError(f"عدم تطابق الحجم بعد النسخ: المصدر {src_size} بايت، الوجهة {dest_size} بايت")
 
     # توثيق العملية
     _log_transfer_record(
-        str(src),
-        str(dest),
-        clean_cat,
-        src_size,
+        src_path=str(src_uri if is_uri_source else resolved_src_path),
+        dest_path=str(dest),
+        category=clean_cat,
+        file_size=src_size or dest_size,
         base_path=target_base,
         is_copy=is_copy,
+        is_saf_dest=False,
     )
 
     return dest
 
 
 def move_to_category(
-    src_path: str | Path,
-    category_name: str,
+    src_path: str | Path | Any = None,
+    category_name: str = "",
+    target_location: Any | None = None,
     base_path: Path | None = None,
-    copy_only: bool = True
-) -> Path:
-    """نقل أو نسخ الملف إلى مجلد التصنيف المحدد مع ضمان عدم حذف الأصل إلا بعد نجاح الوجهة وتطابق حجمها"""
+    copy_only: bool = True,
+    *,
+    src_item: str | Path | Any = None,
+) -> Path | str:
+    """
+    نقل أو نسخ الملف إلى مجلد التصنيف المحدد مع ضمان:
+    - نسخ الملف أولاً والتحقق التام من وجوده وتطابق حجمه.
+    - عدم حذف الأصل في وضع النقل Move إلا بعد ثبوت نجاح الوجهة بالبايت.
+    - في حال فشل حذف المصدر (مثل RecoverableSecurityException في أندرويد)،
+      تسجيل العملية كـ Copy لحماية المصدر من الفقدان.
+    """
+    import storage_backend
+
+    actual_item = src_path if src_path is not None else src_item
+    if actual_item is None:
+        raise ValueError("يجب تحديد الملف المصدر المراد نقله (src_path)")
+
     if copy_only:
         return copy_to_category(
-            src_path, category_name, base_path=base_path, is_copy=True
+            actual_item,
+            category_name,
+            target_location=target_location,
+            base_path=base_path,
+            is_copy=True,
         )
 
-    src = Path(src_path).resolve()
-    if not src.exists() or not src.is_file():
-        raise FileNotFoundError(f"الملف المصدر غير موجود: {src}")
-
+    # 1. تنفيذ النسخ أولاً والتحقق الكامل من الوجهة
     dest = copy_to_category(
-        src, category_name, base_path=base_path, is_copy=False
+        actual_item,
+        category_name,
+        target_location=target_location,
+        base_path=base_path,
+        is_copy=False,
     )
-    if not dest.exists() or dest.stat().st_size != src.stat().st_size:
-        raise OSError(f"فشل التحقق من الوجهة قبل حذف الأصل: {dest}")
 
-    src.unlink()
+    # التحقق من سلامة الوجهة
+    if isinstance(dest, Path):
+        if not dest.exists():
+            raise OSError(f"فشل التحقق من الوجهة قبل حذف الأصل: {dest}")
+    elif isinstance(dest, str):
+        if not dest.startswith("content://") and not dest.startswith("mock_doc://"):
+            if not Path(dest).exists():
+                raise OSError(f"فشل التحقق من الوجهة قبل حذف الأصل: {dest}")
+
+    # 2. محاولة حذف المصدر بأمان
+    deleted = storage_backend.delete_media_item(actual_item)
+    if not deleted:
+        logger.warning(
+            "تعذر حذف الملف المصدر (%s) بعد نسخه بنجاح، تم اعتباره نسخاً آمناً حفاظاً على الملف",
+            actual_item,
+        )
+        _update_last_transfer_record_to_copy(base_path)
+
     return dest
 

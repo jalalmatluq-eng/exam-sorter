@@ -378,6 +378,24 @@ class CosmoSortApp(MDApp):
                                     settings.refresh_storage_destination_ui()
                             except Exception:
                                 pass
+
+                            # استئناف الفحص المعلق إن وجد
+                            pending = file_manager.get_pending_scan()
+                            if pending.get("active") and pending.get("target") == "sdcard":
+                                file_manager.clear_pending_scan()
+                                try:
+                                    home = self.root.get_screen("home_screen")
+                                    if home and hasattr(home, "start_scan_with_options"):
+                                        from kivy.clock import Clock
+                                        src_chosen = pending.get("source", "both")
+                                        Clock.schedule_once(
+                                            lambda _dt: home.start_scan_with_options(
+                                                src_chosen, "sdcard"
+                                            ),
+                                            0.5,
+                                        )
+                                except Exception as e_res:
+                                    logger.warning("تعذر استئناف الفحص المعلق: %s", e_res)
             except Exception as e:
                 logger.error("خطأ أثناء معالجة إذن SAF: %s", e, exc_info=True)
 

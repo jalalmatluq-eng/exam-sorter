@@ -432,6 +432,168 @@ def test_unified_storage_backend() -> None:
     print("✓ نجح فحص طبقة التخزين الموحدة بالكامل.\n")
 
 
+def test_saf_and_target_location_simulations() -> None:
+    """
+    الفحص الآلي الشامل لسيناريوهات SAF ومحاكاة بطاقة SD وحالات الأعطال الثمانية:
+    1. internal -> internal
+    2. SD SAF -> internal
+    3. internal -> SD SAF
+    4. both -> SD SAF
+    5. فصل SD أثناء الفرز ومنع الـ Fallback الصامت
+    6. فقدان URI permission والتوقف الآمن
+    7. التراجع Undo لوجهة content:// / SAF URI
+    8. نمط Move مع فشل حذف المصدر (التحويل لنسخ آمن وحماية الأصل)
+    """
+    print("--- 11. فحص محاكاة مسارات SAF والذاكرة الخارجية وسيناريوهات الأمان الثمانية ---")
+    import storage_backend
+    import file_manager
+
+    sim_root = Path("test_sim_saf_env").resolve()
+    shutil.rmtree(sim_root, ignore_errors=True)
+    sim_root.mkdir(parents=True, exist_ok=True)
+
+    internal_src_dir = sim_root / "internal_storage"
+    internal_dest_dir = sim_root / "internal_dest"
+    sd_mount_dir = sim_root / "sd_card_mount"
+
+    internal_src_dir.mkdir(parents=True, exist_ok=True)
+    internal_dest_dir.mkdir(parents=True, exist_ok=True)
+    sd_mount_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. اختبار internal -> internal
+    f_int1 = internal_src_dir / "doc_exam_01.jpg"
+    f_int1.write_bytes(b"INTERNAL EXAM CONTENT " * 200)
+    int_loc = storage_backend.TargetLocation(
+        storage_type="internal",
+        is_saf=False,
+        path=internal_dest_dir,
+        display_name="الذاكرة الداخلية",
+        is_valid=True,
+    )
+    dest1 = file_manager.copy_to_category(f_int1, "محاضرات ودروس", target_location=int_loc)
+    assert isinstance(dest1, Path)
+    assert dest1.exists()
+    assert dest1.stat().st_size == f_int1.stat().st_size
+    print("  [1/8] ✓ internal -> internal: نجح النسخ مع تطابق الحجم بدقة.")
+
+    # 2. اختبار SD SAF -> internal
+    sd_tree_uri = f"mock_saf://{sd_mount_dir}"
+    sd_file_mock = sd_mount_dir / "external_video.mp4"
+    sd_file_mock.write_bytes(b"MOCK EXTERNAL SD VIDEO DATA " * 300)
+    sd_item = storage_backend.MediaItem(
+        id=f"mock_doc://{sd_file_mock}",
+        source_type="content_uri",
+        path="",
+        uri=f"mock_doc://{sd_file_mock}",
+        display_name="external_video.mp4",
+        size_bytes=sd_file_mock.stat().st_size,
+        storage_id="sdcard",
+    )
+    dest2 = file_manager.copy_to_category(sd_item, "فيديوهات مضحكة", target_location=int_loc)
+    assert isinstance(dest2, Path)
+    assert dest2.exists()
+    assert dest2.stat().st_size == sd_item.size_bytes
+    print("  [2/8] ✓ SD SAF -> internal: نجح دفق الوسائط من SAF إلى الذاكرة الداخلية.")
+
+    # 3. اختبار internal -> SD SAF
+    sd_loc = storage_backend.TargetLocation(
+        storage_type="sdcard",
+        is_saf=True,
+        tree_uri=sd_tree_uri,
+        display_name="بطاقة الذاكرة الخارجية SAF",
+        is_valid=True,
+    )
+    f_int2 = internal_src_dir / "lecture_photo.jpg"
+    f_int2.write_bytes(b"LECTURE PHOTO STREAM DATA " * 150)
+    dest3_uri = file_manager.copy_to_category(f_int2, "محاضرات ودروس", target_location=sd_loc)
+    assert isinstance(dest3_uri, str)
+    assert dest3_uri.startswith("mock_doc://")
+    created_sd_file = Path(dest3_uri.replace("mock_doc://", ""))
+    assert created_sd_file.exists()
+    assert created_sd_file.stat().st_size == f_int2.stat().st_size
+    print("  [3/8] ✓ internal -> SD SAF: نجح إنشاء وتدفق الملف إلى مجلد SAF بالبطاقة.")
+
+    # 4. اختبار both -> SD SAF
+    # تجهيز ملفين أحدهما من الداخلية والآخر من SAF
+    dest4_a = file_manager.copy_to_category(f_int1, "صوري", target_location=sd_loc)
+    dest4_b = file_manager.copy_to_category(sd_item, "أفلام ومسلسلات", target_location=sd_loc)
+    assert str(dest4_a).startswith("mock_doc://")
+    assert str(dest4_b).startswith("mock_doc://")
+    print("  [4/8] ✓ both -> SD SAF: تم دمج ومعالجة المصدرين وحفظهما بالبطاقة دون إسقاط أي منهما.")
+
+    # 5. اختبار فصل SD أثناء الفرز ومنع الـ Fallback الصامت
+    # محاكاة فصل البطاقة بإزالة مجلد التخزين
+    shutil.rmtree(sd_mount_dir, ignore_errors=True)
+    disconnected_loc = storage_backend.TargetLocation(
+        storage_type="sdcard",
+        is_saf=True,
+        tree_uri=sd_tree_uri,
+        display_name="بطاقة مفصولة",
+        is_valid=False,
+        error_message="البطاقة تم فصلها",
+    )
+    caught_disconnect = False
+    try:
+        file_manager.copy_to_category(f_int1, "محاضرات ودروس", target_location=disconnected_loc)
+    except OSError:
+        caught_disconnect = True
+    assert caught_disconnect is True, "يجب التوقف وإلقاء خطأ عند فصل البطاقة وعدم التحويل الصامت للداخلية!"
+    assert f_int1.exists(), "الملف الأصلي يجب أن يظل سليماً دون أي مساس!"
+    print("  [5/8] ✓ فصل SD أثناء الفرز: توقف الفرز بأمان مع حماية الأصل ومنع الـ Fallback الصامت.")
+
+    # إعادة تهيئة مجلد الـ SD
+    sd_mount_dir.mkdir(parents=True, exist_ok=True)
+
+    # 6. اختبار فقدان URI permission
+    storage_backend.save_saf_persisted_uri("")
+    loc_no_perm = storage_backend.get_active_target_location("sdcard")
+    assert loc_no_perm.is_valid is False
+    assert ("SAF" in loc_no_perm.error_message or "غير متوفرة" in loc_no_perm.error_message)
+    print("  [6/8] ✓ فقدان URI permission: تم كشف غياب الإذن بدقة ومطالبة المستخدم به.")
+
+    # 7. اختبار Undo لوجهة content:// / SAF URI
+    history_before = file_manager.get_transfer_history(base_path=internal_dest_dir)
+    # نسجل عملية نسخ إلى SAF
+    f_undo_src = internal_src_dir / "undo_test.jpg"
+    f_undo_src.write_bytes(b"TEST UNDO CONTENT")
+    dest_undo_uri = file_manager.copy_to_category(f_undo_src, "صوري", target_location=sd_loc, base_path=internal_dest_dir)
+    undo_file_path = Path(str(dest_undo_uri).replace("mock_doc://", ""))
+    assert undo_file_path.exists()
+    latest_history = file_manager.get_transfer_history(base_path=internal_dest_dir)
+    assert len(latest_history) > 0
+    record_id = int(latest_history[0]["id"])
+    undo_ok = file_manager.undo_transfer(record_id, base_path=internal_dest_dir)
+    assert undo_ok is True
+    assert not undo_file_path.exists(), "يجب حذف الملف من SAF الوجهة عند التراجع!"
+    assert f_undo_src.exists(), "الملف المصدر يجب أن يظل موجوداً!"
+    print("  [7/8] ✓ Undo لوجهة SAF URI: تم حذف الملف من الوجهة بدقة مع بقاء الأصل.")
+
+    # 8. اختبار Move مع فشل حذف المصدر (التحويل لنسخ آمن وحماية الأصل)
+    f_move_src = internal_src_dir / "safe_move_test.jpg"
+    f_move_src.write_bytes(b"IMPORTANT DATA NEVER LOSE")
+
+    # محاكاة فشل الحذف
+    original_delete = storage_backend.delete_media_item
+    storage_backend.delete_media_item = lambda item: False
+    try:
+        dest_moved = file_manager.move_to_category(
+            f_move_src, "محاضرات ودروس", target_location=int_loc, base_path=internal_dest_dir, copy_only=False
+        )
+        assert isinstance(dest_moved, Path) and dest_moved.exists()
+        assert f_move_src.exists(), "عند فشل حذف المصدر يجب ألا يُفقد الملف ويُعتبر نسخاً آمناً!"
+        # التحقق من أن السجل تم تحويله إلى is_copy = True
+        hist = file_manager.get_transfer_history(base_path=internal_dest_dir)
+        assert len(hist) > 0
+        assert hist[0].get("is_copy") is True
+        print("  [8/8] ✓ Move مع فشل حذف المصدر: تم حفظ الوجهة والاحتفاظ بالأصل وتحويل العملية لنسخ آمن.")
+    finally:
+        storage_backend.delete_media_item = original_delete
+
+    # تنظيف
+    shutil.rmtree(sim_root, ignore_errors=True)
+    print("✓ نجحت جميع اختبارات محاكاة SAF والسيناريوهات الثمانية بنسبة 100%!\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -443,6 +605,8 @@ if __name__ == "__main__":
     test_poison_files_and_pending_scan()
     test_export_logs()
     test_unified_storage_backend()
+    test_saf_and_target_location_simulations()
     print("==================================================")
     print("  جميع الفحوصات الآلية للوحدات تمت بنجاح 100%!  ")
     print("==================================================")
+

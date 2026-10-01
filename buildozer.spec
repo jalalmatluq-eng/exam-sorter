@@ -24,6 +24,7 @@ android.numeric_version = 3
 android.archs = arm64-v8a
 android.allow_backup = True
 android.enable_androidx = True
+android.gradle_dependencies = androidx.documentfile:documentfile:1.0.1
 android.accept_sdk_license = True
 android.release_artifact = apk
 android.debug_artifact = apk

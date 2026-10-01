@@ -320,13 +320,46 @@ def _scan_android_mediastore(
         MediaStoreVideo = autoclass("android.provider.MediaStore$Video$Media")
         ContentUris = autoclass("android.content.ContentUris")
 
-        targets = [
-            (MediaStoreImages.EXTERNAL_CONTENT_URI, "image"),
-            (MediaStoreVideo.EXTERNAL_CONTENT_URI, "video"),
-        ]
+        targets = []
+        try:
+            BuildVersion = autoclass("android.os.Build$VERSION")
+            sdk_int = int(BuildVersion.SDK_INT)
+        except Exception:
+            sdk_int = 0
+
+        # في أندرويد 10+ (API 29+)، يمكن استعلام كل وحدة تخزين (Volume) بشكل محدد ومنفصل
+        if sdk_int >= 29:
+            try:
+                MediaStore = autoclass("android.provider.MediaStore")
+                vol_set = MediaStore.getExternalVolumeNames(mActivity)
+                if vol_set is not None:
+                    vol_iter = vol_set.iterator()
+                    while vol_iter.hasNext():
+                        v_name = str(vol_iter.next())
+                        is_primary = (v_name == "external_primary")
+                        if source_storage == "internal" and not is_primary:
+                            continue
+                        if source_storage == "sdcard" and is_primary:
+                            continue
+                        img_uri = MediaStoreImages.getContentUri(v_name)
+                        vid_uri = MediaStoreVideo.getContentUri(v_name)
+                        targets.append((img_uri, "image", v_name))
+                        targets.append((vid_uri, "video", v_name))
+            except Exception as e_vol:
+                logger.debug("تعذر استعلام MediaStore عبر أسماء الـ Volumes: %s", e_vol)
+
+        if not targets:
+            targets = [
+                (MediaStoreImages.EXTERNAL_CONTENT_URI, "image", ""),
+                (MediaStoreVideo.EXTERNAL_CONTENT_URI, "video", ""),
+            ]
 
         cr = mActivity.getContentResolver()
-        for base_table_uri, _media_kind in targets:
+        for target_info in targets:
+            base_table_uri = target_info[0]
+            _media_kind = target_info[1]
+            target_vol_name = target_info[2] if len(target_info) > 2 else ""
+
             cursor = None
             try:
                 # استعلام بأعمدة آمنة لا ترمي استثناء getColumnIndexOrThrow
@@ -341,6 +374,7 @@ def _scan_android_mediastore(
                 date_idx = cursor.getColumnIndex("date_modified")
                 rel_idx = cursor.getColumnIndex("relative_path")
                 data_idx = cursor.getColumnIndex("_data")
+                vol_idx = cursor.getColumnIndex("volume_name")
 
                 while cursor.moveToNext():
                     item_id = cursor.getLong(id_idx) if id_idx >= 0 else 0
@@ -357,6 +391,7 @@ def _scan_android_mediastore(
 
                     rel_path = cursor.getString(rel_idx) if rel_idx >= 0 else ""
                     data_path = cursor.getString(data_idx) if data_idx >= 0 else ""
+                    vol_name = cursor.getString(vol_idx) if vol_idx >= 0 else target_vol_name
 
                     display_name = name_val or (Path(data_path).name if data_path else f"media_{item_id}")
                     ext = Path(display_name).suffix.lower()
@@ -373,12 +408,15 @@ def _scan_android_mediastore(
                     if "الملفات المنظمة" in full_check_str or "mediasorter" in full_check_str:
                         continue
 
-                    # تصنيف التخزين (internal أو sdcard)
-                    is_sdcard = False
-                    if data_path:
+                    # تصنيف التخزين بدقة عبر VOLUME_NAME والمسار (internal أو sdcard)
+                    if vol_name:
+                        is_sdcard = (vol_name != "external_primary")
+                    elif data_path:
                         is_sdcard = not data_path.startswith("/storage/emulated/")
                     elif rel_path:
                         is_sdcard = not rel_path.startswith("/storage/emulated/")
+                    else:
+                        is_sdcard = False
 
                     storage_id = "sdcard" if is_sdcard else "internal"
 
@@ -846,23 +884,44 @@ def _process_one_file_internal(
         # =====================================================================
         # 3. تنفيذ العملية (نسخ آمن أو نقل) مع الحفاظ على التوثيق
         # =====================================================================
-        dest_path = file_manager.copy_to_category(
-            p, target_category, is_copy=is_copy
+        target_location = storage_backend.get_active_target_location()
+        if not target_location.is_valid:
+            raise OSError(f"وجهة التخزين المحددة غير صالحة: {target_location.error_message}")
+
+        item_to_process = file_item if is_uri_source else p
+        dest_res = file_manager.copy_to_category(
+            item_to_process,
+            target_category,
+            target_location=target_location,
+            is_copy=is_copy,
         )
-        dest_p = Path(dest_path)
-        if not dest_p.exists():
-            raise IOError(f"الملف الوجهة غير موجود بعد النقل/النسخ: {dest_path}")
-        if dest_p.stat().st_size != orig_size:
-            raise IOError(
-                f"حجم الملف في الوجهة لا يطابق الأصل: {dest_p.stat().st_size} vs {orig_size}"
-            )
+
+        dest_str = str(dest_res)
+        dest_size = orig_size
+        if isinstance(dest_res, Path):
+            if not dest_res.exists():
+                raise IOError(f"الملف الوجهة غير موجود بعد النقل/النسخ: {dest_res}")
+            if orig_size > 0 and dest_res.stat().st_size != orig_size:
+                raise IOError(
+                    f"حجم الملف في الوجهة لا يطابق الأصل: {dest_res.stat().st_size} vs {orig_size}"
+                )
+            dest_size = dest_res.stat().st_size
+        else:
+            if not dest_str.startswith("content://") and not dest_str.startswith("mock_doc://"):
+                if not Path(dest_str).exists():
+                    raise IOError(f"الملف الوجهة غير موجود بعد النقل/النسخ: {dest_str}")
 
         # إذا كنا في وضع النقل Move: نحذف الأصل فقط بعد التحقق التام
+        actual_mode = "copy" if is_copy else "move"
         if not is_copy:
-            if is_uri_source and isinstance(file_item, storage_backend.MediaItem):
-                storage_backend.delete_media_item(file_item)
-            elif not is_uri_source and p.exists():
-                p.unlink()
+            deleted = storage_backend.delete_media_item(item_to_process)
+            if not deleted:
+                logger.warning(
+                    "تعذر حذف الأصل بعد النقل (%s)، تم الاحتفاظ به كنسخة آمنة",
+                    source_key,
+                )
+                file_manager._update_last_transfer_record_to_copy()
+                actual_mode = "copy"
 
         # تسجيل الملف في كاش التتبع بعد التأكد التام
         record_processed_file(
@@ -870,17 +929,17 @@ def _process_one_file_internal(
             orig_size,
             orig_mtime,
             target_category,
-            dest_path=str(dest_path),
-            dest_size=orig_size,
+            dest_path=dest_str,
+            dest_size=dest_size,
         )
 
         return {
             "success": True,
             "source": source_key,
-            "destination": str(dest_path),
+            "destination": dest_str,
             "category": target_category,
             "details": detected_details,
-            "mode": "copy" if is_copy else "move",
+            "mode": actual_mode,
         }
     finally:
         # حذف الملف المؤقت في حال استخدام streaming Content URI
