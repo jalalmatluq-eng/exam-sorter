@@ -55,49 +55,55 @@
             MDCard:
                 id: hero_card
                 size_hint_y: None
-                height: dp(146)
+                height: dp(165)
                 radius: [26, 26, 26, 26]
-                padding: dp(14)
+                padding: [dp(14), dp(12), dp(14), dp(10)]
                 elevation: 0
                 theme_bg_color: "Custom"
                 md_bg_color: 0.90, 0.95, 1.0, 0.98
 
                 MDBoxLayout:
                     orientation: "vertical"
-                    spacing: dp(6)
+                    spacing: dp(8)
 
                     MDBoxLayout:
                         orientation: "horizontal"
                         size_hint_y: None
-                        height: dp(26)
+                        height: dp(28)
+                        spacing: dp(6)
+
+                        Widget:
 
                         MDLabel:
                             id: hero_title
-                            text: app.ar("جامع وسائط العالم | CosmoHub")
+                            text: app.ar("رتّب | المُنظّم الذكي")
                             theme_text_color: "Custom"
                             text_color: 0.08, 0.16, 0.34, 1
-                            font_size: "14sp"
+                            font_size: "15sp"
                             bold: True
                             halign: "right"
                             valign: "middle"
+                            adaptive_width: True
 
                         MDIcon:
                             icon: "star-four-points"
                             theme_icon_color: "Custom"
                             icon_color: 0.90, 0.55, 0.05, 1
-                            font_size: "22sp"
-                            size_hint_x: None
-                            width: dp(28)
+                            font_size: "20sp"
+                            size_hint: None, None
+                            size: dp(22), dp(22)
+                            pos_hint: {"center_y": 0.5}
 
                     MDLabel:
                         id: hero_sub
-                        text: app.ar("يلم كل وسائط العالم وينظمها بذكاء اصطناعي")
+                        text: app.ar("فرز وتنظيم ذكي للصور والفيديوهات والمستندات")
                         theme_text_color: "Custom"
                         text_color: 0.25, 0.40, 0.58, 1
-                        font_size: "10sp"
+                        font_size: "11sp"
                         halign: "right"
+                        valign: "middle"
                         size_hint_y: None
-                        height: dp(16)
+                        height: dp(22)
 
                     # كبسولات الإحصاء الكونية
                     MDBoxLayout:

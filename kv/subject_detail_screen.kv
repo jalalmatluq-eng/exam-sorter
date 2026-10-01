@@ -28,6 +28,9 @@
                 theme_text_color: "Custom"
                 text_color: 0.08, 0.16, 0.34, 1
                 bold: True
+                shorten: True
+                shorten_from: "center"
+                font_size: "15sp"
                 pos_hint: {"center_x": 0.5}
 
             MDTopAppBarTrailingButtonContainer:
@@ -46,15 +49,17 @@
         # ─── شريط الإحصاء السريع ────────────────────────────
         MDBoxLayout:
             size_hint_y: None
-            height: dp(50)
-            padding: [dp(18), dp(6), dp(18), dp(6)]
+            height: dp(46)
+            padding: [dp(14), dp(4), dp(14), dp(4)]
             orientation: "horizontal"
             theme_bg_color: "Custom"
             md_bg_color: 0.90, 0.95, 1.0, 0.95
 
             MDButton:
+                id: btn_add_exam
                 style: "text"
-                size_hint_y: 1
+                size_hint_y: None
+                height: dp(38)
                 pos_hint: {"center_y": 0.5}
                 on_release: root.add_new_exam()
 
@@ -65,20 +70,23 @@
 
                 MDButtonText:
                     id: add_exam_btn_text
-                    text: app.ar("إضافة ورقة")
+                    text: app.ar("إضافة ملف")
                     theme_text_color: "Custom"
                     text_color: 0.02, 0.52, 0.80, 1
+                    font_size: "12sp"
                     bold: True
 
             Widget:
 
             MDLabel:
                 id: info_label
-                text: app.ar("إجمالي الأوراق: 0")
+                text: app.ar("إجمالي الملفات: 0")
                 bold: True
-                font_size: "13sp"
+                font_size: "12sp"
                 halign: "right"
+                valign: "middle"
                 pos_hint: {"center_y": 0.5}
+                adaptive_width: True
                 theme_text_color: "Custom"
                 text_color: 0.08, 0.16, 0.34, 1
 
@@ -90,49 +98,57 @@
                 id: empty_box
                 orientation: "vertical"
                 spacing: dp(14)
-                padding: dp(24)
+                padding: dp(20)
                 pos_hint: {"center_x": 0.5, "center_y": 0.5}
                 size_hint: 0.88, None
                 height: dp(230)
-                radius: [28, 28, 28, 28]
+                radius: [26, 26, 26, 26]
                 elevation: 0
                 theme_bg_color: "Custom"
                 md_bg_color: 1.0, 1.0, 1.0, 0.98
                 opacity: 0
 
                 MDIcon:
-                    icon: "file-document-alert-outline"
-                    font_size: "58sp"
+                    id: empty_icon
+                    icon: "folder-open-outline"
+                    font_size: "54sp"
                     pos_hint: {"center_x": 0.5}
                     theme_icon_color: "Custom"
                     icon_color: 0.02, 0.52, 0.80, 0.85
 
                 MDLabel:
                     id: empty_label
-                    text: app.ar("لا توجد أوراق أو ملفات في هذا القسم بعد")
+                    text: app.ar("لا توجد ملفات في هذا المجلد بعد")
                     halign: "center"
                     bold: True
-                    font_size: "16sp"
+                    font_size: "15sp"
+                    size_hint_y: None
+                    height: dp(40)
                     theme_text_color: "Custom"
                     text_color: 0.08, 0.16, 0.34, 1
 
                 MDButton:
+                    id: empty_action_btn
                     style: "filled"
                     pos_hint: {"center_x": 0.5}
+                    size_hint_y: None
+                    height: dp(42)
                     radius: [16, 16, 16, 16]
                     theme_bg_color: "Custom"
                     md_bg_color: 0.02, 0.52, 0.80, 1
                     on_release: root.add_new_exam()
 
                     MDButtonIcon:
-                        icon: "camera-plus-outline"
+                        id: empty_btn_icon
+                        icon: "plus-circle-outline"
                         theme_icon_color: "Custom"
                         icon_color: 1.0, 1.0, 1.0, 1
 
                     MDButtonText:
                         id: empty_action_text
-                        text: app.ar("إضافة ملف جديد لهذا القسم")
+                        text: app.ar("إضافة ملف لهذا المجلد")
                         bold: True
+                        font_size: "12sp"
                         theme_text_color: "Custom"
                         text_color: 1, 1, 1, 1
 

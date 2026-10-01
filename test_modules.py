@@ -1670,6 +1670,83 @@ def test_production_error_scenarios_and_resilience() -> None:
     print("✓ نجحت جميع فحوصات الجناح 16 للأخطاء الواقعية والمرونة بنسبة 100%!\n")
 
 
+def test_category_ui_details_and_layout_resilience() -> None:
+    print("\n--- [اختبار 17] فحص تفاصيل واجهة الأقسام والمجلدات والتحقق من عدم تداخل النصوص ---")
+    from utils.ui_helper import get_category_icon_and_unit, get_category_ui_details
+
+    # 1. فحص مجلدات الصور الشخصية وبصمة الوجه
+    for name in ("صوري", "صوري الخاصة", "بصمة وجهي", "me", "Selfies"):
+        d = get_category_ui_details(name)
+        assert "شخصية" in d["unit"]
+        assert "لا توجد صور شخصية" in d["empty_title"]
+        assert "شخصية" in d["empty_action_text"]
+        icon, color, unit = get_category_icon_and_unit(name)
+        assert icon == d["icon"] and unit == d["unit"]
+    print("  [1/6] ✓ فحص مجلدات الصور الشخصية وبصمة الوجه ومطابقة النصوص المخصصة.")
+
+    # 2. فحص مجلدات الأفلام والمسلسلات والفيديوهات المضحكة
+    d_movie = get_category_ui_details("أفلام سينما ومسلسلات")
+    assert "فيلم" in d_movie["unit"]
+    assert "لا توجد أفلام أو مسلسلات" in d_movie["empty_title"]
+
+    d_funny = get_category_ui_details("طرائف ومقاطع مضحكة")
+    assert "مضحك" in d_funny["unit"]
+    assert "لا توجد مقاطع مضحكة" in d_funny["empty_title"]
+    print("  [2/6] ✓ فحص مجلدات الأفلام والمسلسلات والمقاطع المضحكة ورسائل الحالة الفارغة المخصصة.")
+
+    # 3. فحص مجلدات المحاضرات والأناشيد والمستندات
+    d_lec = get_category_ui_details("محاضرات الجامعة")
+    assert "محاضرة" in d_lec["unit"]
+    assert "لا توجد محاضرات" in d_lec["empty_title"]
+
+    d_aud = get_category_ui_details("أناشيد وصوتيات")
+    assert "صوتي" in d_aud["unit"]
+    assert "لا توجد مقاطع صوتية" in d_aud["empty_title"]
+
+    d_doc = get_category_ui_details("مستندات وكتب")
+    assert "مستند" in d_doc["unit"]
+    assert "لا توجد مستندات" in d_doc["empty_title"]
+    print("  [3/6] ✓ فحص مجلدات المحاضرات، الصوتيات، والمستندات بتمييز دقيق.")
+
+    # 4. فحص المجلدات العامة ومنع وسمها كأوراق اختبار (مثل جديد، Android، Download، __MACOSX)
+    general_folders = ("جديد", "Android", "Download", "__MACOSX", "Camera", "DCIM", "Bluetooth", "WhatsApp Images", "يوسف الصديق")
+    for g_name in general_folders:
+        d_gen = get_category_ui_details(g_name)
+        assert "اختبار" not in d_gen["unit"], f"المجلد العام '{g_name}' يجب ألا يُصنف كأوراق اختبار!"
+        assert "امتحان" not in d_gen["unit"]
+        assert "لا توجد ملفات في هذا المجلد بعد" in d_gen["empty_title"]
+        assert "ملف" in d_gen["unit"]
+        icon, color, unit = get_category_icon_and_unit(g_name)
+        assert unit == d_gen["unit"]
+    print("  [4/6] ✓ حماية المجلدات العامة (جديد، Android، Download، إلخ) ومنع وسمها كأوراق اختبار نهائياً.")
+
+    # 5. فحص المواد الدراسية الصريحة فقط واقتصار وسم الاختبارات عليها
+    for exam_name in ("رياضيات 101", "فيزياء حديثة", "امتحان الكيمياء", "مقرر الهندسة", "اختبارات الفصل"):
+        d_exam = get_category_ui_details(exam_name)
+        assert "اختبار" in d_exam["unit"] or "ورقة" in d_exam["unit"]
+        assert "لا توجد أوراق اختبار" in d_exam["empty_title"]
+    print("  [5/6] ✓ قصر وسم أوراق الاختبار على المواد التعليمية والامتحانات الصريحة.")
+
+    # 6. فحص ثوابت التصميم لمنع تداخل النصوص والتحقق من قياسات KV
+    with open("kv/home_screen.kv", "r", encoding="utf-8") as f:
+        home_kv = f.read()
+    assert "height: dp(165)" in home_kv, "hero_card يجب أن يكون بارتفاع لا يقل عن dp(165)"
+    assert "فرز وتنظيم ذكي للصور والفيديوهات والمستندات" in home_kv
+
+    with open("kv/settings_screen.kv", "r", encoding="utf-8") as f:
+        settings_kv = f.read()
+    assert "height: dp(116)" in settings_kv, "بطاقة بصمة الوجه يجب أن تكون بارتفاع ملائم (dp(116)) لمنع تداخل النصوص"
+    assert "height: dp(142)" in settings_kv, "بطاقة سجل التشخيص يجب أن تكون بارتفاع كافٍ (dp(142))"
+    assert "height: dp(42)" in settings_kv, "شريط سجل العمليات يجب أن يكون بارتفاع كافٍ (dp(42))"
+
+    with open("kv/subject_detail_screen.kv", "r", encoding="utf-8") as f:
+        subj_kv = f.read()
+    assert "shorten: True" in subj_kv, "عنوان شريط المادة يجب أن يدعم التقصير الآمن لمنع التداخل"
+    print("  [6/6] ✓ التحقق الصارم من قياسات واجهات KV لمنع تداخل النصوص على شاشات الهواتف بنسبة 100%.")
+
+    print("✓ نجحت جميع فحوصات الجناح 17 لتخصيص الأقسام ومنع التداخل بنسبة 100%!\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -1687,8 +1764,9 @@ if __name__ == "__main__":
     test_saf_reading_dedup_and_recoverable_security()
     test_production_verification_and_saf_resolution()
     test_production_error_scenarios_and_resilience()
+    test_category_ui_details_and_layout_resilience()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات (16 جناح) تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (17 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
 
 

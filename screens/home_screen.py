@@ -100,7 +100,7 @@ class HomeScreen(Screen):
                 self.ids.hero_title.text = ar("رتّب | المُنظّم الذكي")
             if "hero_sub" in self.ids:
                 self.ids.hero_sub.text = ar(
-                    "فرز وتنظيم شامل للصور والفيديوهات والمستندات بالذكاء الاصطناعي"
+                    "فرز وتنظيم ذكي للصور والفيديوهات والمستندات"
                 )
             if "stats_title" in self.ids:
                 self.ids.stats_title.text = ar("المجلدات المنظمة")

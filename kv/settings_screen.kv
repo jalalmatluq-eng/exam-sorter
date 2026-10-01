@@ -787,65 +787,82 @@
                 # ──────────────────────────────────────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(90)
+                    height: dp(116)
                     radius: [24, 24, 24, 24]
-                    padding: [dp(16), dp(10), dp(16), dp(10)]
+                    padding: [dp(16), dp(12), dp(16), dp(12)]
                     elevation: 0
                     theme_bg_color: "Custom"
                     md_bg_color: 1.0, 1.0, 1.0, 0.98
-                    orientation: "horizontal"
-                    spacing: dp(12)
-
-                    MDIcon:
-                        icon: "face-recognition"
-                        font_size: "30sp"
-                        pos_hint: {"center_y": 0.5}
-                        theme_icon_color: "Custom"
-                        icon_color: 0.48, 0.22, 0.85, 1
+                    orientation: "vertical"
+                    spacing: dp(8)
 
                     MDBoxLayout:
-                        orientation: "vertical"
-                        pos_hint: {"center_y": 0.5}
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(28)
+                        spacing: dp(8)
+
+                        Widget:
 
                         MDLabel:
                             id: face_card_title
                             text: app.ar("بصمة وجهي وصوري الخاصة")
                             bold: True
-                            font_size: "13sp"
+                            font_size: "14sp"
                             halign: "right"
+                            valign: "middle"
+                            adaptive_width: True
                             theme_text_color: "Custom"
                             text_color: 0.08, 0.16, 0.34, 1
+
+                        MDIcon:
+                            icon: "face-recognition"
+                            font_size: "24sp"
+                            size_hint: None, None
+                            size: dp(26), dp(26)
+                            pos_hint: {"center_y": 0.5}
+                            theme_icon_color: "Custom"
+                            icon_color: 0.48, 0.22, 0.85, 1
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(10)
+                        size_hint_y: None
+                        height: dp(42)
+
+                        MDButton:
+                            style: "outlined"
+                            size_hint: None, None
+                            size: dp(108), dp(40)
+                            radius: [14, 14, 14, 14]
+                            pos_hint: {"center_y": 0.5}
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.92, 0.95, 1.0, 0.95
+                            on_release: root.open_people_setup()
+
+                            MDButtonText:
+                                id: btn_edit_face_text
+                                text: app.ar("تعديل البصمة")
+                                theme_text_color: "Custom"
+                                text_color: 0.48, 0.22, 0.85, 1
+                                font_size: "11sp"
+                                bold: True
 
                         MDLabel:
                             id: face_card_status
                             text: app.ar("جاهزة للتعرف وتمييز صورك")
                             font_size: "11sp"
                             halign: "right"
+                            valign: "middle"
                             theme_text_color: "Custom"
                             text_color: 0.35, 0.45, 0.60, 1
-
-                    MDButton:
-                        style: "outlined"
-                        size_hint: None, None
-                        size: dp(102), dp(40)
-                        radius: [16, 16, 16, 16]
-                        pos_hint: {"center_y": 0.5}
-                        theme_bg_color: "Custom"
-                        md_bg_color: 0.92, 0.95, 1.0, 0.95
-                        on_release: root.open_people_setup()
-
-                        MDButtonText:
-                            id: btn_edit_face_text
-                            text: app.ar("تعديل البصمة")
-                            theme_text_color: "Custom"
-                            text_color: 0.48, 0.22, 0.85, 1
 
                 # ──────────────────────────────────────────────
                 # 8. سجل التشخيص والدعم الفني
                 # ──────────────────────────────────────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(124)
+                    height: dp(142)
                     radius: [24, 24, 24, 24]
                     padding: dp(14)
                     elevation: 0
@@ -858,6 +875,9 @@
                         orientation: "horizontal"
                         size_hint_y: None
                         height: dp(26)
+                        spacing: dp(6)
+
+                        Widget:
 
                         MDLabel:
                             id: debug_log_title
@@ -867,24 +887,28 @@
                             theme_text_color: "Custom"
                             text_color: 0.08, 0.16, 0.34, 1
                             halign: "right"
+                            valign: "middle"
+                            adaptive_width: True
 
                         MDIcon:
                             icon: "file-document-outline"
                             theme_icon_color: "Custom"
                             icon_color: 0.02, 0.52, 0.80, 1
-                            font_size: "24sp"
-                            size_hint_x: None
-                            width: dp(28)
+                            font_size: "22sp"
+                            size_hint: None, None
+                            size: dp(24), dp(24)
+                            pos_hint: {"center_y": 0.5}
 
                     MDLabel:
                         id: debug_log_desc
                         text: app.ar("تصدير سجل cosmosort_debug.log إلى مجلد Downloads")
                         font_size: "11sp"
                         halign: "right"
+                        valign: "middle"
                         theme_text_color: "Custom"
                         text_color: 0.35, 0.45, 0.60, 1
                         size_hint_y: None
-                        height: dp(20)
+                        height: dp(34)
 
                     MDButton:
                         id: btn_export_log
@@ -892,7 +916,7 @@
                         theme_bg_color: "Custom"
                         md_bg_color: 0.92, 0.95, 1.0, 0.95
                         size_hint_y: None
-                        height: dp(38)
+                        height: dp(40)
                         radius: [14, 14, 14, 14]
                         on_release: root.export_diagnostic_log()
 
@@ -914,12 +938,14 @@
                 # ──────────────────────────────────────────────
                 MDBoxLayout:
                     size_hint_y: None
-                    height: dp(30)
+                    height: dp(42)
                     orientation: "horizontal"
+                    spacing: dp(6)
 
                     MDButton:
                         style: "text"
-                        size_hint_y: 1
+                        size_hint_y: None
+                        height: dp(38)
                         on_release: root.refresh_history()
 
                         MDButtonIcon:
@@ -932,10 +958,13 @@
                             text: app.ar("تحديث")
                             theme_text_color: "Custom"
                             text_color: 0.02, 0.52, 0.80, 1
+                            font_size: "11sp"
+                            bold: True
 
                     MDButton:
                         style: "text"
-                        size_hint_y: 1
+                        size_hint_y: None
+                        height: dp(38)
                         on_release: root.undo_all_records()
 
                         MDButtonIcon:
@@ -945,9 +974,11 @@
 
                         MDButtonText:
                             id: undo_all_text
-                            text: app.ar("تراجع عن الكل")
+                            text: app.ar("تراجع للكل")
                             theme_text_color: "Custom"
                             text_color: 0.85, 0.20, 0.30, 1
+                            font_size: "11sp"
+                            bold: True
 
                     Widget:
 
@@ -957,14 +988,17 @@
                         bold: True
                         font_size: "13sp"
                         halign: "right"
+                        valign: "middle"
+                        adaptive_width: True
                         theme_text_color: "Custom"
                         text_color: 0.08, 0.16, 0.34, 1
 
                     MDIcon:
                         icon: "timeline-clock-outline"
-                        font_size: "22sp"
-                        size_hint_x: None
-                        width: dp(26)
+                        font_size: "20sp"
+                        size_hint: None, None
+                        size: dp(22), dp(22)
+                        pos_hint: {"center_y": 0.5}
                         theme_icon_color: "Custom"
                         icon_color: 0.48, 0.22, 0.85, 1
 

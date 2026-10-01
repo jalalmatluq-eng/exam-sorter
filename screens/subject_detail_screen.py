@@ -22,7 +22,7 @@ from kivymd.uix.label import MDIcon, MDLabel
 
 import file_manager
 from utils.arabic_helper import ar
-from utils.ui_helper import show_app_dialog
+from utils.ui_helper import get_category_ui_details, show_app_dialog
 
 
 class SubjectDetailScreen(Screen):
@@ -66,24 +66,23 @@ class SubjectDetailScreen(Screen):
 
     def apply_arabic_texts(self) -> None:
         if hasattr(self, "ids"):
+            details = get_category_ui_details(self.subject_name)
             if "top_bar_title" in self.ids and self.subject_name:
                 self.ids.top_bar_title.text = ar(self.subject_name)
             if "add_exam_btn_text" in self.ids:
-                self.ids.add_exam_btn_text.text = ar("إضافة ورقة")
+                self.ids.add_exam_btn_text.text = ar(details["add_btn_text"])
             if "empty_label" in self.ids:
-                self.ids.empty_label.text = ar(
-                    "لا توجد أوراق اختبار في هذه المادة بعد"
-                )
+                self.ids.empty_label.text = ar(details["empty_title"])
             if "empty_action_text" in self.ids:
-                self.ids.empty_action_text.text = ar(
-                    "التقط ورقة اختبار لهذه المادة"
-                )
+                self.ids.empty_action_text.text = ar(details["empty_action_text"])
+            if "empty_icon" in self.ids:
+                self.ids.empty_icon.icon = details["empty_icon"]
+                self.ids.empty_icon.icon_color = details["color"]
 
     def load_subject(self, subject_name: str):
         """تحميل وعرض صور المادة المحددة"""
         self.subject_name = subject_name
-        if hasattr(self, "ids") and "top_bar_title" in self.ids:
-            self.ids.top_bar_title.text = ar(subject_name)
+        self.apply_arabic_texts()
         self.refresh_grid()
 
     def refresh_grid(self):
@@ -98,7 +97,10 @@ class SubjectDetailScreen(Screen):
         images = file_manager.get_subject_images(self.subject_name, target_location=target_loc)
         count = len(images)
 
-        self.ids.info_label.text = ar(f"إجمالي الأوراق: {count} ورقة")
+        details = get_category_ui_details(self.subject_name)
+        stats_u = details["stats_unit"]
+        self.ids.info_label.text = ar(f"إجمالي الملفات: {count} {stats_u}")
+        self.apply_arabic_texts()
 
         if not images:
             self.ids.empty_box.opacity = 1

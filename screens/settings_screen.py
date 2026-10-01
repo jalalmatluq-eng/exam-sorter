@@ -113,16 +113,18 @@ class SettingsScreen(Screen):
                 self.ids.debug_log_title.text = ar("سجل التشخيص واستكشاف الأخطاء")
             if "debug_log_desc" in self.ids:
                 self.ids.debug_log_desc.text = ar(
-                    "تصدير سجل cosmosort_debug.log إلى مجلد Downloads"
+                    "تصدير سجل التشخيص الفني إلى مجلد Downloads"
                 )
             if "text_export_log" in self.ids:
                 self.ids.text_export_log.text = ar("تصدير سجل التشخيص (Download)")
             if "history_section_title" in self.ids:
                 self.ids.history_section_title.text = ar(
-                    "سجل عمليات النقل الأخيرة والتراجع"
+                    "سجل عمليات النقل"
                 )
             if "refresh_history_text" in self.ids:
                 self.ids.refresh_history_text.text = ar("تحديث")
+            if "undo_all_text" in self.ids:
+                self.ids.undo_all_text.text = ar("تراجع للكل")
 
     def refresh_storage_source_ui(self) -> None:
         """تحديث بطاقة اختيار مكان الفحص (الداخلية / كرت SD / كلاهما)"""
