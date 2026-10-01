@@ -11,10 +11,8 @@ offline_ocr.py
 from __future__ import annotations
 
 import logging
-import math
 import os
 import re
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -141,7 +139,7 @@ def is_offline_ocr_available() -> bool:
     # فحص محرك C/Native في أندرويد أو TFLite OCR
     if not has_runtime:
         try:
-            import tesserocr  # type: ignore
+            _ = __import__("tesserocr")
             has_runtime = True
         except Exception:
             pass

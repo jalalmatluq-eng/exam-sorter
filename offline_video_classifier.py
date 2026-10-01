@@ -168,6 +168,7 @@ def _read_frame_safe(video_path: str, ratio: float) -> np.ndarray | None:
         from kivy.utils import platform
         if platform == "android":
             from io import BytesIO
+
             from jnius import autoclass  # type: ignore
             from PIL import Image
 
@@ -238,7 +239,7 @@ def _analyze_frame_visuals(frame: np.ndarray) -> dict[str, Any]:
     if frame is None or frame.size == 0:
         return {"text_score": 0.0, "face_count": 0, "brightness": 0.0, "is_slide": False}
 
-    h, w = frame.shape[:2]
+    _h, w = frame.shape[:2]
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if cv2 is not None else frame.mean(axis=2).astype(np.uint8)
 
     # 1. كشف السطوع والتباين
@@ -268,8 +269,8 @@ def _analyze_frame_visuals(frame: np.ndarray) -> dict[str, Any]:
         faces = offline_face_recognizer.detect_faces_fast(frame)
         face_count = len(faces)
         if face_count == 1:
-            fx, fy, fw, fh = faces[0]
-            cx, cy = fx + fw / 2, fy + fh / 2
+            fx, _fy, fw, _fh = faces[0]
+            cx = fx + fw / 2
             # وجه متمركز بحجم مناسب (Selfie / Talking Head)
             if 0.25 * w < cx < 0.75 * w and (fw / w) > 0.15:
                 face_is_central = True

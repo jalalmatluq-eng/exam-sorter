@@ -1899,11 +1899,12 @@ def test_comprehensive_real_android_fixes() -> None:
 
 def test_offline_ai_capabilities() -> None:
     print("--- 19. فحص قدرات ومحركات الذكاء الاصطناعي الأوفلاين الحقيقية ---")
-    import offline_ocr
-    import offline_face_recognizer
-    import offline_video_classifier
-    import offline_classifier
     from PIL import Image
+
+    import offline_classifier
+    import offline_face_recognizer
+    import offline_ocr
+    import offline_video_classifier
 
     test_dir = Path("test_ai_workspace")
     test_dir.mkdir(exist_ok=True)

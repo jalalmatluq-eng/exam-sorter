@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,10 +20,16 @@ from typing import Any
 
 import numpy as np
 
+cv2: Any = None
+cv2_data: Any = None
 try:
-    import cv2
+    import cv2  # type: ignore
+    import cv2.data  # type: ignore
+
+    cv2_data = getattr(cv2, "data", None)
 except (ImportError, Exception):
-    cv2 = None  # type: ignore
+    cv2 = None
+    cv2_data = None
 
 logger = logging.getLogger("OfflineFaceRecognizer")
 
@@ -92,8 +97,8 @@ def is_offline_face_model_available() -> bool:
 
     # التحقق من وجود مصنفات ملامح الوجه المدمجة
     try:
-        if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
-            cascade_p = Path(cv2.data.haarcascades) / "haarcascade_frontalface_default.xml"
+        if cv2_data and hasattr(cv2_data, "haarcascades"):
+            cascade_p = Path(cv2_data.haarcascades) / "haarcascade_frontalface_default.xml"
             if cascade_p.exists():
                 return True
     except Exception:
@@ -112,10 +117,10 @@ def detect_faces(image: np.ndarray) -> list[tuple[int, int, int, int]]:
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
         # استخدام Haar Cascade المحسن للكشف الأولي السريع
         cascade_p = ""
-        if hasattr(cv2, "data") and hasattr(cv2.data, "haarcascades"):
-            cascade_p = os.path.join(cv2.data.haarcascades, "haarcascade_frontalface_default.xml")
-        
-        if cascade_p and os.path.exists(cascade_p):
+        if cv2_data and hasattr(cv2_data, "haarcascades"):
+            cascade_p = os.path.join(cv2_data.haarcascades, "haarcascade_frontalface_default.xml")
+
+        if cascade_p and os.path.exists(cascade_p) and hasattr(cv2, "CascadeClassifier"):
             face_cascade = cv2.CascadeClassifier(cascade_p)
             detected = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5, minSize=(60, 60))
             for (x, y, w, h) in detected:
@@ -181,13 +186,16 @@ def calculate_cosine_similarity(emb1: np.ndarray, emb2: np.ndarray) -> float:
     return 0.0
 
 
-def enroll_user_face(image_paths: list[str]) -> tuple[bool, str]:
+def enroll_user_face(image_paths: list[str], threshold: float = DEFAULT_THRESHOLD) -> tuple[bool, str]:
     """
     تسجيل بصمة وجه المستخدم من 3 إلى 5 صور مختلفة:
     - التحقق من وجود وجه واحد فقط واضح في كل صورة.
     - استخراج الـ embeddings وحساب المتوسط الرياضي الموزون.
     - حفظ البصمة في التخزين الخاص المشفر للتطبيق.
     """
+    if cv2 is None:
+        return False, "محرك معالجة الصور غير متوفر حالياً."
+
     if len(image_paths) < 3:
         return False, "يرجى تقديم 3 إلى 5 صور مختلفة على الأقل لتسجيل بصمة وجه دقيقة وموثوقة."
 
@@ -197,10 +205,12 @@ def enroll_user_face(image_paths: list[str]) -> tuple[bool, str]:
         if not Path(img_path).exists():
             return False, f"الصورة رقم {idx + 1} غير موجودة."
 
+        img = None
         try:
             with open(img_path, "rb") as f:
                 raw_bytes = bytearray(f.read())
-            img = cv2.imdecode(np.asarray(raw_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if cv2 is not None:
+                img = cv2.imdecode(np.asarray(raw_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
         except Exception:
             return False, f"تعذرت قراءة الصورة رقم {idx + 1}."
 
@@ -233,6 +243,7 @@ def enroll_user_face(image_paths: list[str]) -> tuple[bool, str]:
         "embedding": avg_emb.tolist(),
         "dimensions": len(avg_emb),
         "samples_count": len(extracted_embeddings),
+        "threshold": threshold,
         "updated_at": os.stat(image_paths[0]).st_mtime if os.path.exists(image_paths[0]) else 0,
     }
 
@@ -295,12 +306,14 @@ def classify_image_faces(image_path: str, threshold: float = DEFAULT_THRESHOLD) 
 
     user_emb = load_enrolled_face_embedding()
 
-    try:
-        with open(image_path, "rb") as f:
-            data = bytearray(f.read())
-        img = cv2.imdecode(np.asarray(data, dtype=np.uint8), cv2.IMREAD_COLOR)
-    except Exception:
-        img = None
+    img = None
+    if cv2 is not None:
+        try:
+            with open(image_path, "rb") as f:
+                data = bytearray(f.read())
+            img = cv2.imdecode(np.asarray(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+        except Exception:
+            img = None
 
     if img is None:
         return FaceRecognitionResult(
@@ -338,8 +351,7 @@ def classify_image_faces(image_path: str, threshold: float = DEFAULT_THRESHOLD) 
         emb = extract_face_embedding(crop)
         if emb is not None:
             sim = calculate_cosine_similarity(user_emb, emb)
-            if sim > best_similarity:
-                best_similarity = sim
+            best_similarity = max(best_similarity, sim)
 
     # اتخاذ القرار الصارم
     if best_similarity >= threshold:
@@ -374,4 +386,5 @@ def classify_image_faces(image_path: str, threshold: float = DEFAULT_THRESHOLD) 
 classify_face_offline = classify_image_faces
 delete_user_face_profile = clear_face_profile
 compute_cosine_similarity = calculate_cosine_similarity
+detect_faces_fast = detect_faces
 

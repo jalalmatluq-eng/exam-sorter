@@ -504,8 +504,8 @@ class SettingsScreen(Screen):
 
     def check_ai_models_status(self) -> None:
         """فحص وتحديث حالة محركات الذكاء الاصطناعي الأوفلاين الثلاثة وحجم النماذج"""
-        import offline_ocr
         import offline_face_recognizer
+        import offline_ocr
         import offline_video_classifier
 
         ocr_ready = offline_ocr.is_offline_ocr_available()

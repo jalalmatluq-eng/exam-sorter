@@ -14,7 +14,6 @@
 """
 
 import base64
-import importlib
 import json
 import os
 import urllib.error
@@ -320,7 +319,7 @@ def classify_with_local_ocr(image_path: str) -> str:
         if ocr_res.subject:
             return ocr_res.subject
         if ocr_res.text:
-            lines = [l.strip() for l in ocr_res.text.splitlines() if len(l.strip()) > 3]
+            lines = [line_txt.strip() for line_txt in ocr_res.text.splitlines() if len(line_txt.strip()) > 3]
             if lines:
                 return lines[0][:30]
         return ""
@@ -328,16 +327,6 @@ def classify_with_local_ocr(image_path: str) -> str:
         raise
     except Exception as ex:
         raise ClassificationError(f"حدث خطأ أثناء تشغيل OCR: {ex}") from ex
-
-
-    except ClassificationError:
-        raise
-    except Exception as e:
-        raise ClassificationError(f"فشل الـ OCR المحلي: {e!s}")
-
-    raise ClassificationError(
-        "لم يتم العثور على اسم مادة معروف بواسطة الـ OCR المحلي."
-    )
 
 
 def classify_exam_image(
