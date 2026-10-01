@@ -90,6 +90,90 @@ MIME_TYPE_MAP: dict[str, str] = {
 }
 
 
+
+def resolve_media_mime_type(filename_or_path: str, explicit_mime: str = "") -> str:
+    """
+    تحديد MIME Type بدقة بناءً على النوع الممرر والامتداد لمنع حفظ الفيديو كصورة:
+    - لا تعتمد على الامتداد فقط وتدعم mime_type الممرر من MediaItem.
+    - تدعم video/mp4 وvideo/3gpp وvideo/x-matroska وvideo/quicktime وvideo/webm وصيغ الصور المختلفة.
+    - تمنع قطعياً إنشاء أي فيديو على SAF بـ MIME image/jpeg أو العكس.
+    """
+    ext = Path(filename_or_path).suffix.lower()
+    is_vid = (ext in VIDEO_EXTENSIONS)
+
+    if explicit_mime:
+        em = explicit_mime.strip().lower()
+        if is_vid or "video" in em:
+            if "image" in em:
+                if ext == ".3gp":
+                    return "video/3gpp"
+                elif ext == ".mkv":
+                    return "video/x-matroska"
+                elif ext == ".mov":
+                    return "video/quicktime"
+                elif ext == ".webm":
+                    return "video/webm"
+                return "video/mp4"
+            if "/" in em:
+                return em
+        elif "image" in em and "/" in em:
+            return em
+
+    if ext == ".mp4":
+        return "video/mp4"
+    elif ext == ".3gp":
+        return "video/3gpp"
+    elif ext == ".mkv":
+        return "video/x-matroska"
+    elif ext == ".mov":
+        return "video/quicktime"
+    elif ext == ".webm":
+        return "video/webm"
+    elif ext in VIDEO_EXTENSIONS:
+        return "video/mp4"
+    elif ext == ".png":
+        return "image/png"
+    elif ext == ".webp":
+        return "image/webp"
+    elif ext in (".heic", ".heif"):
+        return "image/heic"
+    elif ext == ".gif":
+        return "image/gif"
+    elif ext == ".bmp":
+        return "image/bmp"
+    return "image/jpeg"
+
+
+def classify_failure_reason(error: Exception | str, target_location: Any = None) -> str:
+    """تصنيف دقيق وموحد لسبب فشل معالجة الملف لعرضه للمستخدم في الواجهة"""
+    err_str = str(error).lower()
+    if "enospc" in err_str or "no space" in err_str or "امتلاء" in err_str or "disk full" in err_str:
+        return "امتلاء المساحة"
+    if (
+        "securityexception" in err_str
+        or "saf" in err_str and ("permission" in err_str or "إذن" in err_str or "صلاحية" in err_str)
+        or "uri permission" in err_str
+    ):
+        return "انتهاء SAF permission"
+    if target_location and getattr(target_location, "storage_type", "") == "sdcard" and not getattr(target_location, "is_valid", True):
+        msg = getattr(target_location, "error_message", "").lower()
+        if "saf" in msg or "إذن" in msg:
+            return "انتهاء SAF permission"
+        return "فصل بطاقة SD"
+    if (
+        "sdcard" in err_str or "sd card" in err_str or "enodev" in err_str
+        or "بطاقة" in err_str or "غير مركبة" in err_str or "disconnected" in err_str
+    ):
+        return "فصل بطاقة SD"
+    if "مجلد" in err_str or "mkdir" in err_str or "createdirectory" in err_str or "directory" in err_str:
+        return "فشل إنشاء المجلد"
+    if "قراءة" in err_str or "دفق" in err_str or "stream" in err_str or "read" in err_str or "openinputstream" in err_str:
+        return "فشل القراءة"
+    if "permission" in err_str or "eacces" in err_str or "صلاحية" in err_str:
+        return "رفض الصلاحية"
+    return f"فشل: {error}"
+
+
 def _get_platform() -> str:
     """الحصول على المنصة بأمان دون إلقاء استثناء عند غياب Kivy"""
     try:
@@ -97,6 +181,7 @@ def _get_platform() -> str:
         return str(platform)
     except Exception:
         return "win" if os.name == "nt" else "linux"
+
 
 
 @dataclass
@@ -142,6 +227,14 @@ class TargetLocation:
         if self.path:
             return is_directory_writable(self.path)
         return False
+
+    @property
+    def saf_uri(self) -> str:
+        return self.tree_uri
+
+    @property
+    def name(self) -> str:
+        return self.display_name or (str(self.path) if self.path else self.storage_type)
 
     def __str__(self) -> str:
         if self.is_saf:
@@ -291,8 +384,10 @@ def is_saf_uri_valid(uri_str: str) -> bool:
             if persisted_list:
                 for i in range(persisted_list.size()):
                     perm = persisted_list.get(i)
-                    if perm and str(perm.getUri()) == uri_str:
-                        return bool(perm.isWritePermission() and perm.isReadPermission())
+                    if perm:
+                        p_str = str(perm.getUri())
+                        if p_str == uri_str or p_str.rstrip("/") == uri_str.rstrip("/") or perm.getUri() == parsed_uri:
+                            return bool(perm.isWritePermission() and perm.isReadPermission())
             return False
         return True
     except Exception as e:
@@ -919,11 +1014,19 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
             except ValueError:
                 pass
 
-            dirs[:] = [
-                d for d in dirs
-                if not d.startswith(".")
-                and d.lower() not in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter", "lost.dir", ".android")
-            ]
+            is_root_chosen_organized = base_dir.name.lower() in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter")
+            is_root_level = (len(rel.parts) == 0)
+
+            filtered_dirs = []
+            for d in dirs:
+                if d.startswith(".") or d.lower() in ("lost.dir", ".android"):
+                    continue
+                d_lower = d.lower()
+                if d_lower in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter"):
+                    if not is_root_chosen_organized or not is_root_level:
+                        continue
+                filtered_dirs.append(d)
+            dirs[:] = filtered_dirs
 
             for f in files:
                 if f.startswith("."):
@@ -966,6 +1069,27 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
         tree_doc_id = DocumentsContract.getTreeDocumentId(parsed_tree)
         root_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, tree_doc_id)
 
+        # التحقق مما إذا كان الجذر الذي اختاره المستخدم هو مجلد "الملفات المنظمة" نفسه
+        is_root_chosen_organized = False
+        try:
+            tree_doc_id_decoded = str(tree_doc_id).lower()
+            if ORGANIZED_FOLDER_NAME.lower() in tree_doc_id_decoded or "mediasorter" in tree_doc_id_decoded:
+                is_root_chosen_organized = True
+            else:
+                r_cursor = cr.query(root_doc_uri, None, None, None, None)
+                if r_cursor is not None:
+                    try:
+                        if r_cursor.moveToFirst():
+                            r_idx = r_cursor.getColumnIndex("_display_name")
+                            if r_idx >= 0:
+                                r_name = str(r_cursor.getString(r_idx) or "").lower()
+                                if r_name in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter"):
+                                    is_root_chosen_organized = True
+                    finally:
+                        r_cursor.close()
+        except Exception:
+            pass
+
         # طابور التفرع: (document_uri, current_depth)
         queue: list[tuple[Any, int]] = [(root_doc_uri, 0)]
         visited_doc_ids: set[str] = set()
@@ -1006,8 +1130,13 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
                     c_mtime = float(cursor.getLong(mtime_idx) / 1000.0) if mtime_idx >= 0 else 0.0
 
                     c_name_lower = c_name.lower()
-                    if c_name.startswith(".") or c_name_lower in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter", "lost.dir", ".android"):
+                    if c_name.startswith(".") or c_name_lower in ("lost.dir", ".android"):
                         continue
+
+                    if c_name_lower in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter"):
+                        # استبعاد المجلد فقط عندما يكون فرعياً داخل الجذر، وليس عندما يكون الجذر نفسه
+                        if not is_root_chosen_organized or depth > 0:
+                            continue
 
                     child_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, c_id)
 
@@ -1079,14 +1208,26 @@ def copy_path_to_path(src_file: Path, dest_file: Path) -> bool:
 
 
 def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
-    """نسخ ملف من Content URI (MediaStore / SAF) إلى مسار محلي عبر دفق آمن"""
+    """نسخ ملف من Content URI (MediaStore / SAF) إلى مسار محلي عبر دفق آمن مع التحقق الصارم من الحجم"""
     dest_file.parent.mkdir(parents=True, exist_ok=True)
     temp_dest = dest_file.parent / f".tmp_uri_{dest_file.name}_{int(time.time() * 1000)}"
+
+    # الحصول على الحجم المتوقع من Content URI
+    expected_size = get_uri_file_size(content_uri)
 
     # دعم المحاكاة لبيئات الاختبار
     if content_uri.startswith("mock_doc://"):
         src_mock = Path(content_uri.replace("mock_doc://", ""))
-        return copy_path_to_path(src_mock, dest_file)
+        ok = copy_path_to_path(src_mock, temp_dest)
+        if not ok:
+            temp_dest.unlink(missing_ok=True)
+            return False
+        if expected_size > 0 and temp_dest.stat().st_size != expected_size:
+            logger.error("عدم تطابق حجم الملف المؤقت في المحاكاة: المتوقع %d vs الفعلي %d", expected_size, temp_dest.stat().st_size)
+            temp_dest.unlink(missing_ok=True)
+            return False
+        temp_dest.replace(dest_file)
+        return True
 
     try:
         if _get_platform() == "android":
@@ -1114,8 +1255,19 @@ def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
 
             in_stream.close()
 
+            # التحقق الصارم من اكتمال الدفق والحجم
             if total_written == 0:
                 logger.error("تم قراءة 0 بايت من URI: %s", content_uri)
+                temp_dest.unlink(missing_ok=True)
+                return False
+
+            if expected_size > 0 and total_written != expected_size:
+                logger.error("عدم تطابق حجم الدفق المقروء مع المتوقع: مقروء %d vs متوقع %d", total_written, expected_size)
+                temp_dest.unlink(missing_ok=True)
+                return False
+
+            if not temp_dest.exists() or (expected_size > 0 and temp_dest.stat().st_size != expected_size):
+                logger.error("عدم تطابق الحجم النهائي للملف المؤقت: المتوقع %d", expected_size)
                 temp_dest.unlink(missing_ok=True)
                 return False
 
@@ -1124,7 +1276,15 @@ def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
         else:
             p = Path(content_uri)
             if p.exists():
-                return copy_path_to_path(p, dest_file)
+                ok = copy_path_to_path(p, temp_dest)
+                if not ok:
+                    temp_dest.unlink(missing_ok=True)
+                    return False
+                if expected_size > 0 and temp_dest.stat().st_size != expected_size:
+                    temp_dest.unlink(missing_ok=True)
+                    return False
+                temp_dest.replace(dest_file)
+                return True
             return False
     except Exception as e:
         logger.error("فشل نسخ Content URI إلى مسار محلي: %s", e)
@@ -1132,7 +1292,7 @@ def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
         return False
 
 
-def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filename: str) -> str:
+def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filename: str, mime_type: str = "") -> str:
     """
     نسخ ملف محلي إلى بطاقة SD عبر Storage Access Framework و DocumentFile/DocumentsContract.
     العائد: Document URI للملف المنشأ في الوجهة كـ string، أو فارغ عند الفشل.
@@ -1171,9 +1331,8 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filen
 
         parsed_cat_uri = Uri.parse(cat_doc_uri_str)
 
-        # تخمين نوع الوسائط
-        ext = src_file.suffix.lower()
-        mime = "video/mp4" if ext in VIDEO_EXTENSIONS else "image/jpeg"
+        # تحديد نوع الوسائط بدقة مع منع جعل الفيديو صورة JPG
+        mime = resolve_media_mime_type(filename or src_file.name, mime_type)
 
         # إنشاء الملف
         new_file_uri = None
@@ -1248,7 +1407,7 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filen
             delete_media_item(created_uri_str)
 
 
-def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, filename: str, expected_size: int = 0) -> str:
+def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, filename: str, expected_size: int = 0, mime_type: str = "") -> str:
     """
     نسخ ملف من Content URI (MediaStore) مباشرة إلى Document URI في بطاقة SD عبر SAF.
     التحقق الصارم من دفق البيانات وتطابق الحجم بالبايت.
@@ -1287,8 +1446,8 @@ def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, 
             logger.error("تعذر فتح دفق المصدر للـ URI: %s", src_content_uri)
             return ""
 
-        ext = Path(filename).suffix.lower()
-        mime = "video/mp4" if ext in VIDEO_EXTENSIONS else "image/jpeg"
+        # تحديد نوع الوسائط بدقة مع منع جعل الفيديو صورة JPG
+        mime = resolve_media_mime_type(filename, mime_type)
 
         DocFileClass = _saf_get_document_file_class()
         new_file_uri = None

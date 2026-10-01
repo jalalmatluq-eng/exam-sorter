@@ -584,8 +584,13 @@ class HomeScreen(Screen):
                 }
             )
 
-            # إنشاء شجرة المجلدات المنظمة الرسمية فوراً
-            _ = file_manager.create_initial_category_folders()
+            # إنشاء شجرة المجلدات المنظمة الرسمية فوراً بدعم TargetLocation
+            import storage_backend
+            target_loc = storage_backend.get_active_target_location(state["target"])
+            try:
+                _ = file_manager.create_initial_category_folders(target_location=target_loc)
+            except Exception as e_init:
+                logger.warning("تنبيه تهيئة مجلدات الوجهة: %s", e_init)
 
             # فحص الصلاحية
             if not file_manager.is_all_files_access_granted():
@@ -740,28 +745,48 @@ class HomeScreen(Screen):
                 )
             except Exception as e:
                 logger.error("خطأ أثناء الفحص المستمر: %s", e)
-                res = {"total_processed": 0, "batches": 0}
+                res = {"total_processed": 0, "failed_count": 1, "failures_by_reason": {"استثناء عام": 1}, "batches": 0}
 
             def on_finish(_dt: float) -> None:
                 self._is_scanning = False
                 if hasattr(self, "ids") and "btn_quick_scan_text" in self.ids:
                     self.ids.btn_quick_scan_text.text = ar("فحص فوري")
                 self.refresh_subjects()
-                total = res.get("total_processed", 0)
+                success_count = res.get("total_processed", 0)
+                failed_count = res.get("failed_count", 0)
+                failures_by_reason = res.get("failures_by_reason", {})
 
-                show_modern_notification(
-                    "اكتمل الفرز والتنظيم",
-                    f"تم بنجاح تنظيم {total} ملف في مجلد 'الملفات المنظمة'!",
-                    notif_type="success",
-                )
+                details_lines = [
+                    f"الناجحة: {success_count} ملف",
+                    f"الفاشلة: {failed_count} ملف",
+                ]
+                if failures_by_reason:
+                    details_lines.append("\nأسباب الفشل بالتفصيل:")
+                    for r_name, r_cnt in failures_by_reason.items():
+                        details_lines.append(f"• {r_name}: {r_cnt} ملف")
+
+                summary_text = "\n".join(details_lines)
+
+                if failed_count == 0:
+                    show_modern_notification(
+                        "اكتمل الفرز والتنظيم",
+                        f"تم بنجاح تنظيم {success_count} ملف دون أي أخطاء!",
+                        notif_type="success",
+                    )
+                    dialog_title = "اكتمل الفرز والتنظيم بنجاح"
+                else:
+                    show_modern_notification(
+                        "اكتمل الفرز مع تنبيهات",
+                        f"تم تنظيم {success_count} ملف، وفشل {failed_count} ملف.",
+                        notif_type="warning",
+                    )
+                    dialog_title = "اكتمل الفرز مع وجود أخطاء"
 
                 _ = show_app_dialog(
-                    title="اكتمل الفرز والتنظيم بنجاح",
+                    title=dialog_title,
                     text=(
-                        f"تم بنجاح فحص وسائط ({src_name})،"
-                        f" وفرز {total} ملف وترتيبها في مجلد"
-                        f" 'الملفات المنظمة' على ({tgt_name})"
-                        " بحسب التصنيفات المعتمدة!"
+                        f"نتائج فحص وسائط ({src_name}) والحفظ في ({tgt_name}):\n\n"
+                        f"{summary_text}"
                     ),
                 )
 
@@ -771,7 +796,19 @@ class HomeScreen(Screen):
 
     def open_storage_folder(self) -> None:
         """فتح المجلد الرئيسي للتخزين أو إظهار المسار"""
-        base_path = file_manager.get_media_sorter_base_path()
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location()
+        if target_loc.is_saf:
+            _ = show_app_dialog(
+                title="مجلد الملفات المنظمة (SD Card)",
+                text=(
+                    f"الوسائط المصنفة محفوظة في بطاقة الذاكرة الخارجية عبر إذن SAF:\n\n{target_loc.display_name}\n\n"
+                    "يمكنك تصفحها والوصول إليها عبر تطبيق 'ملفاتي' مباشرة داخل بطاقة SD في مجلد 'الملفات المنظمة'."
+                ),
+            )
+            return
+
+        base_path = target_loc.path or file_manager.get_internal_media_sorter_base_path()
         success = file_manager.open_folder_native(str(base_path))
         if not success:
             _ = show_app_dialog(

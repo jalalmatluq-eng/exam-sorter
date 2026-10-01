@@ -204,14 +204,21 @@ class SettingsScreen(Screen):
     def refresh_storage_destination_ui(self) -> None:
         """تحديث بطاقة اختيار مكان الفرز والتخزين والمسار النشط"""
         try:
+            import storage_backend
             prefs = file_manager.get_sorter_preferences()
             active_dest = prefs.get("target_storage", "internal")
-            base_path = file_manager.get_media_sorter_base_path()
+            target_loc = storage_backend.get_active_target_location(active_dest)
             dests = file_manager.get_available_storage_destinations()
 
             if "storage_current_path_label" in self.ids:
+                if target_loc.is_saf:
+                    display_path = f"بطاقة SD ({target_loc.display_name})"
+                elif target_loc.path:
+                    display_path = str(target_loc.path)
+                else:
+                    display_path = "غير محدد / يلزم إذن SAF"
                 self.ids.storage_current_path_label.text = ar(
-                    f"المسار: {base_path}"
+                    f"الوجهة: {display_path}"
                 )
 
             internal_info = dests.get("internal", {})
@@ -305,13 +312,19 @@ class SettingsScreen(Screen):
                 )
                 return
 
+        import storage_backend
         file_manager.save_sorter_preferences({"target_storage": choice})
         self.refresh_storage_destination_ui()
-        new_path = file_manager.get_media_sorter_base_path()
+        target_loc = storage_backend.get_active_target_location(choice)
         target_name = (
             "بطاقة الذاكرة الخارجية SD Card"
             if choice == "sdcard"
             else "الذاكرة الداخلية"
+        )
+        display_dest = (
+            f"بطاقة SD عبر إذن SAF:\n{target_loc.display_name}"
+            if target_loc.is_saf
+            else str(target_loc.path or file_manager.get_internal_media_sorter_base_path())
         )
         from utils.ui_helper import show_modern_notification
 
@@ -324,7 +337,7 @@ class SettingsScreen(Screen):
             title="تم حفظ مكان الفرز",
             text=(
                 f"تم اعتماد {target_name} مكاناً"
-                f" لحفظ وفرز كافة الوسائط:\n\n{new_path}"
+                f" لحفظ وفرز كافة الوسائط:\n\n{display_dest}"
             ),
         )
 
@@ -340,7 +353,19 @@ class SettingsScreen(Screen):
 
     def open_current_media_folder(self) -> None:
         """فتح مجلد الملفات المنظمة الحالي في تطبيق الملفات"""
-        path = file_manager.get_media_sorter_base_path()
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location()
+        if target_loc.is_saf:
+            show_app_dialog(
+                title="مجلد الملفات المنظمة (SD Card)",
+                text=(
+                    f"الملفات المنظمة محفوظة في بطاقة الذاكرة الخارجية عبر SAF:\n\n{target_loc.display_name}\n\n"
+                    "يمكنك تصفحها وفتحها مباشرة عبر تطبيق 'ملفاتي' داخل بطاقة SD في مجلد 'الملفات المنظمة'."
+                ),
+            )
+            return
+
+        path = target_loc.path or file_manager.get_internal_media_sorter_base_path()
         success = file_manager.open_folder_native(str(path))
         if not success:
             show_app_dialog(

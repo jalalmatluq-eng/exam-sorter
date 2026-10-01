@@ -479,6 +479,67 @@ def _scan_android_mediastore(
     return found
 
 
+def _extract_media_dedup_keys(item: Any) -> tuple[str, tuple[str, int, int, str]]:
+    """
+    استخراج مفاتيح إزالة التكرار:
+    1. identifier: URI أو المسار الفعلي.
+    2. composite_key: (الاسم بحروف صغيرة، الحجم بالبايت، التاريخ بصحيح الثواني، volume).
+    """
+    uri = ""
+    name = ""
+    size = 0
+    mtime = 0
+    volume = "unknown"
+
+    if isinstance(item, storage_backend.MediaItem):
+        uri = item.uri or item.id
+        name = item.name.lower()
+        size = int(item.size_bytes)
+        mtime = int(item.date_modified)
+        volume = getattr(item, "storage_id", "") or ""
+        if not volume:
+            path_str = item.path or uri
+            if "/emulated/" in path_str:
+                volume = "internal"
+            elif "documents" in uri or "sdcard" in path_str.lower():
+                volume = "sdcard"
+            else:
+                volume = "internal"
+    elif isinstance(item, Path):
+        resolved = item.resolve()
+        uri = str(resolved)
+        name = item.name.lower()
+        try:
+            st = item.stat()
+            size = int(st.st_size)
+            mtime = int(st.st_mtime)
+        except OSError:
+            pass
+        path_lower = str(resolved).lower()
+        volume = "internal" if ("/emulated/" in path_lower or "c:" in path_lower) else "sdcard"
+    else:
+        uri = str(item)
+        if uri.startswith("content://"):
+            details = storage_backend.query_content_uri_details(uri)
+            name = (details.get("display_name") or Path(uri).name).lower()
+            size = int(details.get("size_bytes") or 0)
+            mtime = int(details.get("date_modified") or 0)
+            volume = "sdcard" if ("externalstorage" in uri or "document" in uri) else "internal"
+        else:
+            p = Path(uri)
+            name = p.name.lower()
+            try:
+                st = p.stat()
+                size = int(st.st_size)
+                mtime = int(st.st_mtime)
+            except OSError:
+                pass
+            volume = "internal" if "/emulated/" in uri.lower() else "sdcard"
+
+    vol_normalized = "sdcard" if volume in ("sdcard", "external", "secondary") else "internal"
+    return uri, (name, size, mtime, vol_normalized)
+
+
 def find_unsorted_media(
     roots: list[Path] | None = None,
     max_depth: int = 10,
@@ -487,7 +548,8 @@ def find_unsorted_media(
 ) -> list[Any]:
     """
     البحث الشجري الموحد والشامل عن جميع الصور والفيديوهات غير المصنفة:
-    - دمج نتائج فحص نظام الملفات (os.walk) مع نتائج MediaStore دون استبعاد أي منهما.
+    - دمج نتائج فحص نظام الملفات (os.walk) مع نتائج MediaStore و SAF دون تكرار.
+    - منع تكرار الملفات عند دمج MediaStore مع SAF عبر مفتاح مركب: (URI إن تطابق، وإلا الاسم + الحجم + التاريخ + volume).
     - احترام اختيار الذاكرة (internal / sdcard / both) بشكل صارم وفعلي.
     - عدم استبعاد WhatsApp / Telegram في Android/media مع استبعاد Android/data و Android/obb.
     - استبعاد مجلد الملفات المنظمة والملفات المفحوصة مسبقاً بعد التحقق من وجود نسختها في الوجهة.
@@ -499,6 +561,27 @@ def find_unsorted_media(
     scanned_details = get_scanned_files_details()
     combined_items: list[Any] = []
     seen_identifiers: set[str] = set()
+    seen_signatures: set[tuple[str, int, int, str]] = set()
+
+    def try_add_item(candidate: Any) -> bool:
+        ident, comp_key = _extract_media_dedup_keys(candidate)
+        ident_lower = ident.lower() if ident else ""
+        if ident_lower and ident_lower in seen_identifiers:
+            return False
+        name, sz, mt, vol = comp_key
+        if sz > 0 and (name, sz, mt, vol) in seen_signatures:
+            logger.info("تخطي ملف مكرر بين مصادر التخزين: %s (%s, %d bytes)", name, vol, sz)
+            return False
+
+        if ident_lower:
+            seen_identifiers.add(ident_lower)
+        if sz > 0:
+            seen_signatures.add((name, sz, mt, vol))
+            if vol == "sdcard":
+                seen_signatures.add((name, sz, mt, "external"))
+
+        combined_items.append(candidate)
+        return True
 
     # 1. استعلام MediaStore الرسمي على أندرويد
     try:
@@ -510,10 +593,7 @@ def find_unsorted_media(
                 force_rescan=force_rescan,
             )
             for item in ms_items:
-                key = item.path.lower() if item.path else item.uri
-                if key not in seen_identifiers:
-                    seen_identifiers.add(key)
-                    combined_items.append(item)
+                try_add_item(item)
             logger.info("تم العثور على %d ملف وسائط عبر MediaStore", len(ms_items))
     except Exception as e:
         logger.debug("تنبيه استعلام MediaStore: %s", e)
@@ -537,7 +617,8 @@ def find_unsorted_media(
     }
 
     try:
-        active_target_base = file_manager.get_media_sorter_base_path().resolve()
+        active_target_loc = storage_backend.get_active_target_location()
+        active_target_base = active_target_loc.path.resolve() if (active_target_loc and active_target_loc.path) else None
     except (OSError, RuntimeError):
         active_target_base = None
 
@@ -602,11 +683,6 @@ def find_unsorted_media(
                     if ext in IMAGE_EXTENSIONS or ext in VIDEO_EXTENSIONS:
                         full_path = Path(root) / f
                         str_full = str(full_path)
-                        str_key = str_full.lower()
-
-                        if str_key in seen_identifiers:
-                            continue
-                        seen_identifiers.add(str_key)
 
                         if not force_rescan and str_full in scanned_details:
                             info = scanned_details[str_full]
@@ -623,7 +699,7 @@ def find_unsorted_media(
                                 except OSError:
                                     pass
 
-                        combined_items.append(full_path)
+                        try_add_item(full_path)
         except (OSError, RuntimeError) as e:
             logger.warning("خطأ أثناء فحص المجلد %s: %s", root_dir, e)
 
@@ -636,17 +712,14 @@ def find_unsorted_media(
                 logger.info("تم العثور على %d ملف وسائط عبر قارئ SAF Tree الشجري", len(saf_items))
                 for s_item in saf_items:
                     k = s_item.uri
-                    k_lower = k.lower()
-                    if k_lower not in seen_identifiers:
-                        seen_identifiers.add(k_lower)
-                        if not force_rescan and k in scanned_details:
-                            info = scanned_details[k]
-                            dest_path_str = str(info.get("dest_path", ""))
-                            if dest_path_str:
-                                dest_sz = storage_backend.get_uri_file_size(dest_path_str) if dest_path_str.startswith("content://") else (Path(dest_path_str).stat().st_size if Path(dest_path_str).exists() else 0)
-                                if dest_sz == s_item.size_bytes:
-                                    continue
-                        combined_items.append(s_item)
+                    if not force_rescan and k in scanned_details:
+                        info = scanned_details[k]
+                        dest_path_str = str(info.get("dest_path", ""))
+                        if dest_path_str:
+                            dest_sz = storage_backend.get_uri_file_size(dest_path_str) if dest_path_str.startswith("content://") else (Path(dest_path_str).stat().st_size if Path(dest_path_str).exists() else 0)
+                            if dest_sz == s_item.size_bytes:
+                                continue
+                    try_add_item(s_item)
             except Exception as e_saf:
                 logger.error("خطأ أثناء قراءة شجرة SAF للبطاقة الخارجية: %s", e_saf)
         elif source_storage == "sdcard":
@@ -811,11 +884,13 @@ def process_one_file(
         )
     except Exception as e:
         logger.error("استثناء غير متوقع أثناء معالجة الملف %s: %s", item_id, e, exc_info=True)
+        fail_reason = storage_backend.classify_failure_reason(e)
         return {
             "success": False,
             "source": item_id,
             "category": CATEGORY_UNCLASSIFIED,
             "error": str(e),
+            "failure_reason": fail_reason,
         }
     finally:
         file_manager.mark_file_processing_end()
@@ -842,7 +917,12 @@ def _process_one_file_internal(
             temp_stream_file = temp_dir / f"stream_{int(time.time() * 1000)}_{file_item.name}"
             copied = storage_backend.copy_uri_to_path(file_item.uri, temp_stream_file)
             if not copied or not temp_stream_file.exists():
-                return {"success": False, "source": source_key, "error": "تعذر قراءة دفق Content URI"}
+                return {
+                    "success": False,
+                    "source": source_key,
+                    "error": "تعذر قراءة دفق Content URI أو اكتماله",
+                    "failure_reason": "فشل القراءة",
+                }
             p = temp_stream_file
     elif isinstance(file_item, Path):
         p = file_item.resolve()
@@ -858,7 +938,12 @@ def _process_one_file_internal(
             temp_stream_file = temp_dir / f"stream_{int(time.time() * 1000)}_{safe_name}"
             copied = storage_backend.copy_uri_to_path(source_str, temp_stream_file)
             if not copied or not temp_stream_file.exists():
-                return {"success": False, "source": source_key, "error": "تعذر قراءة دفق Content URI"}
+                return {
+                    "success": False,
+                    "source": source_key,
+                    "error": "تعذر قراءة دفق Content URI أو اكتماله",
+                    "failure_reason": "فشل القراءة",
+                }
             p = temp_stream_file
         else:
             p = Path(source_str).resolve()
@@ -866,7 +951,12 @@ def _process_one_file_internal(
 
     try:
         if not p.exists() or not p.is_file():
-            return {"success": False, "source": source_key, "error": "الملف غير موجود"}
+            return {
+                "success": False,
+                "source": source_key,
+                "error": "الملف غير موجود",
+                "failure_reason": "فشل القراءة",
+            }
 
         ext = p.suffix.lower()
         target_category = CATEGORY_UNCLASSIFIED
@@ -1025,6 +1115,8 @@ def run_batch_scan(
     batch = media_files[:max_files]
 
     processed_count = 0
+    failed_count = 0
+    failures_by_reason: dict[str, int] = {}
     results: list[dict[str, object]] = []
 
     for idx, f in enumerate(batch):
@@ -1035,6 +1127,10 @@ def run_batch_scan(
         results.append(res)
         if res.get("success"):
             processed_count += 1
+        else:
+            failed_count += 1
+            reason = str(res.get("failure_reason") or "فشل غير محدد")
+            failures_by_reason[reason] = failures_by_reason.get(reason, 0) + 1
 
         time.sleep(0.03)
 
@@ -1042,6 +1138,9 @@ def run_batch_scan(
         "total_unprocessed_found": total_found,
         "batch_size": len(batch),
         "processed_count": processed_count,
+        "success_count": processed_count,
+        "failed_count": failed_count,
+        "failures_by_reason": failures_by_reason,
         "results": results,
     }
 
@@ -1066,6 +1165,8 @@ def run_continuous_scan(
         logger.warning("Cache DB init failed: %s (continuing scan)", e)
 
     total_processed = 0
+    total_failed = 0
+    failures_by_reason: dict[str, int] = {}
     all_results: list[dict[str, object]] = []
 
     # استكشاف الملفات دفعة واحدة في البداية بدلاً من إعادة المسح البطيء
@@ -1076,6 +1177,9 @@ def run_continuous_scan(
     if total_files == 0:
         return {
             "total_processed": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "failures_by_reason": {},
             "batches_completed": 0,
             "results": [],
         }
@@ -1088,10 +1192,20 @@ def run_continuous_scan(
             res: dict[str, object] = process_one_file(f, api_key=api_key)
         except Exception as e:
             logger.error("خطأ أثناء معالجة الملف %s: %s", f, e)
-            res = {"success": False, "error": str(e), "original_path": str(f)}
+            fail_reason = storage_backend.classify_failure_reason(e)
+            res = {
+                "success": False,
+                "error": str(e),
+                "original_path": str(f),
+                "failure_reason": fail_reason,
+            }
 
         if res.get("success"):
             total_processed += 1
+        else:
+            total_failed += 1
+            reason = str(res.get("failure_reason") or "فشل غير محدد")
+            failures_by_reason[reason] = failures_by_reason.get(reason, 0) + 1
 
         # الاحتفاظ بآخر 50 نتيجة فقط لتجنب استهلاك ذاكرة RAM عند معالجة آلاف الملفات
         if len(all_results) < 50:
@@ -1128,6 +1242,9 @@ def run_continuous_scan(
 
     return {
         "total_processed": total_processed,
+        "success_count": total_processed,
+        "failed_count": total_failed,
+        "failures_by_reason": failures_by_reason,
         "batches_completed": (total_processed // batch_size) + 1,
         "results": all_results,
     }

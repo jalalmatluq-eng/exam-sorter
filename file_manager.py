@@ -804,39 +804,12 @@ def get_available_storage_destinations() -> dict[str, dict[str, object]]:
     return dests
 
 
-def get_media_sorter_base_path() -> Path:
-    """
-    تحديد المسار الأساسي الموحد لمجلدات مُنظّم الوسائط مع حماية استثنائية وهجرة الأسماء القديمة:
-    - التحقق الصارم من بطاقة SD ومنع الانهيار عند فشل mkdir.
-    - عدم الرجوع الصامت للداخلية إذا تم اختيار كرت SD؛ تسجيل تنبيه واضح وإتاحة مسار آمن.
-    - دمج المجلدات القديمة تلقائياً دون تكرار أو فقد للملفات.
-    """
+def get_internal_media_sorter_base_path() -> Path:
+    """المسار الأساسي للملفات المنظمة على الذاكرة الداخلية حصراً"""
     import storage_backend
-    prefs = get_sorter_preferences()
-    target_pref = prefs.get("target_storage", "internal")
-
     try:
         from kivy.utils import platform
         if platform == "android":
-            if target_pref == "sdcard":
-                locs = storage_backend.detect_storage_locations()
-                sd = locs.get("sdcard")
-                if sd and sd.detected and sd.path and sd.path != "غير متوفرة حالياً":
-                    sd_target = Path(sd.path)
-                    if sd_target.name != ORGANIZED_FOLDER_NAME:
-                        sd_target = sd_target / ORGANIZED_FOLDER_NAME
-                    try:
-                        sd_target.mkdir(parents=True, exist_ok=True)
-                        storage_backend.migrate_legacy_folders(sd_target)
-                        return sd_target
-                    except (PermissionError, OSError) as e:
-                        logger.warning("تعذر إنشاء مجلد الوجهة على بطاقة SD (%s): %s", sd_target, e)
-                        if sd.requires_saf:
-                            logger.info("بطاقة SD تتطلب إذن SAF للوصول")
-                else:
-                    logger.warning("تم اختيار بطاقة الذاكرة الخارجية لكنها غير متاحة أو تتطلب إذن SAF")
-
-            # الذاكرة الداخلية المشتركة
             internal_base = Path("/storage/emulated/0") / ORGANIZED_FOLDER_NAME
             try:
                 internal_base.mkdir(parents=True, exist_ok=True)
@@ -848,7 +821,7 @@ def get_media_sorter_base_path() -> Path:
                     storage_backend.migrate_legacy_folders(internal_base)
                     return internal_base
     except (ImportError, OSError, RuntimeError) as e:
-        logger.debug("تنبيه أثناء تهيئة مسار الملفات المنظمة: %s", e)
+        logger.debug("تنبيه أثناء تهيئة مسار الملفات المنظمة الداخلي: %s", e)
 
     base = Path(__file__).resolve().parent / ORGANIZED_FOLDER_NAME
     try:
@@ -859,29 +832,98 @@ def get_media_sorter_base_path() -> Path:
     return base
 
 
-def create_initial_category_folders(
-    base_path: Path | None = None
-) -> list[Path]:
-    """إنشاء وتجهيز شجرة المجلدات الرسمية للملفات المنظمة وهجرة الأسماء القديمة"""
+def get_media_sorter_base_path() -> Path:
+    """
+    تحديد المسار الأساسي الموحد لمجلدات مُنظّم الوسائط:
+    - التحقق الصارم من بطاقة SD ومنع أي Fallback صامت للذاكرة الداخلية.
+    - إذا تم اختيار بطاقة SD وكانت تتطلب SAF أو غير متوفرة، يطلق استثناء واضحاً (OSError)
+      ويمنع إنشاء أي مجلدات في الذاكرة الداخلية.
+    """
     import storage_backend
-    base = (
-        base_path if base_path is not None
-        else get_media_sorter_base_path()
-    )
+    prefs = get_sorter_preferences()
+    target_pref = prefs.get("target_storage", "internal")
+
+    if target_pref == "sdcard":
+        locs = storage_backend.detect_storage_locations()
+        sd = locs.get("sdcard")
+        if sd and sd.detected and sd.writable and not sd.requires_saf and sd.path and sd.path != "غير متوفرة حالياً":
+            sd_target = Path(sd.path)
+            if sd_target.name != ORGANIZED_FOLDER_NAME:
+                sd_target = sd_target / ORGANIZED_FOLDER_NAME
+            try:
+                sd_target.mkdir(parents=True, exist_ok=True)
+                storage_backend.migrate_legacy_folders(sd_target)
+                return sd_target
+            except (PermissionError, OSError) as e:
+                raise OSError(f"تعذر إنشاء مجلد الوجهة على بطاقة SD ({sd_target}): {e}") from e
+
+        # بطاقة SD تتطلب SAF أو غير متوفرة: منع الرجوع الصامت نهائياً
+        raise OSError("بطاقة الذاكرة الخارجية تتطلب إذن SAF للوصول ولا تملك مساراً محلياً مباشراً؛ استخدم TargetLocation.")
+
+    return get_internal_media_sorter_base_path()
+
+
+def create_initial_category_folders(
+    target_location: Any | None = None,
+    base_path: Path | None = None,
+) -> list[Any]:
+    """
+    إنشاء وتجهيز شجرة المجلدات الرسمية للملفات المنظمة بدعم كامل لـ TargetLocation:
+    - Path destination: إنشاء المجلدات عبر mkdir وهجرة المجلدات القديمة.
+    - SAF destination: إنشاء المجلدات عبر saf_find_or_create_directory دون لمس التخزين الداخلي.
+    - أي فشل في الوجهة يطلق استثناءً واضحاً ولا ينشئ مجلدات في الذاكرة الداخلية.
+    """
+    import storage_backend
+
+    if target_location is None:
+        if base_path is not None:
+            target_location = storage_backend.TargetLocation(
+                storage_type="custom",
+                is_saf=False,
+                path=Path(base_path),
+                display_name=str(base_path),
+                is_valid=True,
+            )
+        else:
+            target_location = storage_backend.get_active_target_location()
+
+    if not target_location.is_valid:
+        raise OSError(f"فشل إعداد مجلدات الوجهة، التخزين غير صالح: {target_location.error_message}")
+
+    created: list[Any] = []
+
+    # 1. وجهة SAF Tree URI لبطاقة الذاكرة الخارجية
+    if target_location.is_saf:
+        tree_uri = target_location.tree_uri
+        if not tree_uri:
+            raise OSError("تم اختيار بطاقة الذاكرة الخارجية كوجهة لكن لم يتم تحديد URI الصالح عبر SAF.")
+
+        for f_name in storage_backend.STANDARD_CATEGORIES:
+            cat_uri = storage_backend.saf_find_or_create_directory(tree_uri, f_name)
+            if not cat_uri:
+                raise OSError(f"فشل إنشاء مجلد التصنيف في بطاقة SD عبر SAF: {f_name}")
+            created.append(cat_uri)
+        return created
+
+    # 2. وجهة مسار محلي فيزيائي
+    base = target_location.path
+    if base is None:
+        raise OSError("وجهة التخزين المحددة لا تملك مساراً محلياً صالحاً.")
+
     try:
         base.mkdir(parents=True, exist_ok=True)
         storage_backend.migrate_legacy_folders(base)
-    except OSError:
-        pass
+    except OSError as e:
+        raise OSError(f"تعذر إنشاء المجلد الرئيسي للوجهة ({base}): {e}") from e
 
-    created: list[Path] = []
     for f_name in storage_backend.STANDARD_CATEGORIES:
         p = base / f_name
         try:
             p.mkdir(parents=True, exist_ok=True)
             created.append(p)
-        except OSError:
-            pass
+        except OSError as e:
+            raise OSError(f"تعذر إنشاء مجلد التصنيف ({p}): {e}") from e
+
     return created
 
 
@@ -894,7 +936,7 @@ def get_transfer_log_path(base_path: Path | None = None) -> Path:
     # هجرة تلقائية من المسار القديم إن وجد
     if not private_log.exists():
         try:
-            legacy_log = get_media_sorter_base_path() / "transfer_history.json"
+            legacy_log = get_internal_media_sorter_base_path() / "transfer_history.json"
             if legacy_log.exists():
                 shutil.copy2(str(legacy_log), str(private_log))
                 logger.info("تمت هجرة سجل transfer_history.json إلى التخزين الخاص بالتطبيق بنجاح")
@@ -1082,7 +1124,12 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     except (OSError, TypeError):
         pass
 
-    for db_dir in [get_app_private_storage_dir(), get_media_sorter_base_path()]:
+    db_dirs = [get_app_private_storage_dir()]
+    try:
+        db_dirs.append(get_internal_media_sorter_base_path())
+    except Exception:
+        pass
+    for db_dir in db_dirs:
         try:
             cache_db = db_dir / "scanned_media_cache.db"
             if cache_db.exists():
@@ -1183,7 +1230,12 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
 
     # تنظيف الكاش فقط للعناصر التي تم التراجع عنها بنجاح
     if cleared_keys:
-        for db_dir in [get_app_private_storage_dir(), get_media_sorter_base_path()]:
+        db_dirs = [get_app_private_storage_dir()]
+        try:
+            db_dirs.append(get_internal_media_sorter_base_path())
+        except Exception:
+            pass
+        for db_dir in db_dirs:
             try:
                 cache_db = db_dir / "scanned_media_cache.db"
                 if cache_db.exists():
@@ -1248,11 +1300,13 @@ def copy_to_category(
     src_uri: str = ""
     filename: str = ""
     src_size: int = 0
+    src_mime: str = ""
     is_uri_source: bool = False
 
     if isinstance(actual_item, storage_backend.MediaItem):
         filename = actual_item.name
         src_size = actual_item.size_bytes
+        src_mime = getattr(actual_item, "mime_type", "")
         if actual_item.path and os.path.exists(actual_item.path):
             resolved_src_path = Path(actual_item.path)
             is_uri_source = False
@@ -1267,6 +1321,7 @@ def copy_to_category(
         details = storage_backend.query_content_uri_details(src_uri)
         filename = details.get("display_name") or f"media_{int(time.time() * 1000)}{details.get('extension', '.mp4' if 'video' in src_uri.lower() else '.jpg')}"
         src_size = details.get("size_bytes") or storage_backend.get_uri_file_size(src_uri)
+        src_mime = details.get("mime_type", "")
     else:
         resolved_src_path = Path(actual_item).resolve()
         if not resolved_src_path.exists() or not resolved_src_path.is_file():
@@ -1274,6 +1329,7 @@ def copy_to_category(
         filename = resolved_src_path.name
         src_size = resolved_src_path.stat().st_size
         is_uri_source = False
+        src_mime = storage_backend.resolve_media_mime_type(filename)
 
     # تنظيف اسم المجلد الفرعي
     clean_parts = [
@@ -1298,6 +1354,7 @@ def copy_to_category(
                 category=rel_category_str,
                 filename=filename,
                 expected_size=src_size,
+                mime_type=src_mime,
             )
         else:
             assert resolved_src_path is not None
@@ -1306,6 +1363,7 @@ def copy_to_category(
                 tree_uri,
                 category=rel_category_str,
                 filename=filename,
+                mime_type=src_mime,
             )
 
         if not dest_uri:

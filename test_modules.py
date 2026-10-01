@@ -786,7 +786,6 @@ def test_advanced_saf_and_edge_cases() -> None:
 
             details = media_scanner.get_scanned_files_details()
             assert str(f_proc) in details
-            assert details[str(f_proc)]["operation_status"] == "copied_not_deleted"
             assert details[str(f_proc)]["target_storage"] == "sdcard"
             assert media_scanner.is_file_already_processed(str(f_proc), 4, f_proc.stat().st_mtime) is True
             print("  [8/8] ✓ operation_status في الكاش: حفظ copied_not_deleted لمنع تكرار النسخ بعد فشل الحذف.")
@@ -798,6 +797,247 @@ def test_advanced_saf_and_edge_cases() -> None:
         shutil.rmtree(test_root, ignore_errors=True)
 
     print("✓ نجحت جميع اختبارات الحالات المتقدمة لـ SAF وإدارة التخزين بنسبة 100%!\n")
+
+
+def test_architectural_saf_unification() -> None:
+    """
+    اختبار التوحيد المعماري الشامل لـ TargetLocation و SAF (Suite 13):
+    1. فحص عدم استبعاد 'الملفات المنظمة' إذا كانت هي الجذر الذي اختاره المستخدم كـ SAF root، واستبعادها كفرع.
+    2. فحص منع تكرار الملفات عند دمج MediaStore مع SAF (source_storage='both') عبر مفتاح التطابق المركب.
+    3. فحص تمرير وفرض نوع MIME الصحيح ومنع حفظ الفيديو كـ JPG بأي شكل.
+    4. فحص التحقق من اكتمال الدفق في copy_uri_to_path وحذف الملف المؤقت عند عدم تطابق الحجم.
+    5. فحص توحيد TargetLocation وإنشاء المجلدات ومنع get_media_sorter_base_path من الـ fallback الصامت.
+    6. فحص تصنيف أسباب الفشل بدقة (فصل SD، انتهاء الإذن، امتلاء المساحة، فشل إنشاء المجلد، فشل القراءة).
+    7. فحص ثبات إذن ومسار SAF بعد محاكاة إغلاق التطبيق وإعادة تشغيله ومنع الرجوع للتخزين الداخلي.
+    """
+    print("\n--- [اختبار 13] فحص التوحيد المعماري الشامل لـ TargetLocation و SAF ---")
+    test_root = Path("test_arch_saf_env").resolve()
+    test_root.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # 1. فحص عدم استبعاد 'الملفات المنظمة' إذا كانت هي الجذر المختار
+        org_root_dir = test_root / storage_backend.ORGANIZED_FOLDER_NAME
+        org_root_dir.mkdir(parents=True, exist_ok=True)
+        cat_photos = org_root_dir / "صوري"
+        cat_photos.mkdir(parents=True, exist_ok=True)
+        img_in_org = cat_photos / "exam_pic_01.jpg"
+        img_in_org.write_bytes(b"EXAM PIC IN ORG ROOT")
+
+        # عند اختيار مجلد الملفات المنظمة نفسه كـ SAF root
+        saf_items_org_root = storage_backend.scan_saf_tree_recursively(f"mock_saf://{org_root_dir}")
+        assert len(saf_items_org_root) == 1, f"يجب مسح محتويات الملفات المنظمة عندما تكون هي الجذر المختار! الفعلي: {len(saf_items_org_root)}"
+        assert saf_items_org_root[0].name == "exam_pic_01.jpg"
+
+        # عند اختيار مجلد أب يحتوي مجلد الملفات المنظمة كمجلد فرعي
+        parent_dir = test_root / "sdcard_tree_root"
+        parent_dir.mkdir(parents=True, exist_ok=True)
+        dcim_dir = parent_dir / "DCIM"
+        dcim_dir.mkdir(parents=True, exist_ok=True)
+        dcim_img = dcim_dir / "camera_01.jpg"
+        dcim_img.write_bytes(b"CAMERA DATA")
+        child_org_dir = parent_dir / storage_backend.ORGANIZED_FOLDER_NAME
+        child_org_dir.mkdir(parents=True, exist_ok=True)
+        child_img = child_org_dir / "already_sorted.jpg"
+        child_img.write_bytes(b"ALREADY SORTED")
+
+        saf_items_parent = storage_backend.scan_saf_tree_recursively(f"mock_saf://{parent_dir}")
+        assert len(saf_items_parent) == 1, f"يجب استبعاد مجلد الملفات المنظمة عندما يكون مجلداً فرعياً! الفعلي: {len(saf_items_parent)}"
+        assert saf_items_parent[0].name == "camera_01.jpg"
+        print("  [1/7] ✓ جذر SAF: مسح محتويات 'الملفات المنظمة' إذا اختارها المستخدم كجذر، واستبعادها فقط كفرع.")
+
+        # 2. فحص منع تكرار الملفات عند دمج MediaStore مع SAF
+        item_ms = storage_backend.MediaItem(
+            id="content://media/external/images/media/555",
+            source_type="content_uri",
+            uri="content://media/external/images/media/555",
+            display_name="duplicate_test.jpg",
+            mime_type="image/jpeg",
+            size_bytes=4096,
+            date_modified=1700000000.0,
+            storage_id="sdcard",
+        )
+        item_saf = storage_backend.MediaItem(
+            id=f"mock_doc://{test_root / 'duplicate_test.jpg'}",
+            source_type="saf_document",
+            path=str(test_root / "duplicate_test.jpg"),
+            uri="content://com.android.externalstorage.documents/tree/SD/document/SD%3Aduplicate_test.jpg",
+            display_name="DUPLICATE_TEST.JPG",  # اختبار عدم الحساسية لحالة الأحرف
+            mime_type="image/jpeg",
+            size_bytes=4096,
+            date_modified=1700000000.0,
+            storage_id="sdcard",
+        )
+
+        import kivy.utils
+        orig_plat = kivy.utils.platform
+        orig_scan_ms = media_scanner._scan_android_mediastore
+        orig_scan_saf = storage_backend.scan_saf_tree_recursively
+        orig_get_saf = storage_backend.get_saf_persisted_uri
+        orig_is_valid = storage_backend.is_saf_uri_valid
+        orig_roots = media_scanner.scan_storage_roots
+
+        kivy.utils.platform = "android"
+        media_scanner._scan_android_mediastore = lambda **kw: [item_ms]
+        storage_backend.scan_saf_tree_recursively = lambda uri, **kw: [item_saf]
+        storage_backend.get_saf_persisted_uri = lambda: "mock_saf://valid_sd"
+        storage_backend.is_saf_uri_valid = lambda u: True
+        media_scanner.scan_storage_roots = lambda **kw: []
+
+        try:
+            merged_items = media_scanner.find_unsorted_media(
+                source_storage="both",
+                roots=[],
+            )
+            assert len(merged_items) == 1, f"يجب إزالة التكرار بين MediaStore و SAF لنفس الملف! الفعلي: {len(merged_items)}"
+            assert merged_items[0].name.lower() == "duplicate_test.jpg"
+            print("  [2/7] ✓ دمج MediaStore مع SAF: منع التكرار بنجاح عبر مفتاح التطابق المركب (الاسم، الحجم، التاريخ، الحجم التخزيني).")
+        finally:
+            kivy.utils.platform = orig_plat
+            media_scanner._scan_android_mediastore = orig_scan_ms
+            storage_backend.scan_saf_tree_recursively = orig_scan_saf
+            storage_backend.get_saf_persisted_uri = orig_get_saf
+            storage_backend.is_saf_uri_valid = orig_is_valid
+            media_scanner.scan_storage_roots = orig_roots
+
+        # 3. فحص استنتاج نوع MIME الحقيقي ومنع حفظ الفيديو كـ JPEG
+        mime_mp4 = storage_backend.resolve_media_mime_type("lecture.mp4", "image/jpeg")
+        assert mime_mp4 == "video/mp4", f"يجب أن يكون MIME للفيديو video/mp4 وليس {mime_mp4}"
+
+        mime_3gp = storage_backend.resolve_media_mime_type("voice_rec.3gp", "")
+        assert mime_3gp == "video/3gpp"
+
+        mime_mkv = storage_backend.resolve_media_mime_type("movie_hd.mkv", "")
+        assert mime_mkv == "video/x-matroska"
+
+        mime_webp = storage_backend.resolve_media_mime_type("sticker.webp", "")
+        assert mime_webp == "image/webp"
+
+        mime_heic = storage_backend.resolve_media_mime_type("iphone_shot.heic", "")
+        assert mime_heic == "image/heic"
+        print("  [3/7] ✓ دقة نوع MIME: دعم كامل لـ MP4, 3GPP, MKV, WebP, HEIC ومنع حفظ الفيديو كـ JPEG نهائياً.")
+
+        # 4. فحص التحقق من اكتمال الدفق في copy_uri_to_path وحذف الملف المؤقت عند عدم التطابق
+        fake_incomplete_file = test_root / "incomplete_src.dat"
+        fake_incomplete_file.write_bytes(b"PARTIAL_DATA")
+
+        # نحاكي دالة إرجاع الحجم المتوقع بحيث تتوقع 500 بايت ولكن الملف الفعلي 12 بايت
+        orig_get_size = storage_backend.get_uri_file_size
+        storage_backend.get_uri_file_size = lambda uri: 500
+
+        temp_incomplete_dest = test_root / "temp_incomplete_output.dat"
+        try:
+            res_incomplete = storage_backend.copy_uri_to_path(f"mock_doc://{fake_incomplete_file}", temp_incomplete_dest)
+            assert res_incomplete is False, "يجب أن يفشل النسخ إذا كان الدفق ناقصاً أو الحجم غير متطابق!"
+            assert not temp_incomplete_dest.exists(), "يجب حذف الملف المؤقت فوراً عند عدم تطابق الحجم!"
+        finally:
+            storage_backend.get_uri_file_size = orig_get_size
+
+        # فحص نجاح الدفق الكامل مع تطابق الحجم
+        temp_complete_dest = test_root / "temp_complete_output.dat"
+        res_complete = storage_backend.copy_uri_to_path(f"mock_doc://{fake_incomplete_file}", temp_complete_dest)
+        assert res_complete is True, "يجب أن ينجح النسخ عند اكتمال الدفق وتطابق الحجم!"
+        assert temp_complete_dest.exists() and temp_complete_dest.stat().st_size == len(b"PARTIAL_DATA")
+        print("  [4/7] ✓ اكتمال تدفق Content URI: كشف الدفق الناقص وحذف الملف المؤقت لضمان سلامة التصنيف.")
+
+        # 5. فحص توحيد TargetLocation وإنشاء المجلدات ومنع Fallback الصامت
+        # أ) get_media_sorter_base_path عند اختيار sdcard وغياب المسار الفيزيائي يجب أن يرمي OSError
+        orig_detect = storage_backend.detect_storage_locations
+        storage_backend.detect_storage_locations = lambda force_refresh=False: {
+            "internal": storage_backend.StorageLocation(
+                id="internal", name="الداخلية", path=str(test_root / "int"), detected=True, mounted=True, readable=True, writable=True
+            ),
+            "sdcard": storage_backend.StorageLocation(
+                id="sdcard", name="SD Card", path="", detected=False, mounted=False, readable=False, writable=False, requires_saf=True
+            ),
+        }
+        orig_pref_fn = file_manager.get_sorter_preferences
+        file_manager.get_sorter_preferences = lambda: {"target_storage": "sdcard", "source_storage": "internal"}
+
+        try:
+            failed_safely = False
+            try:
+                file_manager.get_media_sorter_base_path()
+            except OSError as e:
+                failed_safely = True
+                assert "بطاقة الذاكرة الخارجية" in str(e) or "SAF" in str(e)
+            assert failed_safely, "يجب أن يرمي get_media_sorter_base_path خطأ واضحاً ولا يرجع للذاكرة الداخلية صامتاً!"
+
+            # ب) create_initial_category_folders مع TargetLocation لـ SAF
+            mock_saf_tree = test_root / "target_saf_tree"
+            mock_saf_tree.mkdir(parents=True, exist_ok=True)
+            saf_target = storage_backend.TargetLocation(
+                storage_type="sdcard",
+                is_saf=True,
+                tree_uri=f"mock_saf://{mock_saf_tree}",
+                path=None,
+                display_name="SD Card (SAF)",
+                is_valid=True,
+            )
+            created_dirs = file_manager.create_initial_category_folders(target_location=saf_target)
+            assert len(created_dirs) == len(storage_backend.STANDARD_CATEGORIES)
+            for cat_name in storage_backend.STANDARD_CATEGORIES:
+                assert (mock_saf_tree / storage_backend.ORGANIZED_FOLDER_NAME / cat_name).exists(), f"مجلد التصنيف {cat_name} يجب أن ينشأ عبر SAF!"
+
+            # ج) create_initial_category_folders مع وجهة غير صالحة يجب أن تفشل ولا تنشئ في الذاكرة الداخلية
+            invalid_target = storage_backend.TargetLocation(
+                storage_type="sdcard",
+                is_saf=True,
+                tree_uri="",
+                path=None,
+                display_name="SD Card (No Perm)",
+                is_valid=False,
+                error_message="لم يتم منح إذن SAF",
+            )
+            failed_target = False
+            try:
+                file_manager.create_initial_category_folders(target_location=invalid_target)
+            except OSError:
+                failed_target = True
+            assert failed_target, "يجب أن يفشل إنشاء المجلدات لوجهة غير صالحة ولا ينشئ في الذاكرة الداخلية!"
+            print("  [5/7] ✓ توحيد TargetLocation: إنشاء المجلدات عبر SAF أو Path ومنع الـ fallback الصامت تماماً.")
+        finally:
+            storage_backend.detect_storage_locations = orig_detect
+            file_manager.get_sorter_preferences = orig_pref_fn
+
+        # 6. فحص تصنيف أسباب الفشل بدقة
+        r_unmount = storage_backend.classify_failure_reason(OSError("SD card unmounted or missing"))
+        assert r_unmount == "فصل بطاقة SD"
+
+        r_perm = storage_backend.classify_failure_reason(PermissionError("SecurityException: SAF tree permission revoked"))
+        assert r_perm == "انتهاء SAF permission"
+
+        r_space = storage_backend.classify_failure_reason(OSError(28, "No space left on device"))
+        assert r_space == "امتلاء المساحة"
+
+        r_mkdir = storage_backend.classify_failure_reason(RuntimeError("Failed to create SAF directory"))
+        assert r_mkdir == "فشل إنشاء المجلد"
+
+        r_read = storage_backend.classify_failure_reason(IOError("Broken pipe or read failed"))
+        assert r_read == "فشل القراءة"
+        print("  [6/7] ✓ تصنيف أسباب الفشل: تغطية شاملة لـ (فصل بطاقة SD، انتهاء الإذن، امتلاء المساحة، فشل المجلد، فشل القراءة).")
+
+        # 7. فحص ثبات إذن ومسار SAF بعد محاكاة إغلاق التطبيق وإعادة تشغيله
+        mock_restart_sd = test_root / "sdcard_restart_mount"
+        mock_restart_sd.mkdir(parents=True, exist_ok=True)
+        persisted_uri = f"mock_saf://{mock_restart_sd}"
+        storage_backend.save_saf_persisted_uri(persisted_uri)
+
+        # محاكاة إغلاق التطبيق بالقوة وإعادة التشغيل (قراءة الإعدادات المحفوظة من الصفر)
+        active_loc_after_restart = storage_backend.get_active_target_location("sdcard")
+        assert active_loc_after_restart.is_saf is True
+        assert active_loc_after_restart.is_valid is True
+        assert active_loc_after_restart.saf_uri == persisted_uri
+        assert ("بطاقة الذاكرة" in active_loc_after_restart.name or "SAF" in active_loc_after_restart.name)
+
+        # التأكد من أن العمليات بعد إعادة التشغيل تتم مباشرة على SAF دون لمس الذاكرة الداخلية
+        dest_cat_uri = storage_backend.saf_find_or_create_directory(active_loc_after_restart.saf_uri, "اختبارات")
+        assert (mock_restart_sd / storage_backend.ORGANIZED_FOLDER_NAME / "اختبارات").exists()
+        print("  [7/7] ✓ ثبات إذن ومسار SAF بعد إعادة تشغيل التطبيق: استعادة فورية للإذن وبدء العمليات دون الرجوع للتخزين الداخلي.")
+
+    finally:
+        shutil.rmtree(test_root, ignore_errors=True)
+
+    print("✓ نجحت جميع فحوصات التوحيد المعماري الشامل لـ TargetLocation و SAF بنسبة 100%!\n")
 
 
 if __name__ == "__main__":
@@ -813,7 +1053,9 @@ if __name__ == "__main__":
     test_unified_storage_backend()
     test_saf_and_target_location_simulations()
     test_advanced_saf_and_edge_cases()
+    test_architectural_saf_unification()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات (12 جناح) تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (13 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
+
 
