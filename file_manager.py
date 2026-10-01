@@ -298,7 +298,6 @@ def list_subjects(
 
             # فحص المجلدات الفرعية للمواد داخل صور الاختبارات
             if item.name in ("صور الاختبارات", "صور اختبارات"):
-                sub_exam_count = 0
                 try:
                     sub_items = [sub for sub in item.iterdir() if sub.is_dir()]
                 except (OSError, PermissionError):
@@ -507,7 +506,7 @@ class DeleteFolderResult:
 
     def __bool__(self) -> bool:
         # لا يعتبر الحذف كاملاً وناجحاً إلا بحذف الملفات والمجلد معاً
-        return bool(self.files_deleted and self.folder_deleted)
+        return self.files_deleted and self.folder_deleted
 
 
 def delete_subject_folder(
@@ -817,7 +816,7 @@ def mark_file_processing_start(file_path: str) -> None:
     try:
         target = get_last_processing_file_path()
         target.parent.mkdir(parents=True, exist_ok=True)
-        data = {"file": str(file_path), "started_at": time.time()}
+        data = {"file": file_path, "started_at": time.time()}
         target.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
     except Exception:
         pass
@@ -849,7 +848,12 @@ def check_and_handle_poison_file_on_boot() -> str | None:
 
         if poison_file:
             prefs = get_sorter_preferences()
-            poisons = list(prefs.get("poison_files", []))
+            raw_poisons = prefs.get("poison_files", [])
+            poisons: list[str] = (
+                [str(x) for x in raw_poisons]
+                if isinstance(raw_poisons, (list, tuple, set))
+                else []
+            )
             if poison_file not in poisons:
                 poisons.append(poison_file)
                 save_sorter_preferences({"poison_files": poisons})
@@ -863,7 +867,10 @@ def get_poison_files_set() -> set[str]:
     """استرجاع مجموعة مسارات الملفات السامة المستبعدة"""
     try:
         prefs = get_sorter_preferences()
-        return set(str(x) for x in prefs.get("poison_files", []))
+        raw_poisons = prefs.get("poison_files", [])
+        if isinstance(raw_poisons, (list, tuple, set)):
+            return {str(x) for x in raw_poisons}
+        return set()
     except Exception:
         return set()
 
@@ -891,6 +898,12 @@ def get_pending_scan_info() -> tuple[bool, str, str]:
 def clear_pending_scan() -> None:
     """إلغاء الفحص المعلق بعد تنفيذه"""
     save_sorter_preferences({"pending_scan": False})
+
+
+def get_pending_scan() -> tuple[bool, str, str]:
+    """اسم بديل لدالة get_pending_scan_info لضمان التوافق الكامل"""
+    return get_pending_scan_info()
+
 
 
 def get_stored_api_key() -> str:
@@ -1205,7 +1218,7 @@ def _log_transfer_record(
     base_path: Path | None = None,
     is_copy: bool = True,
     is_saf_dest: bool = False,
-) -> None:
+) -> int:
     """تسجيل عملية نسخ/فرز في سجل المعاملات JSON مع دعم المسارات وعناوين URIs"""
     log_file = get_transfer_log_path(base_path)
     records: list[dict[str, object]] = []
@@ -1223,12 +1236,12 @@ def _log_transfer_record(
     rec_id = int(datetime.now(UTC).timestamp() * 1000)
     records.append({
         "id": rec_id,
-        "source": str(src_path),
-        "destination": str(dest_path),
+        "source": src_path,
+        "destination": dest_path,
         "category": category,
         "size_bytes": file_size,
         "is_copy": is_copy,
-        "is_saf_dest": bool(is_saf_dest or str(dest_path).startswith("content://")),
+        "is_saf_dest": bool(is_saf_dest or dest_path.startswith("content://")),
         "timestamp": datetime.now(UTC).isoformat(),
     })
 
@@ -1521,11 +1534,11 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
 
         success = False
         if is_copy:
-            if storage_backend.delete_media_item(dest_str):
-                success = True
-            elif not dest_str.startswith("content://") and not Path(dest_str).exists():
-                success = True
-            elif dest_str.startswith("mock_doc://") and not Path(dest_str.replace("mock_doc://", "")).exists():
+            if (
+                storage_backend.delete_media_item(dest_str)
+                or (not dest_str.startswith("content://") and not Path(dest_str).exists())
+                or (dest_str.startswith("mock_doc://") and not Path(dest_str.replace("mock_doc://", "")).exists())
+            ):
                 success = True
         else:
             if not src_str.startswith("content://"):

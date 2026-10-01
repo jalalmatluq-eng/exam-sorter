@@ -75,8 +75,9 @@ class HomeScreen(Screen):
             self._has_requested_perms = True
             from kivy.app import App
             app = App.get_running_app()
-            if hasattr(app, "request_android_permissions"):
-                Clock.schedule_once(lambda _dt: app.request_android_permissions(), 1.5)
+            if app is not None and hasattr(app, "request_android_permissions"):
+                req_fn = getattr(app, "request_android_permissions")  # noqa: B009
+                Clock.schedule_once(lambda _dt: req_fn(), 1.5)
 
     def start_cosmic_animation(self) -> None:
         """تم تعطيل الحركة الكونية المستمرة لحماية الأجهزة ذات GPU Adreno القديمة من SIGSEGV"""
@@ -736,10 +737,18 @@ class HomeScreen(Screen):
                     "filled": True,
                     "bg_color": (0.02, 0.52, 0.80, 1),
                 })
+            elif action_req == "open_app_settings":
+                preflight_buttons.append({
+                    "text": "فتح إعدادات التطبيق",
+                    "callback": lambda: android_permissions.open_app_details_settings(),
+                    "filled": True,
+                    "bg_color": (0.9, 0.4, 0.1, 1),
+                })
             preflight_buttons.append({"text": "إلغاء", "callback": None, "filled": False})
 
+            dlg_title = "الوصول محدود (أندرويد 14)" if action_req == "open_app_settings" else "مطلوب إذن وصول للتخزين"
             show_rich_results_dialog(
-                title="مطلوب إذن وصول للتخزين",
+                title=dlg_title,
                 stats_dict={"total_found": 0, "success_count": 0, "failed_count": 0},
                 failures_by_reason={issue_msg: 1},
                 buttons=preflight_buttons,
@@ -788,15 +797,26 @@ class HomeScreen(Screen):
                 if hasattr(self, "ids") and "btn_quick_scan_text" in self.ids:
                     self.ids.btn_quick_scan_text.text = ar("فحص فوري")
                 self.refresh_subjects()
-                success_count = res.get("total_processed", 0)
-                failed_count = res.get("failed_count", 0)
-                failures_by_reason = res.get("failures_by_reason", {})
-                total_files = success_count + failed_count
+                success_count: int = int(res.get("total_processed", 0) or 0)
+                failed_count: int = int(res.get("failed_count", 0) or 0)
+                raw_failures = res.get("failures_by_reason", {})
+                failures_by_reason: dict[str, int] = (
+                    {str(k): int(v) for k, v in raw_failures.items()}
+                    if isinstance(raw_failures, dict)
+                    else {}
+                )
+                total_files: int = success_count + failed_count
 
                 # تحديد أزرار الإجراء المناسبة بناءً على نوع الأخطاء
                 dlg_buttons = []
-                has_perm_issue = any("صلاحية" in r or "permission" in r.lower() for r in failures_by_reason)
-                has_saf_issue = any("saf" in r.lower() or "إذن" in r or "بطاقة" in r for r in failures_by_reason)
+                has_perm_issue = any(
+                    "صلاحية" in r or "permission" in r.lower()
+                    for r in failures_by_reason
+                )
+                has_saf_issue = any(
+                    "saf" in r.lower() or "إذن" in r or "بطاقة" in r
+                    for r in failures_by_reason
+                )
 
                 if has_perm_issue:
                     dlg_buttons.append({

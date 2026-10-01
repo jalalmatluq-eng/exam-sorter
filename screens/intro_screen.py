@@ -129,10 +129,7 @@ class IntroScreen(Screen):
         """إيقاف مؤقت تحديث المدار"""
         if self._orbit_clock_event is not None:
             try:
-                if hasattr(self._orbit_clock_event, "cancel"):
-                    self._orbit_clock_event.cancel()
-                else:
-                    Clock.unschedule(self._orbit_clock_event)
+                Clock.unschedule(self._orbit_clock_event)
             except Exception:
                 pass
             self._orbit_clock_event = None
@@ -248,7 +245,7 @@ class IntroScreen(Screen):
         if self.manager and self.manager.has_screen("home_screen"):
             self.manager.current = "home_screen"
 
-    def on_touch_down(self, touch: object) -> bool:
+    def on_touch_down(self, touch: Any) -> Any:
         """النقر في أي مكان لتخطي المقدمة فورياً — مع حماية من اللمس المتكرر"""
         if self._touch_locked or self._completed:
             return True

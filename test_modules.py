@@ -646,7 +646,7 @@ def test_advanced_saf_and_edge_cases() -> None:
             is_copy=True,
         )
         hist = file_manager.get_transfer_history(base_path=private_dir)
-        rec_id = int(hist[0]["id"])
+        rec_id = int(str(hist[0]["id"]))
 
         # محاكاة فشل الحذف
         orig_del = storage_backend.delete_media_item
@@ -708,7 +708,7 @@ def test_advanced_saf_and_edge_cases() -> None:
 
         # بطاقة مفصولة / إذن غير صالح
         orig_valid = storage_backend.is_saf_uri_valid
-        storage_backend.is_saf_uri_valid = lambda u: False
+        storage_backend.is_saf_uri_valid = lambda uri_str: False
         try:
             saf_undo_res = file_manager.undo_transfer(999999, base_path=private_dir)
             assert saf_undo_res is False, "يجب أن يفشل التراجع بأمان عند فقدان إذن SAF أو فصل SD"
@@ -881,11 +881,11 @@ def test_architectural_saf_unification() -> None:
         orig_roots = media_scanner.scan_storage_roots
 
         kivy.utils.platform = "android"
-        media_scanner._scan_android_mediastore = lambda **kw: [item_ms]
-        storage_backend.scan_saf_tree_recursively = lambda uri, **kw: [item_saf]
+        media_scanner._scan_android_mediastore = lambda *args, **kw: [item_ms]
+        storage_backend.scan_saf_tree_recursively = lambda tree_uri, *args, **kw: [item_saf]
         storage_backend.get_saf_persisted_uri = lambda: "mock_saf://valid_sd"
-        storage_backend.is_saf_uri_valid = lambda u: True
-        media_scanner.scan_storage_roots = lambda **kw: []
+        storage_backend.is_saf_uri_valid = lambda uri_str: True
+        media_scanner.scan_storage_roots = lambda *args, **kw: []
 
         try:
             merged_items = media_scanner.find_unsorted_media(
@@ -926,7 +926,7 @@ def test_architectural_saf_unification() -> None:
 
         # نحاكي دالة إرجاع الحجم المتوقع بحيث تتوقع 500 بايت ولكن الملف الفعلي 12 بايت
         orig_get_size = storage_backend.get_uri_file_size
-        storage_backend.get_uri_file_size = lambda uri: 500
+        storage_backend.get_uri_file_size = lambda uri_str: 500
 
         temp_incomplete_dest = test_root / "temp_incomplete_output.dat"
         try:

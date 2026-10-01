@@ -247,6 +247,27 @@ def run_watcher_loop() -> None:
             time.sleep(CHECK_INTERVAL_SECONDS * 2)
             continue
 
+        # فحص استباقي للصلاحيات قبل قراءة الملفات في الخدمة الخلفية
+        try:
+            import android_permissions
+            import file_manager
+            import storage_backend
+
+            prefs = file_manager.get_sorter_preferences()
+            source_storage = str(prefs.get("source_storage", "both"))
+            target_loc = storage_backend.get_active_target_location()
+            tgt_name = target_loc.storage_type if target_loc else "internal"
+
+            can_proceed, issue_code, issue_msg, _act = (
+                android_permissions.preflight_scan_access(source_storage, tgt_name)
+            )
+            if not can_proceed:
+                print(f"[خدمة المراقبة] تعليق الفحص لغياب الإذن: {issue_code} ({issue_msg})")
+                time.sleep(CHECK_INTERVAL_SECONDS * 4)
+                continue
+        except Exception as e_pref:
+            print("[خدمة المراقبة] خطأ أثناء فحص الصلاحيات:", e_pref)
+
         try:
             watch_dirs = get_monitored_directories()
             for w_dir in watch_dirs:
@@ -311,6 +332,26 @@ def start_watcher_thread(
             if not is_service_desired_running():
                 time.sleep(interval_seconds)
                 continue
+
+            try:
+                import android_permissions
+                import file_manager
+                import storage_backend
+
+                prefs = file_manager.get_sorter_preferences()
+                source_storage = str(prefs.get("source_storage", "both"))
+                target_loc = storage_backend.get_active_target_location()
+                tgt_name = target_loc.storage_type if target_loc else "internal"
+
+                can_proceed, _issue_code, _issue_msg, _act = (
+                    android_permissions.preflight_scan_access(source_storage, tgt_name)
+                )
+                if not can_proceed:
+                    time.sleep(interval_seconds * 2)
+                    continue
+            except Exception:
+                pass
+
             try:
                 watch_dirs = get_monitored_directories()
                 for w_dir in watch_dirs:

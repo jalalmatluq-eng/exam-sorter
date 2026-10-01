@@ -10,9 +10,10 @@ from __future__ import annotations
 import faulthandler
 import logging
 import os
-from pathlib import Path
 import sys
+import threading
 import traceback
+from pathlib import Path
 from typing import Any, Literal
 
 from dotenv import load_dotenv
@@ -63,7 +64,9 @@ for _candidate in _private_candidates:
 # تفعيل faulthandler فوراً لالتقاط انهيارات C/C++ و SIGSEGV قبل تحميل أي مكتبات
 if DEBUG_LOG_FILE is not None:
     try:
-        _fh_stream = open(DEBUG_LOG_FILE, "a", encoding="utf-8", buffering=1)
+        _fh_stream = open(  # noqa: SIM115
+            DEBUG_LOG_FILE, "a", encoding="utf-8", buffering=1
+        )
         faulthandler.enable(file=_fh_stream, all_threads=True)
     except Exception:
         pass
@@ -128,7 +131,6 @@ def _handle_thread_exception(args: Any) -> None:
             pass
 
 
-import threading
 threading.excepthook = _handle_thread_exception
 
 # تحميل المتغيرات من .env بأمان
@@ -176,7 +178,7 @@ try:
         rb.M3CommonRipple.start_ripple = _no_op_ripple
     if hasattr(rb, "CommonRipple"):
         rb.CommonRipple.lay_canvas_instructions = _no_op_ripple
-except Exception as _e:
+except Exception:
     pass
 
 
@@ -294,8 +296,8 @@ class CosmoSortApp(MDApp):
                             logger.info("تأجيل تشغيل خدمة المراقبة لحين منح صلاحية الوصول للملفات")
                     else:
                         media_watcher_service.start_system_service()
-                except Exception as e:
-                    logger.error("فشل بدء الخدمة في on_start: %s", e, exc_info=True)
+                except Exception:
+                    logger.exception("فشل بدء الخدمة في on_start")
 
             Clock.schedule_once(_delayed_service_start, 3.5)
 
@@ -303,7 +305,7 @@ class CosmoSortApp(MDApp):
         """تسجيل تفاصيل المنظومة ومسارات التخزين بدقة في سجل دائم"""
         try:
             lines = [
-                f"Rateb App Version: 2.0.1",
+                "Rateb App Version: 2.0.1",
                 f"Platform: {platform} | Python: {sys.version.split()[0]}",
             ]
             if platform == "android":
@@ -365,7 +367,7 @@ class CosmoSortApp(MDApp):
                 storage_backend.clear_pending_recoverable_deletion()
                 show_app_dialog(
                     title="تم الإلغاء",
-                    text=f"تم إبقاء الملف الأصلي وتم تسجيله كنسخة آمنة.",
+                    text="تم إبقاء الملف الأصلي وتم تسجيله كنسخة آمنة.",
                 )
 
             show_confirm_dialog(
@@ -449,25 +451,24 @@ class CosmoSortApp(MDApp):
                                 pass
 
                             # استئناف الفحص المعلق إن وجد بعد التأكد من الصلاحية
-                            pending = file_manager.get_pending_scan()
-                            if pending.get("active") and pending.get("target") == "sdcard":
+                            is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()
+                            if is_pending and p_tgt == "sdcard":
                                 if storage_backend.is_saf_uri_valid(uri_str):
                                     file_manager.clear_pending_scan()
                                     try:
                                         home = self.root.get_screen("home_screen")
                                         if home and hasattr(home, "start_scan_with_options"):
                                             from kivy.clock import Clock
-                                            src_chosen = pending.get("source", "both")
                                             Clock.schedule_once(
                                                 lambda _dt: home.start_scan_with_options(
-                                                    src_chosen, "sdcard"
+                                                    p_src, "sdcard"
                                                 ),
                                                 0.5,
                                             )
                                     except Exception as e_res:
                                         logger.warning("تعذر استئناف الفحص المعلق: %s", e_res)
-            except Exception as e:
-                logger.error("خطأ أثناء معالجة إذن SAF: %s", e, exc_info=True)
+            except Exception:
+                logger.exception("خطأ أثناء معالجة إذن SAF")
 
         elif request_code == 4202:
             try:
@@ -480,8 +481,8 @@ class CosmoSortApp(MDApp):
                     is_ok,
                 )
                 storage_backend.handle_recoverable_deletion_result(is_ok)
-            except Exception as e:
-                logger.error("خطأ أثناء معالجة نتيجة RecoverableSecurityException: %s", e, exc_info=True)
+            except Exception:
+                logger.exception("خطأ أثناء معالجة نتيجة RecoverableSecurityException")
 
     def on_hardware_back_key(
         self, _window: object, key: int, *_args: object

@@ -1,3 +1,7 @@
+# pyright: reportGeneralTypeIssues=false
+# pyright: reportOptionalCall=false
+# pyright: reportOptionalMemberAccess=false
+# pyright: reportArgumentType=false
 """
 وحدة مساعدة للواجهة (UI Helper)
 توفر مكونات جاهزة وعصرية متوافقة تماماً مع إطار عمل KivyMD 2.0.
@@ -23,10 +27,34 @@ try:
         MDListItemTrailingIcon,
     )
 except Exception:
-    Widget = object  # type: ignore
-    MDButton = MDButtonIcon = MDButtonText = None  # type: ignore
-    MDDialog = MDDialogButtonContainer = MDDialogHeadlineText = MDDialogSupportingText = None  # type: ignore
-    MDListItem = MDListItemHeadlineText = MDListItemLeadingIcon = MDListItemSupportingText = MDListItemTrailingIcon = None  # type: ignore
+    class Widget:  # type: ignore
+        pass
+
+    class _DummyUI:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __call__(self, *args: Any, **kwargs: Any) -> Any:
+            return self
+
+        def open(self) -> None:
+            pass
+
+        def dismiss(self) -> None:
+            pass
+
+    class MDButton(_DummyUI): pass  # type: ignore
+    class MDButtonIcon(_DummyUI): pass  # type: ignore
+    class MDButtonText(_DummyUI): pass  # type: ignore
+    class MDDialog(_DummyUI): pass  # type: ignore
+    class MDDialogButtonContainer(_DummyUI): pass  # type: ignore
+    class MDDialogHeadlineText(_DummyUI): pass  # type: ignore
+    class MDDialogSupportingText(_DummyUI): pass  # type: ignore
+    class MDListItem(_DummyUI): pass  # type: ignore
+    class MDListItemHeadlineText(_DummyUI): pass  # type: ignore
+    class MDListItemLeadingIcon(_DummyUI): pass  # type: ignore
+    class MDListItemSupportingText(_DummyUI): pass  # type: ignore
+    class MDListItemTrailingIcon(_DummyUI): pass  # type: ignore
 
 from utils.arabic_helper import ar
 from utils.category_helper import get_category_icon_and_unit, get_category_ui_details
@@ -107,8 +135,13 @@ def show_app_dialog(
     text: str,
     on_confirm: Callable[[], None] | None = None,
     confirm_text: str = "حسناً",
+    **kwargs: Any,
 ) -> MDDialog:
     """عرض نافذة تنبيه أو نجاح عصرية متوافقة مع KivyMD 2 Dialogs"""
+    if on_confirm is None and "confirm_callback" in kwargs:
+        on_confirm = kwargs["confirm_callback"]
+    if "confirm_text" in kwargs and confirm_text == "حسناً":
+        confirm_text = str(kwargs["confirm_text"])
     dialog: MDDialog | None = None
 
     def handle_click(_x: object) -> None:
@@ -161,8 +194,17 @@ def show_confirm_dialog(
     on_cancel: Callable[[], None] | None = None,
     confirm_text: str = "تأكيد",
     cancel_text: str = "إلغاء",
+    **kwargs: Any,
 ) -> MDDialog:
     """عرض نافذة تأكيد ثنائية الخيارات (تأكيد / إلغاء) متوافقة مع KivyMD 2"""
+    if on_confirm is None and "confirm_callback" in kwargs:
+        on_confirm = kwargs["confirm_callback"]
+    if on_cancel is None and "cancel_callback" in kwargs:
+        on_cancel = kwargs["cancel_callback"]
+    if "confirm_text" in kwargs and confirm_text == "تأكيد":
+        confirm_text = str(kwargs["confirm_text"])
+    if "cancel_text" in kwargs and cancel_text == "إلغاء":
+        cancel_text = str(kwargs["cancel_text"])
     dialog: MDDialog | None = None
 
     def handle_confirm(_x: object) -> None:

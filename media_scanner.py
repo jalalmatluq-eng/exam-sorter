@@ -388,11 +388,10 @@ def _scan_android_mediastore(
         proj_list = ["_id", "_display_name", "mime_type", "_size", "date_modified", "_data"]
         if sdk_int >= 29:
             proj_list.extend(["relative_path", "volume_name"])
-        projection_arr = [str(col) for col in proj_list]
+        projection_arr = list(proj_list)
 
         for target_info in targets:
             base_table_uri = target_info[0]
-            _media_kind = target_info[1]
             target_vol_name = target_info[2] if len(target_info) > 2 else ""
 
             cursor = None
@@ -540,7 +539,7 @@ def _extract_media_dedup_keys(item: Any) -> dict[str, Any]:
             path = item.id
 
         name = item.name.lower()
-        size = int(item.size_bytes)
+        size = item.size_bytes
         mtime = int(item.date_modified)
         volume = getattr(item, "storage_id", "") or ""
         rel_path = getattr(item, "relative_path", "")
@@ -560,7 +559,7 @@ def _extract_media_dedup_keys(item: Any) -> dict[str, Any]:
         name = item.name.lower()
         try:
             st = item.stat()
-            size = int(st.st_size)
+            size = st.st_size
             mtime = int(st.st_mtime)
         except OSError:
             pass
@@ -584,7 +583,7 @@ def _extract_media_dedup_keys(item: Any) -> dict[str, Any]:
             name = p.name.lower()
             try:
                 st = p.stat()
-                size = int(st.st_size)
+                size = st.st_size
                 mtime = int(st.st_mtime)
             except OSError:
                 pass
@@ -844,9 +843,12 @@ def is_visual_document_or_paper(image_path: str) -> bool:
     - فحص التوزيع الأفقي للأسطر.
     """
     try:
+        if np is None:
+            return False
         small = face_classifier.safe_read_image(image_path, max_size=500)
         if small is None:
             return False
+        assert np is not None
         h = int(str(small.shape[0]))
         w = int(str(small.shape[1]))
         if h < 80 or w < 80:
@@ -990,7 +992,7 @@ def process_one_file(
             file_path, api_key=api_key, copy_only=copy_only
         )
     except Exception as e:
-        logger.error("استثناء غير متوقع أثناء معالجة الملف %s: %s", item_id, e, exc_info=True)
+        logger.exception("استثناء غير متوقع أثناء معالجة الملف %s", item_id)
         active_target = None
         try:
             active_target = storage_backend.get_active_target_location()
@@ -1008,6 +1010,64 @@ def process_one_file(
         file_manager.mark_file_processing_end()
 
 
+def classify_media_access_status(file_item: Any) -> tuple[str, str, str]:
+    """
+    فحص وتصنيف عملي استباقي لحالة كل عنصر وسائط قبل محاولة معالجته وفرزه:
+    العائد: (status: 'readable' | 'permission_denied' | 'file_not_found' | 'corrupt' | 'needs_saf',
+             error_message: str,
+             failure_reason_arabic: str)
+    """
+    import android_permissions
+
+    source_key = ""
+    uri_check = ""
+    path_check = ""
+
+    if isinstance(file_item, storage_backend.MediaItem):
+        source_key = file_item.uri or file_item.path or file_item.id
+        uri_check = file_item.uri or ""
+        path_check = file_item.path or ""
+    elif isinstance(file_item, Path):
+        source_key = str(file_item)
+        path_check = str(file_item)
+    else:
+        source_key = str(file_item)
+        if source_key.startswith("content://"):
+            uri_check = source_key
+        else:
+            path_check = source_key
+
+    # 1. فحص إذن SAF لبطاقة الذاكرة الخارجية
+    if uri_check and ("tree" in uri_check or "document" in uri_check):
+        if not storage_backend.is_saf_uri_valid(uri_check):
+            return "needs_saf", "انتهت صلاحية إذن الوصول لمجلد بطاقة الذاكرة الخارجية (SAF)", "يحتاج إعادة اختيار SAF"
+
+    # 2. فحص الوجود المادي للمسار الفيزيائي
+    if path_check:
+        p = Path(path_check)
+        if not p.exists():
+            return "file_not_found", f"الملف غير موجود في المسار: {p.name}", "الملف غير موجود"
+        try:
+            st = p.stat()
+            if st.st_size == 0:
+                return "corrupt", "الملف فارغ بحجم 0 بايت (ملف تالف)", "ملف تالف"
+        except (OSError, PermissionError) as e:
+            return "permission_denied", f"تم رفض صلاحية الوصول للمسار: {e}", "مرفوض بسبب إذن Android"
+
+    # 3. فحص صلاحيات الوسائط لنظام أندرويد
+    if not android_permissions.is_images_permission_granted() and not android_permissions.is_videos_permission_granted():
+        return "permission_denied", "صلاحيات الوصول للصور والفيديوهات غير ممنوحة من قبل النظام", "مرفوض بسبب إذن Android"
+
+    # 4. الفحص العملي لقابلية القراءة عبر فتح الدفق الفعلي (is_source_path_readable)
+    target_to_test = uri_check or path_check or source_key
+    if not android_permissions.is_source_path_readable(target_to_test):
+        if uri_check:
+            return "permission_denied", "تعذر فتح دفق القراءة من مزود الوسائط (تم رفض الإذن)", "مرفوض بسبب إذن Android"
+        return "permission_denied", "تعذر قراءة بايتات الملف من وحدة التخزين (حظر أمني)", "مرفوض بسبب إذن Android"
+
+    return "readable", "", "جاهز"
+
+
 def _process_one_file_internal(
     file_item: str | Path | Any,
     api_key: str | None = None,
@@ -1020,6 +1080,25 @@ def _process_one_file_internal(
 
     if isinstance(file_item, storage_backend.MediaItem):
         source_key = file_item.uri or file_item.path or file_item.id
+    elif isinstance(file_item, Path):
+        source_key = str(file_item.resolve())
+    else:
+        source_key = str(file_item)
+
+    # 1. فحص وتصنيف صلاحية القراءة والتوافر قبل البدء
+    access_status, access_err, access_reason = classify_media_access_status(file_item)
+    if access_status != "readable":
+        return {
+            "success": False,
+            "source": source_key,
+            "error": access_err,
+            "failure_reason": access_reason,
+            "access_status": access_status,
+            "stage": "source_read",
+        }
+
+    if isinstance(file_item, storage_backend.MediaItem):
+
         if file_item.path and storage_backend.is_path_readable(file_item.path):
             p = Path(file_item.path).resolve()
         else:
@@ -1045,11 +1124,29 @@ def _process_one_file_internal(
     elif isinstance(file_item, Path):
         p = file_item.resolve()
         source_key = str(p)
+        import android_permissions
+        if not android_permissions.is_source_path_readable(source_key):
+            return {
+                "success": False,
+                "source": source_key,
+                "error": "تعذر قراءة المسار المحلي (الملف تالف أو محظور)",
+                "failure_reason": "فشل القراءة" if not p.exists() else "مرفوض بسبب إذن Android",
+                "stage": "source_read",
+            }
     else:
         source_str = str(file_item)
         if source_str.startswith("content://"):
             is_uri_source = True
             source_key = source_str
+            import android_permissions
+            if not android_permissions.is_source_path_readable(source_key):
+                return {
+                    "success": False,
+                    "source": source_key,
+                    "error": "تعذر فتح دفق Content URI",
+                    "failure_reason": "فشل القراءة",
+                    "stage": "source_read",
+                }
             uri_info = storage_backend.query_content_uri_details(source_str)
             safe_name = uri_info.get("display_name") or f"media_{int(time.time() * 1000)}{uri_info.get('extension', '.mp4' if 'video' in source_str.lower() else '.jpg')}"
             temp_dir = file_manager.get_temp_dir()
@@ -1098,39 +1195,36 @@ def _process_one_file_internal(
             is_copy = copy_only
 
         # =====================================================================
-        # 1. إذا كان الملف صورة (Image Routing)
+        # 1. إذا كان الملف صورة (Image Routing عبر offline_classifier الموضعي)
         # =====================================================================
         if is_image and not is_video:
-            # أولوية 1: صور الاختبارات والمقررات بالاسم أو الرؤية أو OCR
-            try:
-                if is_likely_exam_paper(str(p)):
+            import offline_classifier
+            # استدعاء هرمية التصنيف الأوفلاين الصارمة
+            off_res = offline_classifier.classify_media_offline(
+                file_path=str(p),
+                filename=p.name,
+                mime_type=file_mime,
+                size_bytes=orig_size,
+                mtime=int(orig_mtime),
+            )
+            target_category = str(off_res.get("category", CATEGORY_UNCLASSIFIED))
+            detected_details = str(off_res.get("details", ""))
+
+            # في حال توفر مفتاح API واستدعاء السحابة لترقية الورقة العامة أو عند الحاجة لمراجعة
+            if api_key and (off_res.get("needs_review") or target_category == "اختبارات/اختبارات عامة"):
+                if not offline_classifier.is_circuit_breaker_open():
                     try:
                         subject_name = classifier.classify_exam_image(
-                            str(p), api_key=api_key, fallback_to_ocr=True
+                            str(p), api_key=api_key, fallback_to_ocr=False
                         )
                         if subject_name and subject_name.strip():
                             clean_sub = subject_name.strip()
                             target_category = f"{CATEGORY_EXAMS_ROOT}/{clean_sub}"
-                            detected_details = f"ورقة اختبار مادة: {clean_sub}"
-                    except Exception:
-                        guessed = _guess_exam_subject(p.name)
-                        target_category = f"{CATEGORY_EXAMS_ROOT}/{guessed}"
-                        detected_details = f"ورقة اختبار مادة: {guessed}"
-            except Exception as e:
-                logger.debug("تنبيه فحص ورقة الاختبار: %s", e)
-
-            # إذا لم تحسم كاختبار، نفحص الوجوه
-            if target_category == CATEGORY_UNCLASSIFIED:
-                try:
-                    face_result = face_classifier.detect_and_match_face(str(p))
-                    if face_result == "me":
-                        target_category = CATEGORY_MY_PHOTOS
-                        detected_details = "مطابقة بصمة وجه صاحب الجهاز"
-                    elif face_result == "other":
-                        target_category = CATEGORY_FRIENDS_PHOTOS
-                        detected_details = "اكتشاف وجوه أصدقاء وإخوة"
-                except Exception as e:
-                    logger.debug("تنبيه أثناء فحص الوجوه: %s", e)
+                            detected_details = f"ورقة اختبار مادة: {clean_sub} (عبر الذكاء الاصطناعي)"
+                            offline_classifier.record_cloud_api_success()
+                    except Exception as e_cloud:
+                        offline_classifier.record_cloud_api_failure()
+                        logger.debug("تجاوز استدعاء السحابة بسبب استثناء: %s", e_cloud)
 
         # =====================================================================
         # 2. إذا كان الملف مقطع فيديو (Video Routing)
@@ -1192,16 +1286,16 @@ def _process_one_file_internal(
         dest_size = orig_size
         if isinstance(dest_res, Path):
             if not dest_res.exists():
-                raise IOError(f"الملف الوجهة غير موجود بعد النقل/النسخ: {dest_res}")
+                raise OSError(f"الملف الوجهة غير موجود بعد النقل/النسخ: {dest_res}")
             if orig_size > 0 and dest_res.stat().st_size != orig_size:
-                raise IOError(
+                raise OSError(
                     f"حجم الملف في الوجهة لا يطابق الأصل: {dest_res.stat().st_size} vs {orig_size}"
                 )
             dest_size = dest_res.stat().st_size
         else:
             if not dest_str.startswith("content://") and not dest_str.startswith("mock_doc://"):
                 if not Path(dest_str).exists():
-                    raise IOError(f"الملف الوجهة غير موجود بعد النقل/النسخ: {dest_str}")
+                    raise OSError(f"الملف الوجهة غير موجود بعد النقل/النسخ: {dest_str}")
 
         # إذا كنا في وضع النقل Move: نحذف الأصل فقط بعد التحقق التام
         actual_mode = "copy" if is_copy else "move"
@@ -1314,6 +1408,26 @@ def run_continuous_scan(
     مع حماية متقدمة من نفاد الذاكرة وتحمل ضغط آلاف الملفات والصور الكبيرة.
     """
     import gc
+
+    import android_permissions
+
+    target_loc = storage_backend.get_active_target_location()
+    tgt_name = target_loc.storage_type if target_loc else "internal"
+    can_proceed, issue_code, issue_msg, action_req = android_permissions.preflight_scan_access(
+        source_storage or "both", tgt_name
+    )
+    if not can_proceed:
+        logger.warning("تم إيقاف الفحص المستمر قبل البدء بسبب عدم اكتمال الصلاحيات: %s (%s)", issue_code, issue_msg)
+        return {
+            "total_found": 0,
+            "total_processed": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "preflight_failed": True,
+            "failure_reason": "رفض الصلاحية" if "permission" in issue_code or "media" in issue_code else "يحتاج إعادة اختيار SAF",
+            "error": issue_msg,
+            "action_required": action_req,
+        }
 
     try:
         init_cache_db()
@@ -1453,6 +1567,14 @@ def run_continuous_scan(
         })
 
     return {
+        "discovered": total_files,
+        "readable": readable_count,
+        "classified": classified_count,
+        "copied": copied_count,
+        "moved": moved_count,
+        "read_failed": read_failed_count,
+        "permission_denied": permission_rejected_count,
+        "target_write_failed": write_failed_count,
         "total_processed": total_processed,
         "success_count": total_processed,
         "failed_count": total_failed,

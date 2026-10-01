@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 android_permissions.py
 ----------------------
@@ -12,9 +11,8 @@ android_permissions.py
 from __future__ import annotations
 
 import logging
-import os
-import sys
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger("AndroidPermissions")
 
@@ -42,8 +40,8 @@ def has_permission(permission_name: str) -> bool:
         from kivy.utils import platform
         if platform != "android":
             return True
-        from jnius import autoclass
         from android import mActivity
+        from jnius import autoclass
 
         ContextCompat = autoclass("androidx.core.content.ContextCompat")
         PackageManager = autoclass("android.content.pm.PackageManager")
@@ -62,33 +60,39 @@ def has_permission(permission_name: str) -> bool:
 
 
 def is_images_permission_granted() -> bool:
-    """فحص صلاحية قراءة الصور حسب إصدار أندرويد"""
+    """فحص صلاحية قراءة الصور كاملة حسب إصدار أندرويد (لا تعتبر الصلاحية الجزئية كاملة)"""
     sdk = get_android_sdk_int()
     if sdk == 0:  # بيئة غير أندرويد
         return True
     if sdk >= 33:
-        if has_permission("READ_MEDIA_IMAGES"):
-            return True
-        if sdk >= 34 and has_permission("READ_MEDIA_VISUAL_USER_SELECTED"):
-            return True
-        return False
+        return has_permission("READ_MEDIA_IMAGES")
     # أندرويد 12 وما قبل
     return has_permission("READ_EXTERNAL_STORAGE")
 
 
 def is_videos_permission_granted() -> bool:
-    """فحص صلاحية قراءة الفيديوهات حسب إصدار أندرويد"""
+    """فحص صلاحية قراءة الفيديوهات كاملة حسب إصدار أندرويد"""
     sdk = get_android_sdk_int()
     if sdk == 0:  # بيئة غير أندرويد
         return True
     if sdk >= 33:
-        if has_permission("READ_MEDIA_VIDEO"):
-            return True
-        if sdk >= 34 and has_permission("READ_MEDIA_VISUAL_USER_SELECTED"):
-            return True
-        return False
+        return has_permission("READ_MEDIA_VIDEO")
     # أندرويد 12 وما قبل
     return has_permission("READ_EXTERNAL_STORAGE")
+
+
+def is_visual_user_selected_only() -> bool:
+    """
+    التحقق مما إذا كان المستخدم في أندرويد 14 قد اختار صوراً محددة فقط (الوصول المحدود/الجزئي).
+    في هذه الحالة لا نعتبر الصلاحية كاملة وننبه المستخدم بعدم بدء فحص كل الهاتف.
+    """
+    sdk = get_android_sdk_int()
+    if sdk >= 34:
+        has_partial = has_permission("READ_MEDIA_VISUAL_USER_SELECTED")
+        has_full_img = has_permission("READ_MEDIA_IMAGES")
+        has_full_vid = has_permission("READ_MEDIA_VIDEO")
+        return has_partial and not (has_full_img and has_full_vid)
+    return False
 
 
 def is_all_files_access_granted() -> bool:
@@ -127,9 +131,8 @@ def is_source_path_readable(path_or_uri: str) -> bool:
 
     if path_or_uri.startswith("content://"):
         try:
-            import storage_backend
-            from jnius import autoclass
             from android import mActivity
+            from jnius import autoclass
             Uri = autoclass("android.net.Uri")
             cr = mActivity.getContentResolver()
             in_s = cr.openInputStream(Uri.parse(path_or_uri))
@@ -152,7 +155,7 @@ def is_source_path_readable(path_or_uri: str) -> bool:
         return False
 
 
-def get_permissions_diagnostic_summary() -> Dict[str, Any]:
+def get_permissions_diagnostic_summary() -> dict[str, Any]:
     """
     استخراج تقرير تشخيص دقيق ومفصل لكافة الصلاحيات لعرضه للمستخدم.
     """
@@ -163,21 +166,32 @@ def get_permissions_diagnostic_summary() -> Dict[str, Any]:
     saf_ok = is_saf_sdcard_granted()
 
     # تشخيص جزئي في أندرويد 14
-    is_partial_access = False
-    if sdk >= 34:
-        if has_permission("READ_MEDIA_VISUAL_USER_SELECTED") and not (
-            has_permission("READ_MEDIA_IMAGES") and has_permission("READ_MEDIA_VIDEO")
-        ):
-            is_partial_access = True
+    is_partial_access = is_visual_user_selected_only()
+
+    # فحص ما إذا كان هناك مسار سابق للـ SAF
+    has_prev_saf = False
+    try:
+        import storage_backend
+        has_prev_saf = bool(storage_backend.get_saf_persisted_uri())
+    except Exception:
+        pass
+
+    saf_status = "صالح" if saf_ok else ("منتهي" if has_prev_saf else "غير موجود")
+    access_scope = "الوصول محدود" if is_partial_access else ("وصول كامل" if (img_ok and vid_ok) else "غير ممنوح")
 
     return {
         "sdk_int": sdk,
         "images_permission": img_ok,
         "videos_permission": vid_ok,
+        "images_permission_status": "ممنوحة" if img_ok else "مرفوضة",
+        "videos_permission_status": "ممنوحة" if vid_ok else "مرفوضة",
         "all_files_permission": all_files_ok,
+        "all_files_permission_status": "ممنوح" if all_files_ok else "مقيد",
         "saf_sdcard_permission": saf_ok,
+        "saf_sdcard_status": saf_status,
         "partial_visual_selected": is_partial_access,
-        "fully_ready_for_internal": img_ok and vid_ok,
+        "access_scope": access_scope,
+        "fully_ready_for_internal": img_ok and vid_ok and not is_partial_access,
         "fully_ready_for_sdcard": saf_ok,
     }
 
@@ -185,7 +199,7 @@ def get_permissions_diagnostic_summary() -> Dict[str, Any]:
 def preflight_scan_access(
     source_storage: str,
     target_storage: str,
-) -> Tuple[bool, str, str, str]:
+) -> tuple[bool, str, str, str]:
     """
     فحص استباقي يمنع التشغيل الكاذب ويضمن توافر الصلاحيات قبل بدء الفحص:
     العائد: (مسموح_البدء: bool, رمز_المشكلة: str, رسالة_عربية: str, الإجراء_المطلوب: str)
@@ -200,6 +214,15 @@ def preflight_scan_access(
 
     # 1. فحص صلاحيات المصدر
     if source_norm in ("internal", "both"):
+        # في أندرويد 14، التحقق الصارم من حالة "الوصول المحدود"
+        if is_visual_user_selected_only():
+            return (
+                False,
+                "partial_media_access",
+                "صلاحية الوصول محدودة (تم اختيار صور محددة فقط في أندرويد 14). لا يمكن بدء فحص وفرز الهاتف كاملاً بهذا الإذن الجزئي. يرجى منح إذن 'السماح دائمًا بالوصول إلى كل الصور والفيديوهات' من إعدادات التطبيق.",
+                "open_app_settings",
+            )
+
         img_ok = is_images_permission_granted()
         vid_ok = is_videos_permission_granted()
         if not img_ok and not vid_ok:
@@ -248,7 +271,7 @@ def preflight_scan_access(
 
 
 def request_media_permissions(
-    callback: Optional[Callable[[List[str], List[bool]], None]] = None
+    callback: Callable[[list[str], list[bool]], None] | None = None
 ) -> None:
     """
     طلب الصلاحيات المخصصة للنظام وفق إصدار أندرويد الفعلي.
@@ -270,12 +293,12 @@ def request_media_permissions(
                 if hasattr(Permission, p_name):
                     perms.append(getattr(Permission, p_name))
             if sdk >= 34 and hasattr(Permission, "READ_MEDIA_VISUAL_USER_SELECTED"):
-                perms.append(getattr(Permission, "READ_MEDIA_VISUAL_USER_SELECTED"))
+                perms.append(Permission.READ_MEDIA_VISUAL_USER_SELECTED)
         else:
             perms.append(Permission.READ_EXTERNAL_STORAGE)
             perms.append(Permission.WRITE_EXTERNAL_STORAGE)
 
-        def _internal_cb(permissions: List[str], grant_results: List[bool]) -> None:
+        def _internal_cb(permissions: list[str], grant_results: list[bool]) -> None:
             logger.info("نتيجة طلب الصلاحيات: %s -> %s", permissions, grant_results)
             if callback:
                 callback(permissions, grant_results)
@@ -293,8 +316,8 @@ def open_app_details_settings() -> None:
         from kivy.utils import platform
         if platform != "android":
             return
-        from jnius import autoclass
         from android import mActivity
+        from jnius import autoclass
 
         Intent = autoclass("android.content.Intent")
         Settings = autoclass("android.provider.Settings")

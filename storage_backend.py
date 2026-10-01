@@ -1621,6 +1621,17 @@ def copy_uri_to_path_detailed(content_uri: str, dest_file: Path) -> TransferRead
     err_msg = ""
     fail_reason = "io_error"
 
+    short_uri = (
+        content_uri
+        if len(content_uri) <= 45
+        else f"{content_uri[:22]}...{content_uri[-18:]}"
+    )
+    volume_name = "internal"
+    if "external" in content_uri.lower():
+        volume_name = "external_primary"
+    elif "tree" in content_uri.lower() or "document" in content_uri.lower():
+        volume_name = "sdcard_saf"
+
     try:
         if _get_platform() == "android":
             from android import mActivity
@@ -1634,6 +1645,10 @@ def copy_uri_to_path_detailed(content_uri: str, dest_file: Path) -> TransferRead
             except Exception as e_open:
                 cls_name = type(e_open).__name__
                 msg_lower = str(e_open).lower()
+                logger.error(
+                    "[CopyURI] URI=%s, Name=%s, Vol=%s, Stage=source_open, ErrCls=%s: %s",
+                    short_uri, dest_file.name, volume_name, cls_name, e_open,
+                )
                 if "securityexception" in msg_lower or "permission" in msg_lower:
                     return TransferReadResult(
                         success=False,
@@ -1657,6 +1672,10 @@ def copy_uri_to_path_detailed(content_uri: str, dest_file: Path) -> TransferRead
                 )
 
             if in_stream is None:
+                logger.error(
+                    "[CopyURI] URI=%s, Name=%s, Vol=%s, Stage=source_open, ErrCls=NullStream: openInputStream returned null",
+                    short_uri, dest_file.name, volume_name,
+                )
                 return TransferReadResult(
                     success=False,
                     reason="stream_null",
@@ -1670,15 +1689,71 @@ def copy_uri_to_path_detailed(content_uri: str, dest_file: Path) -> TransferRead
             CHUNK_SIZE = 64 * 1024
             buffer = bytearray(CHUNK_SIZE)
 
-            with open(temp_dest, "wb") as out_f:
-                while True:
-                    read_bytes = in_stream.read(buffer)
-                    if read_bytes == -1 or read_bytes == 0:
-                        break
-                    out_f.write(buffer[:read_bytes])
-                    total_written += read_bytes
+            try:
+                with open(temp_dest, "wb") as out_f:
+                    while True:
+                        try:
+                            read_bytes = in_stream.read(buffer)
+                        except Exception as e_read:
+                            logger.error(
+                                "[CopyURI] URI=%s, Name=%s, Vol=%s, Stage=source_read, ErrCls=%s: %s",
+                                short_uri, dest_file.name, volume_name, type(e_read).__name__, e_read,
+                            )
+                            return TransferReadResult(
+                                success=False,
+                                reason="stream_read_failed",
+                                source_uri=content_uri,
+                                display_name=dest_file.name,
+                                bytes_read=total_written,
+                                expected_bytes=expected_size,
+                                error_class=type(e_read).__name__,
+                                error_message=f"فشل قراءة بايتات المصدر من مزود الوسائط: {e_read}",
+                                retryable=True,
+                            )
+
+                        if read_bytes == -1 or read_bytes == 0:
+                            break
+
+                        try:
+                            out_f.write(buffer[:read_bytes])
+                        except Exception as e_write:
+                            logger.error(
+                                "[CopyURI] URI=%s, Name=%s, Vol=%s, Stage=target_write, ErrCls=%s: %s",
+                                short_uri, dest_file.name, volume_name, type(e_write).__name__, e_write,
+                            )
+                            return TransferReadResult(
+                                success=False,
+                                reason="target_write_failed",
+                                source_uri=content_uri,
+                                display_name=dest_file.name,
+                                bytes_read=total_written,
+                                expected_bytes=expected_size,
+                                error_class=type(e_write).__name__,
+                                error_message=f"فشل كتابة البيانات إلى الوجهة: {e_write}",
+                                retryable=False,
+                            )
+                        total_written += read_bytes
+            except Exception as e_target_open:
+                logger.error(
+                    "[CopyURI] URI=%s, Name=%s, Vol=%s, Stage=target_open, ErrCls=%s: %s",
+                    short_uri, dest_file.name, volume_name, type(e_target_open).__name__, e_target_open,
+                )
+                return TransferReadResult(
+                    success=False,
+                    reason="target_write_failed",
+                    source_uri=content_uri,
+                    display_name=dest_file.name,
+                    expected_bytes=expected_size,
+                    error_class=type(e_target_open).__name__,
+                    error_message=f"تعذر فتح ملف الوجهة المؤقت للكتابة: {e_target_open}",
+                    retryable=False,
+                )
 
             if total_written == 0:
+                logger.warning(
+                    "[CopyURI] URI=%s, Name=%s, Vol=%s, Stage=source_read, Warn=stream_empty: read 0 bytes",
+                    short_uri, dest_file.name, volume_name,
+                )
                 return TransferReadResult(
                     success=False,
                     reason="stream_empty",
@@ -1691,6 +1766,10 @@ def copy_uri_to_path_detailed(content_uri: str, dest_file: Path) -> TransferRead
                 )
 
             if expected_size > 0 and total_written != expected_size:
+                logger.warning(
+                    "[CopyURI] URI=%s, Name=%s, Vol=%s, Stage=source_read, Warn=size_mismatch: read %d of %d",
+                    short_uri, dest_file.name, volume_name, total_written, expected_size,
+                )
                 return TransferReadResult(
                     success=False,
                     reason="size_mismatch",

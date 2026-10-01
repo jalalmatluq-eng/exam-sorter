@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 offline_classifier.py
 ---------------------
@@ -14,10 +13,9 @@ offline_classifier.py
 from __future__ import annotations
 
 import logging
-import os
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 logger = logging.getLogger("OfflineClassifier")
 
@@ -35,7 +33,7 @@ CATEGORY_MOVIES = "أفلام ومسلسلات"
 CATEGORY_SONGS = "أغاني وأناشيد"
 
 # قواميس المواد الدراسية الذكية
-SUBJECT_KEYWORDS: Dict[str, list[str]] = {
+SUBJECT_KEYWORDS: dict[str, list[str]] = {
     "رياضيات": [
         "رياضيات", "math", "calculus", "جبر", "تفاضل", "تكامل", "هندسة",
         "linear algebra", "discrete", "إحصاء", "احتمالات", "algebra",
@@ -66,7 +64,7 @@ EXAM_PAPER_INDICATORS = [
 ]
 
 # كاش نتائج التصنيف في الذاكرة لتفادي إعادة الحساب
-_CLASSIFICATION_CACHE: Dict[Tuple[str, int, int], Dict[str, Any]] = {}
+_CLASSIFICATION_CACHE: dict[tuple[str, int, int], dict[str, Any]] = {}
 
 # قاطع الدائرة للـ API السحابي (Circuit Breaker)
 _CIRCUIT_BREAKER_FAILS = 0
@@ -77,11 +75,7 @@ _CIRCUIT_BREAKER_COOLDOWN = 60.0  # 60 ثانية استراحة عند انقط
 
 def is_circuit_breaker_open() -> bool:
     """التحقق مما إذا كان قاطع الدائرة مفتوحاً (أي أن الإنترنت غير متاح أو الخدمة معطلة)"""
-    global _CIRCUIT_BREAKER_TRIPPED_UNTIL
-    now = time.time()
-    if now < _CIRCUIT_BREAKER_TRIPPED_UNTIL:
-        return True
-    return False
+    return time.time() < _CIRCUIT_BREAKER_TRIPPED_UNTIL
 
 
 def record_cloud_api_success() -> None:
@@ -111,17 +105,15 @@ def is_offline_ocr_runtime_available() -> bool:
     """
     try:
         import importlib
-        pytesseract = importlib.import_module("pytesseract")
         import shutil
+        _ = importlib.import_module("pytesseract")
         tess_bin = shutil.which("tesseract")
-        if not tess_bin:
-            return False
-        return True
+        return bool(tess_bin)
     except Exception:
         return False
 
 
-def classify_by_filename(filename: str, rel_path: str = "") -> Optional[Dict[str, Any]]:
+def classify_by_filename(filename: str, rel_path: str = "") -> dict[str, Any] | None:
     """
     الطبقة الأولى: التحليل اللفظي واللغوي فائق السرعة لاسم الملف والمسار
     """
@@ -199,7 +191,7 @@ def classify_media_offline(
     size_bytes: int = 0,
     mtime: int = 0,
     relative_path: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     التصنيف الموضعي المتكامل بنظام هرمي صارم بدون إنترنت:
     - فحص الكاش أولاً.
@@ -208,7 +200,7 @@ def classify_media_offline(
     - حفظ النتيجة في الكاش.
     """
     fname = filename or Path(str(file_path)).name
-    cache_key = (fname, int(size_bytes), int(mtime))
+    cache_key = (fname, size_bytes, mtime)
     if cache_key in _CLASSIFICATION_CACHE:
         return _CLASSIFICATION_CACHE[cache_key]
 
@@ -230,6 +222,25 @@ def classify_media_offline(
             import media_scanner
             # التحقق مما إذا كانت الصورة ورقة مستند / اختبار
             if media_scanner.is_visual_document_or_paper(p_str):
+                # فحص OCR إن كان متوفراً ومثبتاً فعلياً داخل النظام
+                if is_offline_ocr_runtime_available():
+                    try:
+                        import classifier
+                        subj = classifier.classify_with_local_ocr(p_str)
+                        if subj and subj.strip():
+                            clean_subj = subj.strip()
+                            res = {
+                                "category": f"{CATEGORY_EXAMS_ROOT}/{clean_subj}",
+                                "confidence": 0.85,
+                                "details": f"ورقة اختبار مادة: {clean_subj} (عبر OCR المحلي)",
+                                "needs_review": False,
+                                "method": "local_ocr",
+                            }
+                            _CLASSIFICATION_CACHE[cache_key] = res
+                            return res
+                    except Exception as e_ocr:
+                        logger.debug("تجاوز تشغيل OCR المحلي: %s", e_ocr)
+
                 res = {
                     "category": (by_name["category"] if by_name else CATEGORY_EXAMS_GENERAL),
                     "confidence": 0.70,

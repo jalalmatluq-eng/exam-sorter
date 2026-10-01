@@ -222,7 +222,7 @@ class SettingsScreen(Screen):
         try:
             import storage_backend
             prefs = file_manager.get_sorter_preferences()
-            active_dest = prefs.get("target_storage", "internal")
+            active_dest = str(prefs.get("target_storage", "internal"))
             target_loc = storage_backend.get_active_target_location(active_dest)
             dests = file_manager.get_available_storage_destinations()
 
@@ -399,22 +399,44 @@ class SettingsScreen(Screen):
     def refresh_permission_ui(self) -> None:
         """فحص وتحديث تشخيص كافة الصلاحيات (الصور، الفيديو، جميع الملفات، وإذن SAF) بدقة"""
         import android_permissions
+        import offline_classifier
         diag = android_permissions.get_permissions_diagnostic_summary()
 
         img_ok = diag.get("images_permission", False)
         vid_ok = diag.get("videos_permission", False)
         all_ok = diag.get("all_files_permission", False)
         saf_ok = diag.get("saf_sdcard_permission", False)
+        is_partial = diag.get("partial_visual_selected", False)
+        ocr_avail = offline_classifier.is_offline_ocr_runtime_available()
 
-        all_granted = img_ok and vid_ok and all_ok
+        all_granted = img_ok and vid_ok and all_ok and not is_partial
+        scope_str = "الوصول محدود (صور محددة فقط) ⚠️" if is_partial else ("وصول كامل لكافة الوسائط ✓" if (img_ok and vid_ok) else "مرفوضة ✗")
+        ocr_str = "مثبت وجاهز ✓" if ocr_avail else "غير مثبت (إدخال يدوي متاح)"
+
         status_lines = [
+            f"• نطاق الوصول (Android 14): {scope_str}",
             f"• صلاحية الصور: {'ممنوحة ✓' if img_ok else 'مرفوضة ✗'}",
             f"• صلاحية الفيديو: {'ممنوحة ✓' if vid_ok else 'مرفوضة ✗'}",
             f"• وصول كافة الملفات: {'ممنوح ✓' if all_ok else 'مقيد ⚠️'}",
             f"• إذن SAF لبطاقة SD: {'صالح ومفعل ✓' if saf_ok else 'غير مفعل / منتهي'}",
+            f"• محرك OCR الأوفلاين: {ocr_str}",
         ]
 
-        if all_granted:
+        if is_partial:
+            if "perm_desc_label" in self.ids:
+                self.ids.perm_desc_label.text = ar(
+                    "الحالة: الوصول محدود (تم اختيار صور محددة فقط في أندرويد 14) ⚠️\n"
+                    "لا يمكن فحص الهاتف كاملاً بهذا الإذن الجزئي.\n" + "\n".join(status_lines)
+                )
+                self.ids.perm_desc_label.text_color = (0.980, 0.500, 0.100, 1)
+            if "perm_icon" in self.ids:
+                self.ids.perm_icon.icon = "shield-alert"
+                self.ids.perm_icon.icon_color = (0.980, 0.500, 0.100, 1)
+            if "btn_permission_text" in self.ids:
+                self.ids.btn_permission_text.text = ar(
+                    "فتح إعدادات التطبيق لترقية الإذن للكل"
+                )
+        elif all_granted:
             if "perm_desc_label" in self.ids:
                 self.ids.perm_desc_label.text = ar(
                     "الحالة: الصلاحيات مكتملة وتغطي الوسائط وكافة المجلدات ✓\n" + "\n".join(status_lines)
@@ -445,6 +467,10 @@ class SettingsScreen(Screen):
         """طلب الصلاحيات الناقصة (صور/فيديو أو الوصول الشامل لكافة الملفات)"""
         import android_permissions
         diag = android_permissions.get_permissions_diagnostic_summary()
+
+        if diag.get("partial_visual_selected"):
+            android_permissions.open_app_details_settings()
+            return
 
         if not diag.get("images_permission") or not diag.get("videos_permission"):
             def _after_media(_p, _r):
@@ -556,6 +582,50 @@ class SettingsScreen(Screen):
             self._stop_continuous_scan = True
             if "text_continuous_scan" in self.ids:
                 self.ids.text_continuous_scan.text = ar("جاري التوقف...")
+            return
+
+        # الفحص الاستباقي للصلاحيات (Preflight Check) لمنع البدء بدون صلاحيات كاملة
+        prefs = file_manager.get_sorter_preferences()
+        source_storage = str(prefs.get("source_storage", "both"))
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location()
+        tgt_name = target_loc.storage_type if target_loc else "internal"
+
+        import android_permissions
+        can_proceed, _issue_code, issue_msg, action_req = (
+            android_permissions.preflight_scan_access(source_storage, tgt_name)
+        )
+        if not can_proceed:
+            if action_req == "request_saf_sdcard":
+                def _launch_saf():
+                    self.pick_saf_sdcard_folder()
+                show_confirm_dialog(
+                    title="مطلوب تفويض بطاقة SD",
+                    text=issue_msg,
+                    confirm_text="اختيار المجلد الآن",
+                    cancel_text="إلغاء",
+                    on_confirm=_launch_saf,
+                )
+            elif action_req == "open_app_settings":
+                show_confirm_dialog(
+                    title="الوصول محدود (أندرويد 14)",
+                    text=issue_msg,
+                    confirm_text="فتح إعدادات التطبيق",
+                    cancel_text="إلغاء",
+                    on_confirm=android_permissions.open_app_details_settings,
+                )
+            else:
+                def _request_perms():
+                    def _after(_p, _r):
+                        Clock.schedule_once(lambda _dt: self.refresh_permission_ui(), 0.5)
+                    android_permissions.request_media_permissions(_after)
+                show_confirm_dialog(
+                    title="مطلوب إذن الوصول للوسائط",
+                    text=issue_msg,
+                    confirm_text="منح الإذن",
+                    cancel_text="إلغاء",
+                    on_confirm=_request_perms,
+                )
             return
 
         self.is_continuous_scanning = True
@@ -941,8 +1011,9 @@ class SettingsScreen(Screen):
                     total_bytes = 0
                     for g in dupes:
                         for f in g[1:]:
-                            if str(f).startswith("content://") or str(f).startswith("mock_doc://"):
-                                total_bytes += storage_backend.get_uri_file_size(str(f))
+                            f_str = str(f)
+                            if f_str.startswith(("content://", "mock_doc://")):
+                                total_bytes += storage_backend.get_uri_file_size(f_str)
                             else:
                                 try:
                                     total_bytes += Path(f).stat().st_size
@@ -1013,10 +1084,12 @@ class SettingsScreen(Screen):
 
                         threading.Thread(target=_remove_worker, daemon=True).start()
 
-                    sample_text = "\n".join(
-                        f"• {storage_backend.query_content_uri_details(str(g[0])).get('display_name') or Path(g[0]).name}"
-                        for g in dupes[:3]
-                    )
+                    sample_items = []
+                    for g in dupes[:3]:
+                        first_f = str(g[0])
+                        d_name = storage_backend.query_content_uri_details(first_f).get("display_name") or Path(first_f).name
+                        sample_items.append(f"• {d_name}")
+                    sample_text = "\n".join(sample_items)
                     _ = show_confirm_dialog(
                         title="كشف ملفات مكررة",
                         text=(
