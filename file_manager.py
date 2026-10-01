@@ -886,12 +886,21 @@ def create_initial_category_folders(
 
 
 def get_transfer_log_path(base_path: Path | None = None) -> Path:
-    """مسار ملف سجل عمليات النقل للتراجع والمراجعة"""
-    base = (
-        base_path if base_path is not None
-        else get_media_sorter_base_path()
-    )
-    return base / "transfer_history.json"
+    """مسار ملف سجل عمليات النقل للتراجع والمراجعة محفوظ دائماً في app-private storage"""
+    if base_path is not None:
+        return Path(base_path) / "transfer_history.json"
+
+    private_log = get_app_private_storage_dir() / "transfer_history.json"
+    # هجرة تلقائية من المسار القديم إن وجد
+    if not private_log.exists():
+        try:
+            legacy_log = get_media_sorter_base_path() / "transfer_history.json"
+            if legacy_log.exists():
+                shutil.copy2(str(legacy_log), str(private_log))
+                logger.info("تمت هجرة سجل transfer_history.json إلى التخزين الخاص بالتطبيق بنجاح")
+        except Exception as e:
+            logger.debug("تعذر نسخ سجل العمليات القديم: %s", e)
+    return private_log
 
 
 def _log_transfer_record(
@@ -976,8 +985,9 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     """
     التراجع عن عملية تصنيف/نسخ معينة:
     - يدعم كلاً من المسارات العادية و Content URIs عبر SAF.
-    - يحذف النسخة من الوجهة بأمان دون مساس بالأصل.
-    - يعيد الأصل إلى مكانه في حال كانت العملية Move.
+    - يتحقق من بقاء صلاحية SAF وتوصيل بطاقة الذاكرة الخارجية.
+    - لا يحذف سجل العملية إذا فشل حذف الوجهة أو فشلت استعادة الأصل.
+    - يعيد False عند أي فشل دون إفساد السجل.
     """
     import storage_backend
     log_file = get_transfer_log_path(base_path)
@@ -1007,12 +1017,34 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     dest_str = str(target_record["destination"])
     src_str = str(target_record["source"])
     is_copy = bool(target_record.get("is_copy", True))
+    is_saf_dest = bool(target_record.get("is_saf_dest", False)) or dest_str.startswith("content://")
+
+    # فحص صلاحية SAF إن كانت الوجهة على بطاقة SD عبر SAF
+    if is_saf_dest and dest_str.startswith("content://") and not dest_str.startswith("mock_doc://"):
+        saf_tree_uri = storage_backend.get_saf_persisted_uri()
+        if not storage_backend.is_saf_uri_valid(saf_tree_uri):
+            logger.warning("تعذر التراجع: تم فقدان صلاحية SAF أو تم فصل بطاقة SD للوجهة %s", dest_str)
+            return False
+
+    dest_deleted = False
 
     if is_copy:
         # عملية نسخ: نحذف الوجهة فقط
-        _ = storage_backend.delete_media_item(dest_str)
+        dest_deleted = storage_backend.delete_media_item(dest_str)
+        if not dest_deleted:
+            # التحقق هل الملف غير موجود أصلاً (محذوف مسبقاً)
+            if not dest_str.startswith("content://"):
+                dest_deleted = not Path(dest_str).exists()
+            elif dest_str.startswith("mock_doc://"):
+                dest_deleted = not Path(dest_str.replace("mock_doc://", "")).exists()
+            else:
+                dest_deleted = (storage_backend.get_uri_file_size(dest_str) == 0)
+
+        if not dest_deleted:
+            logger.warning("فشل حذف ملف الوجهة في التراجع: %s، تم الإبقاء على السجل", dest_str)
+            return False
     else:
-        # عملية نقل: استعادة المصدر أولاً إن كان مساراً محلياً
+        # عملية نقل: استعادة المصدر أولاً
         if not src_str.startswith("content://"):
             src_p = Path(src_str)
             src_p.parent.mkdir(parents=True, exist_ok=True)
@@ -1021,16 +1053,28 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
                 if dest_p.exists():
                     try:
                         shutil.move(str(dest_p), str(src_p))
-                    except OSError:
-                        pass
+                        dest_deleted = True
+                    except OSError as e:
+                        logger.error("فشل استعادة ملف المصدر %s من %s: %s", src_p, dest_p, e)
+                        return False
+                else:
+                    dest_deleted = src_p.exists()
             else:
-                # الوجهة كانت SAF: نسخ محتواها إلى مسار المصدر ثم حذفها
-                storage_backend.copy_uri_to_path(dest_str, src_p)
-                storage_backend.delete_media_item(dest_str)
+                # الوجهة كانت SAF
+                if storage_backend.copy_uri_to_path(dest_str, src_p):
+                    dest_deleted = storage_backend.delete_media_item(dest_str)
+                else:
+                    logger.error("فشل نسخ الوجهة SAF %s إلى المصدر %s", dest_str, src_p)
+                    return False
         else:
             # المصدر كان Content URI، نحذف الوجهة فقط
-            storage_backend.delete_media_item(dest_str)
+            dest_deleted = storage_backend.delete_media_item(dest_str)
 
+        if not dest_deleted:
+            logger.warning("فشل إتمام التراجع لعملية النقل للوجهة: %s", dest_str)
+            return False
+
+    # نجحت العملية: نحذف السجل ونحدث الكاش
     _ = records.pop(found_idx)
     try:
         with open(log_file, "w", encoding="utf-8") as f:
@@ -1058,7 +1102,12 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
 
 
 def undo_all_transfers(base_path: Path | None = None) -> int:
-    """التراجع عن جميع عمليات النسخ/الفرز دفعة واحدة مع دعم SAF و Content URIs"""
+    """
+    التراجع عن جميع عمليات النسخ/الفرز دفعة واحدة:
+    - لا يحذف كل السجل عند فشل بعض العمليات؛ يحتفظ فقط بالعمليات التي فشل التراجع عنها.
+    - يحدث كاش scanned_files للملفات المسترجعة بنجاح فقط.
+    - يعيد عداداً دقيقاً بالعمليات الناجحة.
+    """
     import storage_backend
     log_file = get_transfer_log_path(base_path)
     if not log_file.exists():
@@ -1074,14 +1123,30 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
         return 0
 
     undone_count = 0
-    for r in records:
-        dest_str = str(r["destination"])
-        src_str = str(r["source"])
-        is_copy = bool(r.get("is_copy", True))
+    remaining_records: list[dict[str, object]] = []
+    cleared_keys: list[tuple[str, str]] = []
 
+    for r in records:
+        dest_str = str(r.get("destination", ""))
+        src_str = str(r.get("source", ""))
+        is_copy = bool(r.get("is_copy", True))
+        is_saf_dest = bool(r.get("is_saf_dest", False)) or dest_str.startswith("content://")
+
+        # فحص إذن SAF
+        if is_saf_dest and dest_str.startswith("content://") and not dest_str.startswith("mock_doc://"):
+            saf_tree_uri = storage_backend.get_saf_persisted_uri()
+            if not storage_backend.is_saf_uri_valid(saf_tree_uri):
+                remaining_records.append(r)
+                continue
+
+        success = False
         if is_copy:
             if storage_backend.delete_media_item(dest_str):
-                undone_count += 1
+                success = True
+            elif not dest_str.startswith("content://") and not Path(dest_str).exists():
+                success = True
+            elif dest_str.startswith("mock_doc://") and not Path(dest_str.replace("mock_doc://", "")).exists():
+                success = True
         else:
             if not src_str.startswith("content://"):
                 src_p = Path(src_str)
@@ -1091,34 +1156,48 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
                     if dest_p.exists():
                         try:
                             shutil.move(str(dest_p), str(src_p))
-                            undone_count += 1
+                            success = src_p.exists()
                         except OSError:
-                            pass
+                            success = False
+                    else:
+                        success = src_p.exists()
                 else:
-                    storage_backend.copy_uri_to_path(dest_str, src_p)
-                    storage_backend.delete_media_item(dest_str)
-                    undone_count += 1
+                    if storage_backend.copy_uri_to_path(dest_str, src_p):
+                        success = storage_backend.delete_media_item(dest_str)
             else:
                 if storage_backend.delete_media_item(dest_str):
-                    undone_count += 1
+                    success = True
 
+        if success:
+            undone_count += 1
+            cleared_keys.append((src_str, dest_str))
+        else:
+            remaining_records.append(r)
+
+    # حفظ السجلات المتبقية التي تعذر حذفها دون تنظيف السجل كاملاً
     try:
         with open(log_file, "w", encoding="utf-8") as f:
-            json.dump([], f, ensure_ascii=False, indent=2)
-    except (OSError, TypeError):
-        pass
+            json.dump(remaining_records, f, ensure_ascii=False, indent=2)
+    except (OSError, TypeError) as e:
+        logger.warning("تعذر حفظ السجلات المتبقية في undo_all_transfers: %s", e)
 
-    for db_dir in [get_app_private_storage_dir(), get_media_sorter_base_path()]:
-        try:
-            cache_db = db_dir / "scanned_media_cache.db"
-            if cache_db.exists():
-                conn = sqlite3.connect(str(cache_db))
-                cursor = conn.cursor()
-                _ = cursor.execute("DELETE FROM scanned_files")
-                conn.commit()
-                conn.close()
-        except (sqlite3.Error, OSError):
-            pass
+    # تنظيف الكاش فقط للعناصر التي تم التراجع عنها بنجاح
+    if cleared_keys:
+        for db_dir in [get_app_private_storage_dir(), get_media_sorter_base_path()]:
+            try:
+                cache_db = db_dir / "scanned_media_cache.db"
+                if cache_db.exists():
+                    conn = sqlite3.connect(str(cache_db))
+                    cursor = conn.cursor()
+                    for s_k, d_k in cleared_keys:
+                        cursor.execute(
+                            "DELETE FROM scanned_files WHERE file_path = ? OR file_path = ? OR dest_path = ?",
+                            (s_k, d_k, d_k),
+                        )
+                    conn.commit()
+                    conn.close()
+            except (sqlite3.Error, OSError):
+                pass
 
     return undone_count
 
@@ -1185,8 +1264,9 @@ def copy_to_category(
     elif isinstance(actual_item, str) and actual_item.startswith("content://"):
         src_uri = actual_item
         is_uri_source = True
-        filename = f"media_{int(time.time() * 1000)}.jpg"
-        src_size = storage_backend.get_uri_file_size(src_uri)
+        details = storage_backend.query_content_uri_details(src_uri)
+        filename = details.get("display_name") or f"media_{int(time.time() * 1000)}{details.get('extension', '.mp4' if 'video' in src_uri.lower() else '.jpg')}"
+        src_size = details.get("size_bytes") or storage_backend.get_uri_file_size(src_uri)
     else:
         resolved_src_path = Path(actual_item).resolve()
         if not resolved_src_path.exists() or not resolved_src_path.is_file():
@@ -1231,7 +1311,7 @@ def copy_to_category(
         if not dest_uri:
             raise OSError(f"فشل إتمام نسخ الملف إلى بطاقة SD عبر SAF: {filename}")
 
-        # توثيق العملية
+        # توثيق العملية في app-private storage (أو base_path إن مرر صراحة)
         _log_transfer_record(
             src_path=str(src_uri if is_uri_source else resolved_src_path),
             dest_path=dest_uri,
@@ -1263,7 +1343,7 @@ def copy_to_category(
             dest_path=str(primary_dest),
             category=clean_cat,
             file_size=src_size,
-            base_path=target_base,
+            base_path=base_path,
             is_copy=is_copy,
             is_saf_dest=False,
         )
@@ -1278,7 +1358,7 @@ def copy_to_category(
                 dest_path=str(dest),
                 category=clean_cat,
                 file_size=src_size,
-                base_path=target_base,
+                base_path=base_path,
                 is_copy=is_copy,
                 is_saf_dest=False,
             )
@@ -1301,13 +1381,13 @@ def copy_to_category(
         dest.unlink(missing_ok=True)
         raise OSError(f"عدم تطابق الحجم بعد النسخ: المصدر {src_size} بايت، الوجهة {dest_size} بايت")
 
-    # توثيق العملية
+    # توثيق العملية في app-private storage (أو base_path إن مرر صراحة)
     _log_transfer_record(
         src_path=str(src_uri if is_uri_source else resolved_src_path),
         dest_path=str(dest),
         category=clean_cat,
         file_size=src_size or dest_size,
-        base_path=target_base,
+        base_path=base_path,
         is_copy=is_copy,
         is_saf_dest=False,
     )

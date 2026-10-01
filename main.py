@@ -345,24 +345,43 @@ class CosmoSortApp(MDApp):
                     if tree_uri is not None:
                         from android import mActivity
                         Intent = autoclass("android.content.Intent")
-                        take_flags = (
+                        intent_flags = intent.getFlags() if hasattr(intent, "getFlags") else 0
+                        take_flags = intent_flags & (
                             Intent.FLAG_GRANT_READ_URI_PERMISSION
                             | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                         )
+                        if not take_flags:
+                            take_flags = (
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            )
                         cr = mActivity.getContentResolver()
                         try:
                             cr.takePersistableUriPermission(tree_uri, take_flags)
-                            logger.info("تم منح وحفظ takePersistableUriPermission بنجاح")
+                            logger.info("تم منح وحفظ takePersistableUriPermission بنجاح (Flags: %s)", take_flags)
                         except Exception as e:
                             logger.warning("تنبيه takePersistableUriPermission: %s", e)
 
                         uri_str = str(tree_uri.toString())
                         import storage_backend
                         storage_backend.save_saf_persisted_uri(uri_str)
+                        storage_backend.clear_storage_detect_cache()
                         file_manager.save_sorter_preferences({
                             "target_storage": "sdcard",
                             "saf_sdcard_uri": uri_str,
                         })
+
+                        # التحقق من صلاحية SAF URI الفعلية بعد الحفظ قبل بدء أي فحص
+                        saf_valid = storage_backend.is_saf_uri_valid(uri_str)
+                        if not saf_valid:
+                            logger.warning("إذن SAF غير مكتمل أو لم يتم تثبيته لـ URI: %s", uri_str)
+                            from utils.ui_helper import show_modern_notification
+                            show_modern_notification(
+                                "تنبيه إذن البطاقة",
+                                "لم يتم تثبيت إذن الكتابة لبطاقة الذاكرة بشكل صحيح، يرجى إعادة المحاولة",
+                                notif_type="warning",
+                            )
+                            return
 
                         from utils.ui_helper import show_modern_notification
                         show_modern_notification(
@@ -379,23 +398,24 @@ class CosmoSortApp(MDApp):
                             except Exception:
                                 pass
 
-                            # استئناف الفحص المعلق إن وجد
+                            # استئناف الفحص المعلق إن وجد بعد التأكد من الصلاحية
                             pending = file_manager.get_pending_scan()
                             if pending.get("active") and pending.get("target") == "sdcard":
-                                file_manager.clear_pending_scan()
-                                try:
-                                    home = self.root.get_screen("home_screen")
-                                    if home and hasattr(home, "start_scan_with_options"):
-                                        from kivy.clock import Clock
-                                        src_chosen = pending.get("source", "both")
-                                        Clock.schedule_once(
-                                            lambda _dt: home.start_scan_with_options(
-                                                src_chosen, "sdcard"
-                                            ),
-                                            0.5,
-                                        )
-                                except Exception as e_res:
-                                    logger.warning("تعذر استئناف الفحص المعلق: %s", e_res)
+                                if storage_backend.is_saf_uri_valid(uri_str):
+                                    file_manager.clear_pending_scan()
+                                    try:
+                                        home = self.root.get_screen("home_screen")
+                                        if home and hasattr(home, "start_scan_with_options"):
+                                            from kivy.clock import Clock
+                                            src_chosen = pending.get("source", "both")
+                                            Clock.schedule_once(
+                                                lambda _dt: home.start_scan_with_options(
+                                                    src_chosen, "sdcard"
+                                                ),
+                                                0.5,
+                                            )
+                                    except Exception as e_res:
+                                        logger.warning("تعذر استئناف الفحص المعلق: %s", e_res)
             except Exception as e:
                 logger.error("خطأ أثناء معالجة إذن SAF: %s", e, exc_info=True)
 

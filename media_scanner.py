@@ -59,7 +59,7 @@ def get_cache_db_path() -> Path:
 
 
 def init_cache_db() -> bool:
-    """تهيئة جدول تتبع الملفات المفحوصة في SQLite بشكل غير حاجب للفرز"""
+    """تهيئة جدول تتبع الملفات المفحوصة في SQLite بشكل غير حاجب للفرز مع دعم حالة العملية والوجهة"""
     try:
         db_path = get_cache_db_path()
         db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +73,8 @@ def init_cache_db() -> bool:
                     category TEXT,
                     dest_path TEXT,
                     dest_size INTEGER,
+                    operation_status TEXT DEFAULT 'success',
+                    target_storage TEXT DEFAULT '',
                     processed_at REAL
                 )
             """)
@@ -82,6 +84,14 @@ def init_cache_db() -> bool:
                 pass
             try:
                 cursor.execute("ALTER TABLE scanned_files ADD COLUMN dest_size INTEGER")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute("ALTER TABLE scanned_files ADD COLUMN operation_status TEXT DEFAULT 'success'")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                cursor.execute("ALTER TABLE scanned_files ADD COLUMN target_storage TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
             conn.commit()
@@ -96,7 +106,7 @@ def is_file_already_processed(
 ) -> bool:
     """
     التحقق مما إذا كان الملف قد تمت معالجته مسبقاً وتأكيد وجود النسخة المنظمة في الوجهة:
-    إذا كان الملف مسجلاً لكن نسخته في الوجهة مفقودة أو غير مطابقة، يعتبر غير مكتمل ليعاد فرزه!
+    إذا كانت الحالة success أو copied_not_deleted، والنسخة موجودة ومطابقة بالحجم، يعتبر معالجاً لتفادي تكرار النسخ!
     """
     try:
         db_path = get_cache_db_path()
@@ -105,24 +115,26 @@ def is_file_already_processed(
         with sqlite3.connect(str(db_path), timeout=5.0) as conn:
             cursor = conn.cursor()
             query = (
-                "SELECT file_size, mtime, dest_path, dest_size FROM scanned_files WHERE file_path = ?"
+                "SELECT file_size, mtime, dest_path, dest_size, operation_status, target_storage FROM scanned_files WHERE file_path = ?"
             )
             cursor.execute(query, (file_path,))
             row = cursor.fetchone()
             if row and len(row) >= 2:
                 saved_size = int(str(row[0]))
                 saved_mtime = float(str(row[1]))
+                status = str(row[4]) if len(row) > 4 and row[4] else "success"
+                if status == "failed":
+                    return False
+
                 if saved_size == file_size and abs(saved_mtime - mtime) < 1.0:
-                    if len(row) >= 4 and row[2]:
+                    if len(row) >= 3 and row[2]:
                         dest_str = str(row[2])
-                        dest_p = Path(dest_str)
-                        if dest_p.exists() and dest_p.is_file():
-                            if dest_p.stat().st_size == file_size:
-                                return True
-                            else:
-                                return False
+                        if dest_str.startswith("content://"):
+                            final_sz = storage_backend.get_uri_file_size(dest_str)
+                            return final_sz == file_size
                         else:
-                            return False
+                            dest_p = Path(dest_str)
+                            return dest_p.exists() and dest_p.is_file() and dest_p.stat().st_size == file_size
                     return True
     except (sqlite3.Error, OSError, ValueError) as e:
         logger.debug("خطأ أثناء قراءة سجل الملف المفحوص: %s", e)
@@ -138,7 +150,7 @@ def get_all_scanned_files_set() -> set[str]:
             return scanned
         with sqlite3.connect(str(db_path), timeout=5.0) as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT file_path FROM scanned_files")
+            cursor.execute("SELECT file_path FROM scanned_files WHERE operation_status != 'failed'")
             for row in cursor.fetchall():
                 if row and row[0]:
                     scanned.add(str(row[0]))
@@ -148,7 +160,7 @@ def get_all_scanned_files_set() -> set[str]:
 
 
 def get_scanned_files_details() -> dict[str, dict[str, object]]:
-    """تحميل تفاصيل الملفات المفحوصة مسبقاً بما فيها مسارات الوجهة وأحجامها"""
+    """تحميل تفاصيل الملفات المفحوصة مسبقاً بما فيها مسارات الوجهة وحالة العملية"""
     details: dict[str, dict[str, object]] = {}
     try:
         db_path = get_cache_db_path()
@@ -157,7 +169,7 @@ def get_scanned_files_details() -> dict[str, dict[str, object]]:
         with sqlite3.connect(str(db_path), timeout=5.0) as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT file_path, file_size, dest_path, dest_size FROM scanned_files"
+                "SELECT file_path, file_size, dest_path, dest_size, operation_status, target_storage FROM scanned_files"
             )
             for row in cursor.fetchall():
                 if row and row[0]:
@@ -165,6 +177,8 @@ def get_scanned_files_details() -> dict[str, dict[str, object]]:
                         "size": row[1],
                         "dest_path": row[2] if len(row) > 2 else "",
                         "dest_size": row[3] if len(row) > 3 else 0,
+                        "operation_status": row[4] if len(row) > 4 else "success",
+                        "target_storage": row[5] if len(row) > 5 else "",
                     }
     except Exception as e:
         logger.debug("خطأ أثناء قراءة تفاصيل كاش الملفات: %s", e)
@@ -177,9 +191,11 @@ def record_processed_file(
     mtime: float,
     category: str,
     dest_path: str = "",
-    dest_size: int = 0
+    dest_size: int = 0,
+    operation_status: str = "success",
+    target_storage: str = "",
 ) -> bool:
-    """تسجيل الملف في كاش التتبع بعد نجاح العملية فعلياً دون تعطيل الفرز عند الفشل"""
+    """تسجيل الملف في كاش التتبع مع حالة العملية ونوع التخزين لمنع تكرار النسخ بعد تعذر حذف المصدر"""
     try:
         init_cache_db()
         db_path = get_cache_db_path()
@@ -187,8 +203,8 @@ def record_processed_file(
             cursor = conn.cursor()
             sql = """
                 INSERT OR REPLACE INTO scanned_files
-                (file_path, file_size, mtime, category, dest_path, dest_size, processed_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (file_path, file_size, mtime, category, dest_path, dest_size, operation_status, target_storage, processed_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """
             cursor.execute(
                 sql,
@@ -199,6 +215,8 @@ def record_processed_file(
                     category,
                     dest_path,
                     dest_size,
+                    operation_status,
+                    target_storage,
                     time.time(),
                 ),
             )
@@ -346,13 +364,16 @@ def _scan_android_mediastore(
                         targets.append((img_uri, "image", v_name))
                         targets.append((vid_uri, "video", v_name))
             except Exception as e_vol:
-                logger.debug("تعذر استعلام MediaStore عبر أسماء الـ Volumes: %s", e_vol)
+                logger.warning("فشل استعلام أسماء مجلدات التخزين (Volume Names) عبر MediaStore: %s", e_vol)
 
         if not targets:
-            targets = [
-                (MediaStoreImages.EXTERNAL_CONTENT_URI, "image", ""),
-                (MediaStoreVideo.EXTERNAL_CONTENT_URI, "video", ""),
-            ]
+            if source_storage == "sdcard":
+                logger.warning("لم يُعثر على وحدة تخزين خارجية لبطاقة SD في MediaStore؛ سيتم الاعتماد على قارئ SAF Tree المباشر")
+            else:
+                targets = [
+                    (MediaStoreImages.EXTERNAL_CONTENT_URI, "image", ""),
+                    (MediaStoreVideo.EXTERNAL_CONTENT_URI, "video", ""),
+                ]
 
         cr = mActivity.getContentResolver()
         for target_info in targets:
@@ -606,6 +627,31 @@ def find_unsorted_media(
         except (OSError, RuntimeError) as e:
             logger.warning("خطأ أثناء فحص المجلد %s: %s", root_dir, e)
 
+    # 3. فحص بطاقة الذاكرة الخارجية عودياً عبر SAF Tree URI
+    if source_storage in ("sdcard", "both"):
+        saf_tree_uri = storage_backend.get_saf_persisted_uri()
+        if saf_tree_uri and storage_backend.is_saf_uri_valid(saf_tree_uri):
+            try:
+                saf_items = storage_backend.scan_saf_tree_recursively(saf_tree_uri, max_depth=max_depth)
+                logger.info("تم العثور على %d ملف وسائط عبر قارئ SAF Tree الشجري", len(saf_items))
+                for s_item in saf_items:
+                    k = s_item.uri
+                    k_lower = k.lower()
+                    if k_lower not in seen_identifiers:
+                        seen_identifiers.add(k_lower)
+                        if not force_rescan and k in scanned_details:
+                            info = scanned_details[k]
+                            dest_path_str = str(info.get("dest_path", ""))
+                            if dest_path_str:
+                                dest_sz = storage_backend.get_uri_file_size(dest_path_str) if dest_path_str.startswith("content://") else (Path(dest_path_str).stat().st_size if Path(dest_path_str).exists() else 0)
+                                if dest_sz == s_item.size_bytes:
+                                    continue
+                        combined_items.append(s_item)
+            except Exception as e_saf:
+                logger.error("خطأ أثناء قراءة شجرة SAF للبطاقة الخارجية: %s", e_saf)
+        elif source_storage == "sdcard":
+            logger.warning("تنبيه: تم اختيار فحص بطاقة SD ولكن لا يوجد إذن SAF صالح ومحفوظ للبطاقة!")
+
     return combined_items
 
 
@@ -806,8 +852,10 @@ def _process_one_file_internal(
         if source_str.startswith("content://"):
             is_uri_source = True
             source_key = source_str
+            uri_info = storage_backend.query_content_uri_details(source_str)
+            safe_name = uri_info.get("display_name") or f"media_{int(time.time() * 1000)}{uri_info.get('extension', '.mp4' if 'video' in source_str.lower() else '.jpg')}"
             temp_dir = file_manager.get_temp_dir()
-            temp_stream_file = temp_dir / f"stream_{int(time.time() * 1000)}.jpg"
+            temp_stream_file = temp_dir / f"stream_{int(time.time() * 1000)}_{safe_name}"
             copied = storage_backend.copy_uri_to_path(source_str, temp_stream_file)
             if not copied or not temp_stream_file.exists():
                 return {"success": False, "source": source_key, "error": "تعذر قراءة دفق Content URI"}
@@ -913,9 +961,11 @@ def _process_one_file_internal(
 
         # إذا كنا في وضع النقل Move: نحذف الأصل فقط بعد التحقق التام
         actual_mode = "copy" if is_copy else "move"
+        op_status = "success"
         if not is_copy:
             deleted = storage_backend.delete_media_item(item_to_process)
             if not deleted:
+                op_status = "copied_not_deleted"
                 logger.warning(
                     "تعذر حذف الأصل بعد النقل (%s)، تم الاحتفاظ به كنسخة آمنة",
                     source_key,
@@ -924,6 +974,7 @@ def _process_one_file_internal(
                 actual_mode = "copy"
 
         # تسجيل الملف في كاش التتبع بعد التأكد التام
+        chosen_target = getattr(target_location, "storage_type", "internal")
         record_processed_file(
             source_key,
             orig_size,
@@ -931,6 +982,8 @@ def _process_one_file_internal(
             target_category,
             dest_path=dest_str,
             dest_size=dest_size,
+            operation_status=op_status,
+            target_storage=chosen_target,
         )
 
         return {

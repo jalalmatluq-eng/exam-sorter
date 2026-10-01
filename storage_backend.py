@@ -328,11 +328,33 @@ def request_saf_folder_picker() -> bool:
         return False
 
 
-def detect_storage_locations() -> dict[str, StorageLocation]:
+_STORAGE_DETECT_CACHE: dict[str, StorageLocation] | None = None
+_STORAGE_DETECT_CACHE_TIME: float = 0.0
+_STORAGE_DETECT_CACHE_TTL: float = 8.0  # مهلة 8 ثوان لتجنب تكرار فحص القرص في كل إطار
+
+
+def clear_storage_detect_cache() -> None:
+    """مسح كاش فحص التخزين لإجبار التحديث الفوري"""
+    global _STORAGE_DETECT_CACHE, _STORAGE_DETECT_CACHE_TIME
+    _STORAGE_DETECT_CACHE = None
+    _STORAGE_DETECT_CACHE_TIME = 0.0
+
+
+def detect_storage_locations(force_refresh: bool = False) -> dict[str, StorageLocation]:
     """
     استكشاف دقيق وشامل لجميع مواقع التخزين المتاحة على الجهاز
     مع بيان إمكانية الكتابة بدقة دون خداع المستخدم أو إخفاء المشاكل.
+    يستخدم كاش بمهلة 8 ثوان لتجنب تكرار عمليات mkdir واختبارات الكتابة في كل تحديث للواجهة.
     """
+    global _STORAGE_DETECT_CACHE, _STORAGE_DETECT_CACHE_TIME
+    now = time.time()
+    if (
+        not force_refresh
+        and _STORAGE_DETECT_CACHE is not None
+        and (now - _STORAGE_DETECT_CACHE_TIME) < _STORAGE_DETECT_CACHE_TTL
+    ):
+        return dict(_STORAGE_DETECT_CACHE)
+
     locations: dict[str, StorageLocation] = {}
 
     try:
@@ -374,6 +396,8 @@ def detect_storage_locations() -> dict[str, StorageLocation]:
             # 2. بطاقة الذاكرة الخارجية MicroSD
             sd_location = _detect_android_sdcard()
             locations["sdcard"] = sd_location
+            _STORAGE_DETECT_CACHE = locations
+            _STORAGE_DETECT_CACHE_TIME = now
             return locations
 
     except Exception as e:
@@ -415,6 +439,8 @@ def detect_storage_locations() -> dict[str, StorageLocation]:
         failure_reason="غير متوفرة على بيئة سطح المكتب",
         description="غير متوفرة في بيئة المحاكاة/سطح المكتب",
     )
+    _STORAGE_DETECT_CACHE = locations
+    _STORAGE_DETECT_CACHE_TIME = now
     return locations
 
 
@@ -755,6 +781,272 @@ def get_uri_file_size(uri_str: str) -> int:
     return 0
 
 
+def query_content_uri_details(uri_str: str) -> dict[str, Any]:
+    """
+    استخراج تفاصيل Content URI الحقيقية من نظام أندرويد بدقة:
+    - الاسم المعروض (_display_name)
+    - نوع الوسائط الفعلي (mime_type)
+    - الحجم الحقيقي بالبايت (_size)
+    - الامتداد الصحيح (يمنع حفظ الفيديو كصورة JPG نهائياً)
+    """
+    res: dict[str, Any] = {
+        "display_name": "",
+        "mime_type": "",
+        "size_bytes": 0,
+        "extension": ".jpg",
+        "is_video": False,
+        "is_image": False,
+    }
+    if not uri_str:
+        return res
+
+    if uri_str.startswith("mock_doc://"):
+        p = Path(uri_str.replace("mock_doc://", ""))
+        ext = p.suffix.lower()
+        is_vid = ext in VIDEO_EXTENSIONS
+        res["display_name"] = p.name
+        res["size_bytes"] = p.stat().st_size if p.exists() else 0
+        res["extension"] = ext or (".mp4" if is_vid else ".jpg")
+        res["is_video"] = is_vid
+        res["is_image"] = not is_vid
+        res["mime_type"] = "video/mp4" if is_vid else "image/jpeg"
+        return res
+
+    try:
+        if _get_platform() == "android":
+            from android import mActivity
+            from jnius import autoclass
+            Uri = autoclass("android.net.Uri")
+            parsed_uri = Uri.parse(uri_str)
+            cr = mActivity.getContentResolver()
+
+            # 1. جلب MIME TYPE
+            try:
+                mime = cr.getType(parsed_uri)
+                if mime:
+                    res["mime_type"] = str(mime)
+            except Exception:
+                pass
+
+            # 2. استعلام بيانات الملف من ContentProvider
+            cursor = None
+            try:
+                cursor = cr.query(parsed_uri, None, None, None, None)
+                if cursor is not None and cursor.moveToFirst():
+                    name_idx = cursor.getColumnIndex("_display_name")
+                    size_idx = cursor.getColumnIndex("_size")
+                    mime_idx = cursor.getColumnIndex("mime_type")
+
+                    if name_idx >= 0:
+                        name_val = cursor.getString(name_idx)
+                        if name_val:
+                            res["display_name"] = str(name_val)
+
+                    if size_idx >= 0:
+                        res["size_bytes"] = int(cursor.getLong(size_idx))
+
+                    if not res["mime_type"] and mime_idx >= 0:
+                        m_val = cursor.getString(mime_idx)
+                        if m_val:
+                            res["mime_type"] = str(m_val)
+            except Exception as e_cur:
+                logger.debug("استعلام تفاصيل Content URI عبر cursor: %s", e_cur)
+            finally:
+                if cursor is not None:
+                    try:
+                        cursor.close()
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.debug("استثناء عام أثناء فحص Content URI %s: %s", uri_str, e)
+
+    # معالجة الامتداد والنوع لمنع حفظ الفيديو باسم JPG نهائياً
+    mime_lower = res["mime_type"].lower()
+    is_vid = (
+        ("video" in mime_lower)
+        or ("video" in uri_str.lower())
+        or any(uri_str.lower().endswith(ve) for ve in VIDEO_EXTENSIONS)
+    )
+    res["is_video"] = is_vid
+    res["is_image"] = not is_vid
+
+    disp_name = res["display_name"]
+    ext = Path(disp_name).suffix.lower() if disp_name else ""
+
+    if not ext:
+        if res["mime_type"] in MIME_TYPE_MAP:
+            ext = MIME_TYPE_MAP[res["mime_type"]]
+        elif is_vid:
+            ext = ".mp4"
+        else:
+            ext = ".jpg"
+
+    # تأكيد صارم: لا يمكن أن يكون الفيديو .jpg إطلاقاً
+    if is_vid and ext in IMAGE_EXTENSIONS:
+        ext = ".mp4"
+
+    res["extension"] = ext
+    if not res["display_name"]:
+        res["display_name"] = f"media_{int(time.time() * 1000)}{ext}"
+    elif not Path(res["display_name"]).suffix:
+        res["display_name"] = f"{res['display_name']}{ext}"
+
+    return res
+
+
+def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaItem]:
+    """
+    قارئ حقيقي وشامل لشجرة SAF Tree URI:
+    - فحص شجري عودي (recursive) لجميع المجلدات والملفات داخل الشجرة عبر DocumentsContract / DocumentFile.
+    - استخراج الصور والفيديوهات وإنشاء MediaItem لكل ملف مع تفاصيله الدقيقة.
+    - لا يعتمد على os.walk أو MediaStore التي قد لا تعرض ملفات بطاقة SD على أجهزة أندرويد الحديثة.
+    """
+    found_items: list[MediaItem] = []
+    if not tree_uri:
+        return found_items
+
+    # 1. بيئة المحاكاة
+    if tree_uri.startswith("mock_saf://"):
+        base_dir = Path(tree_uri.replace("mock_saf://", ""))
+        if not base_dir.exists() or not base_dir.is_dir():
+            return found_items
+        for root, dirs, files in os.walk(str(base_dir)):
+            try:
+                rel = Path(root).relative_to(base_dir)
+                if len(rel.parts) > max_depth:
+                    dirs[:] = []
+                    continue
+            except ValueError:
+                pass
+
+            dirs[:] = [
+                d for d in dirs
+                if not d.startswith(".")
+                and d.lower() not in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter", "lost.dir", ".android")
+            ]
+
+            for f in files:
+                if f.startswith("."):
+                    continue
+                ext = Path(f).suffix.lower()
+                is_img = ext in IMAGE_EXTENSIONS
+                is_vid = ext in VIDEO_EXTENSIONS
+                if is_img or is_vid:
+                    fp = Path(root) / f
+                    sz = fp.stat().st_size
+                    mtime = fp.stat().st_mtime
+                    mock_uri = f"mock_doc://{fp}"
+                    found_items.append(
+                        MediaItem(
+                            id=mock_uri,
+                            source_type="saf_document",
+                            path=str(fp),
+                            uri=mock_uri,
+                            display_name=f,
+                            mime_type="video/mp4" if is_vid else "image/jpeg",
+                            size_bytes=sz,
+                            date_modified=mtime,
+                            storage_id="sdcard",
+                        )
+                    )
+        return found_items
+
+    if _get_platform() != "android":
+        return found_items
+
+    # 2. على نظام أندرويد
+    try:
+        from android import mActivity
+        from jnius import autoclass
+        Uri = autoclass("android.net.Uri")
+        DocumentsContract = autoclass("android.provider.DocumentsContract")
+        cr = mActivity.getContentResolver()
+        parsed_tree = Uri.parse(tree_uri)
+
+        tree_doc_id = DocumentsContract.getTreeDocumentId(parsed_tree)
+        root_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, tree_doc_id)
+
+        # طابور التفرع: (document_uri, current_depth)
+        queue: list[tuple[Any, int]] = [(root_doc_uri, 0)]
+        visited_doc_ids: set[str] = set()
+
+        MIME_DIR = "vnd.android.document/directory"
+
+        while queue:
+            curr_doc_uri, depth = queue.pop(0)
+            if depth > max_depth:
+                continue
+
+            curr_doc_id = DocumentsContract.getDocumentId(curr_doc_uri)
+            curr_doc_id_str = str(curr_doc_id)
+            if curr_doc_id_str in visited_doc_ids:
+                continue
+            visited_doc_ids.add(curr_doc_id_str)
+
+            children_uri = DocumentsContract.buildChildDocumentsUriUsingTree(parsed_tree, curr_doc_id)
+            cursor = None
+            try:
+                cursor = cr.query(children_uri, None, None, None, None)
+                if cursor is None:
+                    continue
+
+                id_idx = cursor.getColumnIndex("document_id")
+                name_idx = cursor.getColumnIndex("_display_name")
+                mime_idx = cursor.getColumnIndex("mime_type")
+                size_idx = cursor.getColumnIndex("_size")
+                mtime_idx = cursor.getColumnIndex("last_modified")
+
+                while cursor.moveToNext():
+                    c_id = cursor.getString(id_idx) if id_idx >= 0 else ""
+                    if not c_id:
+                        continue
+                    c_name = cursor.getString(name_idx) if name_idx >= 0 else ""
+                    c_mime = cursor.getString(mime_idx) if mime_idx >= 0 else ""
+                    c_size = cursor.getLong(size_idx) if size_idx >= 0 else 0
+                    c_mtime = float(cursor.getLong(mtime_idx) / 1000.0) if mtime_idx >= 0 else 0.0
+
+                    c_name_lower = c_name.lower()
+                    if c_name.startswith(".") or c_name_lower in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter", "lost.dir", ".android"):
+                        continue
+
+                    child_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, c_id)
+
+                    if c_mime == MIME_DIR:
+                        queue.append((child_doc_uri, depth + 1))
+                    else:
+                        ext = Path(c_name).suffix.lower()
+                        is_img = (ext in IMAGE_EXTENSIONS) or (c_mime and "image" in c_mime)
+                        is_vid = (ext in VIDEO_EXTENSIONS) or (c_mime and "video" in c_mime)
+                        if is_img or is_vid:
+                            doc_uri_str = str(child_doc_uri.toString())
+                            found_items.append(
+                                MediaItem(
+                                    id=doc_uri_str,
+                                    source_type="saf_document",
+                                    path="",
+                                    uri=doc_uri_str,
+                                    display_name=c_name,
+                                    mime_type=c_mime or ("video/mp4" if is_vid else "image/jpeg"),
+                                    size_bytes=c_size,
+                                    date_modified=c_mtime,
+                                    storage_id="sdcard",
+                                )
+                            )
+            except Exception as e_q:
+                logger.debug("خطأ أثناء استعلام فرع SAF %s: %s", curr_doc_id_str, e_q)
+            finally:
+                if cursor is not None:
+                    try:
+                        cursor.close()
+                    except Exception:
+                        pass
+
+    except Exception as e:
+        logger.error("فشل الفحص الشجري لـ SAF Tree URI %s: %s", tree_uri, e)
+
+    return found_items
+
+
 # =========================================================================
 # دوال النسخ والنقل الموحدة (Unified Stream Transfer Layer)
 # =========================================================================
@@ -844,6 +1136,7 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filen
     """
     نسخ ملف محلي إلى بطاقة SD عبر Storage Access Framework و DocumentFile/DocumentsContract.
     العائد: Document URI للملف المنشأ في الوجهة كـ string، أو فارغ عند الفشل.
+    حذف الملف الجزئي التالف فوراً في finally عند أي فشل أو عدم تطابق في الحجم.
     """
     if not src_file.exists():
         return ""
@@ -858,85 +1151,109 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filen
         ok = copy_path_to_path(src_file, dest_file)
         return f"mock_doc://{dest_file}" if ok else ""
 
-    try:
-        if _get_platform() == "android":
-            from android import mActivity
-            from jnius import autoclass
-            Uri = autoclass("android.net.Uri")
-            cr = mActivity.getContentResolver()
-
-            cat_doc_uri_str = saf_find_or_create_directory(saf_tree_uri, category)
-            if not cat_doc_uri_str:
-                logger.error("تعذر تهيئة مجلد التصنيف في SAF للوجهة!")
-                return ""
-
-            parsed_cat_uri = Uri.parse(cat_doc_uri_str)
-
-            # تخمين نوع الوسائط
-            ext = src_file.suffix.lower()
-            mime = "image/jpeg"
-            if ext in VIDEO_EXTENSIONS:
-                mime = "video/mp4"
-
-            # إنشاء الملف
-            new_file_uri = None
-            DocFileClass = _saf_get_document_file_class()
-            if DocFileClass is not None:
-                cat_doc = DocFileClass.fromTreeUri(mActivity, parsed_cat_uri)
-                if cat_doc:
-                    # تفادي التكرار
-                    existing = cat_doc.findFile(filename)
-                    if existing and existing.exists():
-                        if existing.length() == src_size:
-                            return str(existing.getUri().toString())
-                    new_doc = cat_doc.createFile(mime, filename)
-                    if new_doc:
-                        new_file_uri = new_doc.getUri()
-
-            if new_file_uri is None:
-                DocumentsContract = autoclass("android.provider.DocumentsContract")
-                new_file_uri = DocumentsContract.createDocument(cr, parsed_cat_uri, mime, filename)
-
-            if not new_file_uri:
-                logger.error("فشل إنشاء ملف الوجهة في SAF!")
-                return ""
-
-            out_stream = cr.openOutputStream(new_file_uri)
-            if not out_stream:
-                logger.error("تعذر فتح دفق الكتابة لملف SAF!")
-                return ""
-
-            total_written = 0
-            with open(src_file, "rb") as in_f:
-                buf = bytearray(64 * 1024)
-                while True:
-                    chunk = in_f.read(len(buf))
-                    if not chunk:
-                        break
-                    out_stream.write(chunk)
-                    total_written += len(chunk)
-
-            out_stream.close()
-
-            # التحقق الصارم من الحجم
-            if total_written != src_size:
-                logger.error("عدم تطابق الحجم أثناء النسخ إلى SAF: كتب %d من %d", total_written, src_size)
-                delete_media_item(str(new_file_uri.toString()))
-                return ""
-
-            return str(new_file_uri.toString())
+    if _get_platform() != "android":
         return ""
+
+    created_uri_str = ""
+    is_success = False
+    out_stream = None
+
+    try:
+        from android import mActivity
+        from jnius import autoclass
+        Uri = autoclass("android.net.Uri")
+        cr = mActivity.getContentResolver()
+
+        cat_doc_uri_str = saf_find_or_create_directory(saf_tree_uri, category)
+        if not cat_doc_uri_str:
+            logger.error("تعذر تهيئة مجلد التصنيف في SAF للوجهة!")
+            return ""
+
+        parsed_cat_uri = Uri.parse(cat_doc_uri_str)
+
+        # تخمين نوع الوسائط
+        ext = src_file.suffix.lower()
+        mime = "video/mp4" if ext in VIDEO_EXTENSIONS else "image/jpeg"
+
+        # إنشاء الملف
+        new_file_uri = None
+        DocFileClass = _saf_get_document_file_class()
+        if DocFileClass is not None:
+            cat_doc = DocFileClass.fromTreeUri(mActivity, parsed_cat_uri)
+            if cat_doc:
+                existing = cat_doc.findFile(filename)
+                if existing and existing.exists():
+                    if existing.length() == src_size:
+                        return str(existing.getUri().toString())
+                new_doc = cat_doc.createFile(mime, filename)
+                if new_doc:
+                    new_file_uri = new_doc.getUri()
+
+        if new_file_uri is None:
+            DocumentsContract = autoclass("android.provider.DocumentsContract")
+            new_file_uri = DocumentsContract.createDocument(cr, parsed_cat_uri, mime, filename)
+
+        if not new_file_uri:
+            logger.error("فشل إنشاء ملف الوجهة في SAF!")
+            return ""
+
+        created_uri_str = str(new_file_uri.toString())
+
+        out_stream = cr.openOutputStream(new_file_uri)
+        if not out_stream:
+            logger.error("تعذر فتح دفق الكتابة لملف SAF!")
+            return ""
+
+        total_written = 0
+        with open(src_file, "rb") as in_f:
+            buf = bytearray(64 * 1024)
+            while True:
+                chunk = in_f.read(len(buf))
+                if not chunk:
+                    break
+                out_stream.write(chunk)
+                total_written += len(chunk)
+
+        try:
+            out_stream.close()
+        except Exception:
+            pass
+        out_stream = None
+
+        if total_written != src_size:
+            logger.error("عدم تطابق البايتات المكتوبة إلى SAF: كتب %d من %d", total_written, src_size)
+            return ""
+
+        # استعلام الحجم النهائي الفعلي بعد إغلاق OutputStream من نظام الملفات
+        final_size = get_uri_file_size(created_uri_str)
+        if final_size != src_size:
+            logger.error("عدم تطابق الحجم النهائي لملف SAF: المتوقع %d، الفعلي %d", src_size, final_size)
+            return ""
+
+        is_success = True
+        return created_uri_str
+
     except Exception as e:
         logger.error("فشل نسخ الملف إلى SAF: %s", e, exc_info=True)
         return ""
+    finally:
+        if out_stream is not None:
+            try:
+                out_stream.close()
+            except Exception:
+                pass
+        # حذف الملف الجزئي أو التالف فوراً عند أي فشل
+        if not is_success and created_uri_str:
+            logger.warning("تنظيف وحذف ملف SAF غير المكتمل: %s", created_uri_str)
+            delete_media_item(created_uri_str)
 
 
 def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, filename: str, expected_size: int = 0) -> str:
     """
     نسخ ملف من Content URI (MediaStore) مباشرة إلى Document URI في بطاقة SD عبر SAF.
     التحقق الصارم من دفق البيانات وتطابق الحجم بالبايت.
+    حذف الملف الجزئي التالف فوراً في finally عند أي فشل أو عدم تطابق في الحجم.
     """
-    # بيئة المحاكاة
     if saf_tree_uri.startswith("mock_saf://"):
         cat_uri = saf_find_or_create_directory(saf_tree_uri, category)
         dest_dir = Path(cat_uri.replace("mock_doc://", ""))
@@ -944,74 +1261,107 @@ def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, 
         ok = copy_uri_to_path(src_content_uri, dest_file)
         return f"mock_doc://{dest_file}" if ok else ""
 
-    try:
-        if _get_platform() == "android":
-            from android import mActivity
-            from jnius import autoclass
-            Uri = autoclass("android.net.Uri")
-            cr = mActivity.getContentResolver()
-
-            cat_doc_uri_str = saf_find_or_create_directory(saf_tree_uri, category)
-            if not cat_doc_uri_str:
-                return ""
-
-            parsed_cat_uri = Uri.parse(cat_doc_uri_str)
-            src_parsed = Uri.parse(src_content_uri)
-
-            in_stream = cr.openInputStream(src_parsed)
-            if not in_stream:
-                logger.error("تعذر فتح دفق المصدر للـ URI: %s", src_content_uri)
-                return ""
-
-            ext = Path(filename).suffix.lower()
-            mime = "image/jpeg"
-            if ext in VIDEO_EXTENSIONS:
-                mime = "video/mp4"
-
-            DocFileClass = _saf_get_document_file_class()
-            new_file_uri = None
-            if DocFileClass is not None:
-                cat_doc = DocFileClass.fromTreeUri(mActivity, parsed_cat_uri)
-                if cat_doc:
-                    new_doc = cat_doc.createFile(mime, filename)
-                    if new_doc:
-                        new_file_uri = new_doc.getUri()
-
-            if new_file_uri is None:
-                DocumentsContract = autoclass("android.provider.DocumentsContract")
-                new_file_uri = DocumentsContract.createDocument(cr, parsed_cat_uri, mime, filename)
-
-            if not new_file_uri:
-                in_stream.close()
-                return ""
-
-            out_stream = cr.openOutputStream(new_file_uri)
-            if not out_stream:
-                in_stream.close()
-                return ""
-
-            total_written = 0
-            buf = bytearray(64 * 1024)
-            while True:
-                read_bytes = in_stream.read(buf)
-                if read_bytes == -1 or read_bytes == 0:
-                    break
-                out_stream.write(buf[:read_bytes])
-                total_written += read_bytes
-
-            in_stream.close()
-            out_stream.close()
-
-            if expected_size > 0 and total_written != expected_size:
-                logger.error("عدم تطابق الحجم عند نسخ URI إلى SAF: كتب %d من %d", total_written, expected_size)
-                delete_media_item(str(new_file_uri.toString()))
-                return ""
-
-            return str(new_file_uri.toString())
+    if _get_platform() != "android":
         return ""
+
+    created_uri_str = ""
+    is_success = False
+    in_stream = None
+    out_stream = None
+
+    try:
+        from android import mActivity
+        from jnius import autoclass
+        Uri = autoclass("android.net.Uri")
+        cr = mActivity.getContentResolver()
+
+        cat_doc_uri_str = saf_find_or_create_directory(saf_tree_uri, category)
+        if not cat_doc_uri_str:
+            return ""
+
+        parsed_cat_uri = Uri.parse(cat_doc_uri_str)
+        src_parsed = Uri.parse(src_content_uri)
+
+        in_stream = cr.openInputStream(src_parsed)
+        if not in_stream:
+            logger.error("تعذر فتح دفق المصدر للـ URI: %s", src_content_uri)
+            return ""
+
+        ext = Path(filename).suffix.lower()
+        mime = "video/mp4" if ext in VIDEO_EXTENSIONS else "image/jpeg"
+
+        DocFileClass = _saf_get_document_file_class()
+        new_file_uri = None
+        if DocFileClass is not None:
+            cat_doc = DocFileClass.fromTreeUri(mActivity, parsed_cat_uri)
+            if cat_doc:
+                new_doc = cat_doc.createFile(mime, filename)
+                if new_doc:
+                    new_file_uri = new_doc.getUri()
+
+        if new_file_uri is None:
+            DocumentsContract = autoclass("android.provider.DocumentsContract")
+            new_file_uri = DocumentsContract.createDocument(cr, parsed_cat_uri, mime, filename)
+
+        if not new_file_uri:
+            return ""
+
+        created_uri_str = str(new_file_uri.toString())
+
+        out_stream = cr.openOutputStream(new_file_uri)
+        if not out_stream:
+            return ""
+
+        total_written = 0
+        buf = bytearray(64 * 1024)
+        while True:
+            read_bytes = in_stream.read(buf)
+            if read_bytes == -1 or read_bytes == 0:
+                break
+            out_stream.write(buf[:read_bytes])
+            total_written += read_bytes
+
+        try:
+            in_stream.close()
+        except Exception:
+            pass
+        in_stream = None
+
+        try:
+            out_stream.close()
+        except Exception:
+            pass
+        out_stream = None
+
+        if expected_size > 0 and total_written != expected_size:
+            logger.error("عدم تطابق الحجم عند نسخ URI إلى SAF: كتب %d من %d", total_written, expected_size)
+            return ""
+
+        final_size = get_uri_file_size(created_uri_str)
+        if expected_size > 0 and final_size != expected_size:
+            logger.error("عدم تطابق الحجم النهائي لملف SAF: المتوقع %d، الفعلي %d", expected_size, final_size)
+            return ""
+
+        is_success = True
+        return created_uri_str
+
     except Exception as e:
         logger.error("فشل نسخ Content URI إلى SAF: %s", e, exc_info=True)
         return ""
+    finally:
+        if in_stream is not None:
+            try:
+                in_stream.close()
+            except Exception:
+                pass
+        if out_stream is not None:
+            try:
+                out_stream.close()
+            except Exception:
+                pass
+        if not is_success and created_uri_str:
+            logger.warning("تنظيف وحذف ملف SAF غير المكتمل: %s", created_uri_str)
+            delete_media_item(created_uri_str)
 
 
 def delete_media_item(item: MediaItem | Path | str) -> bool:
@@ -1019,7 +1369,7 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
     حذف الملف المصدر أو وجهة تراجع بأمان:
     - يتعامل مع المسارات الفيزيائية (Path).
     - يتعامل مع Document URIs عبر DocumentsContract.
-    - يتعامل مع MediaStore Content URIs ويحمي من RecoverableSecurityException في أندرويد الحديث.
+    - يتعامل مع MediaStore Content URIs ويحمي من RecoverableSecurityException في أندرويد الحديث مع طلب إذن المستخدم.
     - إذا فشل الحذف، يعيد False دون التسبب في Crash.
     """
     try:
@@ -1076,6 +1426,17 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
                     err_name = type(sec_e).__name__
                     if "RecoverableSecurityException" in err_name or "RecoverableSecurityException" in str(sec_e):
                         logger.info("حذف MediaStore يتطلب إذن المستخدم عبر RecoverableSecurityException: %s", sec_e)
+                        try:
+                            # طلب تأكيد أندرويد لحذف الملف
+                            user_action = sec_e.getUserAction()
+                            intent_sender = user_action.getActionIntent().getIntentSender()
+                            RECOVERABLE_REQUEST_CODE = 4202
+                            mActivity.startIntentSenderForResult(
+                                intent_sender, RECOVERABLE_REQUEST_CODE, None, 0, 0, 0
+                            )
+                            logger.info("تم إطلاق نافذة تأكيد حذف أندرويد الرسمية (Request Code: %d)", RECOVERABLE_REQUEST_CODE)
+                        except Exception as act_e:
+                            logger.debug("تعذر إطلاق intent sender لـ RecoverableSecurityException: %s", act_e)
                     else:
                         logger.warning("فشل حذف Content URI: %s (%s)", item_str, sec_e)
                     return False
@@ -1091,3 +1452,4 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
     except Exception as e:
         logger.warning("استثناء أثناء حذف العنصر %s: %s", item, e)
         return False
+

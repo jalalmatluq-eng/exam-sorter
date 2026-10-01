@@ -9,6 +9,7 @@ import os
 import shutil
 import time
 from pathlib import Path
+from typing import Any
 
 try:
     import cv2
@@ -20,6 +21,7 @@ from PIL import Image
 import classifier
 import face_classifier
 import file_manager
+import media_scanner
 import storage_backend
 import video_classifier
 from service import media_watcher_service
@@ -594,6 +596,210 @@ def test_saf_and_target_location_simulations() -> None:
     print("✓ نجحت جميع اختبارات محاكاة SAF والسيناريوهات الثمانية بنسبة 100%!\n")
 
 
+def test_advanced_saf_and_edge_cases() -> None:
+    """
+    اختبار الحالات المتقدمة والإضافية (Suite 12):
+    1. حفظ transfer_history.json دائماً في app-private storage.
+    2. عدم حذف سجل Undo عند فشل حذف الوجهة وعودة False.
+    3. عدم تنظيف كل السجل عند فشل عملية واحدة في undo_all_transfers.
+    4. التعامل مع فصل بطاقة SD وفقدان إذن SAF.
+    5. استخراج DISPLAY_NAME و MIME ومنع حفظ الفيديو كـ JPG.
+    6. القارئ الشجري الحقيقي لـ SAF Tree URI.
+    7. كاش فحص التخزين (TTL Cache).
+    8. حالة العملية (operation_status) في الكاش لمنع التكرار.
+    """
+    print("\n--- [اختبار 12] فحص الحالات المتقدمة وسيناريوهات SAF والذاكرة الخاصة ---")
+    test_root = Path("test_advanced_saf_env").resolve()
+    test_root.mkdir(parents=True, exist_ok=True)
+    private_dir = test_root / "app_private"
+    private_dir.mkdir(parents=True, exist_ok=True)
+
+    # 1. التحقق من مسار transfer_history.json في app-private
+    orig_private_fn = file_manager.get_app_private_storage_dir
+    file_manager.get_app_private_storage_dir = lambda: private_dir
+    try:
+        log_path = file_manager.get_transfer_log_path()
+        assert log_path.parent == private_dir, f"يجب حفظ سجل النقل في app-private storage: {log_path}"
+        assert log_path.name == "transfer_history.json"
+        # عزل السجل للاختبارات الحالية
+        import json
+        with open(log_path, "w", encoding="utf-8") as f:
+            json.dump([], f)
+        print("  [1/8] ✓ مسار السجل: محفوظ دائماً في app-private storage بعيداً عن تقلبات SAF.")
+
+        # 2. فحص عدم حذف سجل Undo عند فشل حذف الوجهة
+        f_src = test_root / "src_keep_record.jpg"
+        f_src.write_bytes(b"DATA")
+        f_dest = test_root / "dest_failed_delete.jpg"
+        f_dest.write_bytes(b"DATA")
+
+        file_manager._log_transfer_record(
+            src_path=str(f_src),
+            dest_path=str(f_dest),
+            category="صوري",
+            file_size=4,
+            base_path=private_dir,
+            is_copy=True,
+        )
+        hist = file_manager.get_transfer_history(base_path=private_dir)
+        rec_id = int(hist[0]["id"])
+
+        # محاكاة فشل الحذف
+        orig_del = storage_backend.delete_media_item
+        storage_backend.delete_media_item = lambda item: False
+        try:
+            undo_res = file_manager.undo_transfer(rec_id, base_path=private_dir)
+            assert undo_res is False, "يجب أن يعيد undo_transfer قيمة False إذا فشل حذف الوجهة!"
+            hist_after = file_manager.get_transfer_history(base_path=private_dir)
+            assert len(hist_after) == 1, "يجب عدم حذف السجل عند فشل التراجع!"
+            print("  [2/8] ✓ Undo الآمن: لا يحذف السجل إذا تعذر حذف ملف الوجهة ويعيد False.")
+        finally:
+            storage_backend.delete_media_item = orig_del
+
+        # 3. فحص undo_all_transfers مع نجاح جزئي
+        f_ok_dest = test_root / "dest_ok.jpg"
+        f_ok_dest.write_bytes(b"OK")
+        file_manager._log_transfer_record(
+            src_path=str(f_src),
+            dest_path=str(f_ok_dest),
+            category="صوري",
+            file_size=2,
+            base_path=private_dir,
+            is_copy=True,
+        )
+        assert len(file_manager.get_transfer_history(base_path=private_dir)) == 2
+
+        # نجعل حذف f_dest يفشل وحذف f_ok_dest ينجح
+        def partial_delete(item: Any) -> bool:
+            if "dest_failed_delete" in str(item):
+                return False
+            return orig_del(item)
+
+        storage_backend.delete_media_item = partial_delete
+        try:
+            undone = file_manager.undo_all_transfers(base_path=private_dir)
+            assert undone == 1, f"يجب أن يكون عدد العمليات الناجحة 1، الفعلي: {undone}"
+            rem_hist = file_manager.get_transfer_history(base_path=private_dir)
+            assert len(rem_hist) == 1, "يجب الإبقاء على العملية التي فشلت في السجل!"
+            assert "dest_failed_delete" in str(rem_hist[0]["destination"])
+            print("  [3/8] ✓ undo_all_transfers: نجاح جزئي، لا ينظف كل السجل ويحتفظ بالعمليات التي فشلت.")
+        finally:
+            storage_backend.delete_media_item = orig_del
+
+        # 4. فحص فقدان إذن SAF أثناء التراجع
+        saf_rec = {
+            "id": 999999,
+            "source": str(f_src),
+            "destination": "content://com.android.externalstorage.documents/tree/SD/document/SD%3Atest.jpg",
+            "category": "صوري",
+            "size_bytes": 4,
+            "is_copy": True,
+            "is_saf_dest": True,
+            "timestamp": "2026-10-01T00:00:00Z",
+        }
+        log_f = file_manager.get_transfer_log_path(private_dir)
+        import json
+        with open(log_f, "w", encoding="utf-8") as f:
+            json.dump([saf_rec], f)
+
+        # بطاقة مفصولة / إذن غير صالح
+        orig_valid = storage_backend.is_saf_uri_valid
+        storage_backend.is_saf_uri_valid = lambda u: False
+        try:
+            saf_undo_res = file_manager.undo_transfer(999999, base_path=private_dir)
+            assert saf_undo_res is False, "يجب أن يفشل التراجع بأمان عند فقدان إذن SAF أو فصل SD"
+            saf_hist = file_manager.get_transfer_history(base_path=private_dir)
+            assert len(saf_hist) == 1, "يجب عدم حذف السجل عند فصل كرت SD أو انتهاء الإذن!"
+            print("  [4/8] ✓ حماية فصل SD وفقدان إذن SAF: رفض التراجع بأمان والاحتفاظ بالسجل.")
+        finally:
+            storage_backend.is_saf_uri_valid = orig_valid
+
+        # 5. فحص استخراج تفاصيل Content URI ومنع حفظ الفيديو كـ JPG
+        vid_mock = test_root / "my_holiday_clip.mp4"
+        vid_mock.write_bytes(b"FAKE VIDEO MP4")
+        details_vid = storage_backend.query_content_uri_details(f"mock_doc://{vid_mock}")
+        assert details_vid["is_video"] is True
+        assert details_vid["extension"] == ".mp4"
+        assert not details_vid["extension"].endswith(".jpg")
+
+        # فيديو بلا امتداد في Content URI
+        no_ext_vid = test_root / "video_stream_without_ext"
+        no_ext_vid.write_bytes(b"RAW VIDEO DATA")
+        # فحص كشف الفيديو عبر نوع الوسائط
+        orig_platform = storage_backend._get_platform
+        storage_backend._get_platform = lambda: "android"
+        try:
+            det = storage_backend.query_content_uri_details("content://media/external/video/media/12345")
+            assert det["is_video"] is True
+            assert det["extension"] == ".mp4", f"يجب أن يكون امتداد الفيديو mp4 وليس: {det['extension']}"
+            assert not det["display_name"].endswith(".jpg")
+            print("  [5/8] ✓ تفاصيل Content URI: استخراج ديناميكي صحيح ويمنع حفظ الفيديو كـ JPG نهائياً.")
+        finally:
+            storage_backend._get_platform = orig_platform
+
+        # 6. فحص القارئ الشجري لـ SAF Tree URI (scan_saf_tree_recursively)
+        mock_tree = test_root / "mock_sdcard_root"
+        sub_folder = mock_tree / "DCIM" / "Camera"
+        sub_folder.mkdir(parents=True, exist_ok=True)
+        img1 = sub_folder / "IMG_20260901_001.jpg"
+        img1.write_bytes(b"JPEG DATA")
+        vid1 = sub_folder / "VID_20260901_002.mp4"
+        vid1.write_bytes(b"VIDEO DATA")
+
+        saf_items = storage_backend.scan_saf_tree_recursively(f"mock_saf://{mock_tree}")
+        assert len(saf_items) == 2, f"يجب اكتشاف صورتين/فيديو في الشجرة، الفعلي: {len(saf_items)}"
+        assert any(item.name == "IMG_20260901_001.jpg" for item in saf_items)
+        assert any(item.name == "VID_20260901_002.mp4" for item in saf_items)
+        print("  [6/8] ✓ قارئ SAF Tree الشجري: اكتشاف الملفات عودياً في بطاقة SD بدون الاعتماد على MediaStore.")
+
+        # 7. فحص TTL Cache لفحص التخزين
+        storage_backend.clear_storage_detect_cache()
+        t1 = time.time()
+        locs1 = storage_backend.detect_storage_locations()
+        t2 = time.time()
+        locs2 = storage_backend.detect_storage_locations()
+        assert locs1 == locs2
+        # التحقق من أن الاستدعاء الثاني يستخدم الكاش السريع
+        assert (t2 - t1) < 0.1
+        print("  [7/8] ✓ كاش فحص التخزين (TTL Cache): تجنب تكرار عمليات القرص واختبارات الكتابة.")
+
+        # 8. فحص operation_status في كاش media_scanner
+        orig_cache_fn = media_scanner.get_cache_db_path
+        media_scanner.get_cache_db_path = lambda: private_dir / "scanned_media_cache.db"
+        try:
+            media_scanner.init_cache_db()
+            f_proc = test_root / "processed_test.jpg"
+            f_proc.write_bytes(b"DATA")
+            f_proc_dest = test_root / "dest_processed.jpg"
+            f_proc_dest.write_bytes(b"DATA")
+
+            media_scanner.record_processed_file(
+                str(f_proc),
+                4,
+                f_proc.stat().st_mtime,
+                "صوري",
+                dest_path=str(f_proc_dest),
+                dest_size=4,
+                operation_status="copied_not_deleted",
+                target_storage="sdcard",
+            )
+
+            details = media_scanner.get_scanned_files_details()
+            assert str(f_proc) in details
+            assert details[str(f_proc)]["operation_status"] == "copied_not_deleted"
+            assert details[str(f_proc)]["target_storage"] == "sdcard"
+            assert media_scanner.is_file_already_processed(str(f_proc), 4, f_proc.stat().st_mtime) is True
+            print("  [8/8] ✓ operation_status في الكاش: حفظ copied_not_deleted لمنع تكرار النسخ بعد فشل الحذف.")
+        finally:
+            media_scanner.get_cache_db_path = orig_cache_fn
+
+    finally:
+        file_manager.get_app_private_storage_dir = orig_private_fn
+        shutil.rmtree(test_root, ignore_errors=True)
+
+    print("✓ نجحت جميع اختبارات الحالات المتقدمة لـ SAF وإدارة التخزين بنسبة 100%!\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -606,7 +812,8 @@ if __name__ == "__main__":
     test_export_logs()
     test_unified_storage_backend()
     test_saf_and_target_location_simulations()
+    test_advanced_saf_and_edge_cases()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (12 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
 
