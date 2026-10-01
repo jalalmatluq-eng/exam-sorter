@@ -100,15 +100,11 @@ def record_cloud_api_failure() -> None:
 
 def is_offline_ocr_runtime_available() -> bool:
     """
-    فحص حقيقي وصارم لمدى توفر محرك Tesseract والملفات اللغوية في البيئة الفعلية.
-    لا يدعي توفر الـ OCR إلا إذا كان محرك التشغيل موجوداً ومثبتاً بالفعل.
+    فحص حقيقي وصارم لمدى توفر محرك OCR والملفات اللغوية في البيئة الفعلية.
     """
     try:
-        import importlib
-        import shutil
-        _ = importlib.import_module("pytesseract")
-        tess_bin = shutil.which("tesseract")
-        return bool(tess_bin)
+        import offline_ocr
+        return offline_ocr.is_offline_ocr_available()
     except Exception:
         return False
 
@@ -216,30 +212,29 @@ def classify_media_offline(
 
     p_str = str(file_path)
 
-    # 2. الطبقة الثانية: للصور (الرؤية الحاسوبية الخفيفة)
+    # 2. الطبقة الثانية: للصور (الرؤية الحاسوبية + OCR عربي أوفلاين + تعرف الوجوه)
     if is_image and not is_video:
         try:
             import media_scanner
-            # التحقق مما إذا كانت الصورة ورقة مستند / اختبار
+            # أ) التحقق مما إذا كانت الصورة ورقة مستند / اختبار
             if media_scanner.is_visual_document_or_paper(p_str):
-                # فحص OCR إن كان متوفراً ومثبتاً فعلياً داخل النظام
-                if is_offline_ocr_runtime_available():
-                    try:
-                        import classifier
-                        subj = classifier.classify_with_local_ocr(p_str)
-                        if subj and subj.strip():
-                            clean_subj = subj.strip()
+                # فحص OCR العربي الأوفلاين الحقيقي
+                try:
+                    import offline_ocr
+                    if offline_ocr.is_offline_ocr_available():
+                        ocr_res = offline_ocr.extract_arabic_text_offline(p_str)
+                        if ocr_res.available and ocr_res.subject:
                             res = {
-                                "category": f"{CATEGORY_EXAMS_ROOT}/{clean_subj}",
-                                "confidence": 0.85,
-                                "details": f"ورقة اختبار مادة: {clean_subj} (عبر OCR المحلي)",
-                                "needs_review": False,
-                                "method": "local_ocr",
+                                "category": f"{CATEGORY_EXAMS_ROOT}/{ocr_res.subject}",
+                                "confidence": ocr_res.confidence,
+                                "details": f"ورقة اختبار مادة: {ocr_res.subject} (عبر OCR العربي الأوفلاين)",
+                                "needs_review": ocr_res.needs_review,
+                                "method": "offline_arabic_ocr",
                             }
                             _CLASSIFICATION_CACHE[cache_key] = res
                             return res
-                    except Exception as e_ocr:
-                        logger.debug("تجاوز تشغيل OCR المحلي: %s", e_ocr)
+                except Exception as e_ocr:
+                    logger.debug("تجاوز تشغيل OCR العربي الأوفلاين: %s", e_ocr)
 
                 res = {
                     "category": (by_name["category"] if by_name else CATEGORY_EXAMS_GENERAL),
@@ -253,49 +248,59 @@ def classify_media_offline(
         except Exception as e_cv:
             logger.debug("تجاوز فحص الرؤية الحاسوبية للورقة: %s", e_cv)
 
-        # فحص الكشف التقريبي للوجوه (بدون ادعاء نموذج AI عميق غير موجود)
+        # ب) فحص التعرف على الوجوه الأوفلاين الحقيقي
         try:
-            import face_classifier
-            match_res = face_classifier.detect_and_match_face(p_str)
-            if match_res == "me":
+            import offline_face_recognizer
+            face_res = offline_face_recognizer.classify_face_offline(p_str)
+            if face_res.status == "my_face":
                 res = {
                     "category": CATEGORY_MY_PHOTOS,
-                    "confidence": 0.65,
-                    "details": "كشف تقريبي: تطابق بصمة وجه صاحب الجهاز",
+                    "confidence": face_res.confidence or 0.88,
+                    "details": "مطابقة بصمة وجه صاحب الجهاز (نموذج محلي أوفلاين)",
                     "needs_review": False,
-                    "method": "approximate_face_detection",
+                    "method": "offline_face_recognition",
                 }
                 _CLASSIFICATION_CACHE[cache_key] = res
                 return res
-            elif match_res == "other":
+            elif face_res.status == "other_face":
                 res = {
                     "category": CATEGORY_FRIENDS_PHOTOS,
-                    "confidence": 0.60,
-                    "details": "كشف تقريبي: اكتشاف وجوه أخرى (أصدقاء / عائلة)",
+                    "confidence": face_res.confidence or 0.78,
+                    "details": "اكتشاف وجوه أخرى (أصدقاء / عائلة)",
                     "needs_review": False,
-                    "method": "approximate_face_detection",
+                    "method": "offline_face_recognition",
+                }
+                _CLASSIFICATION_CACHE[cache_key] = res
+                return res
+            elif face_res.status in ("uncertain", "multiple_faces"):
+                res = {
+                    "category": "يحتاج مراجعة",
+                    "confidence": face_res.confidence or 0.50,
+                    "details": f"وجه غير مؤكد أو وجوه متعددة ({face_res.status})",
+                    "needs_review": True,
+                    "method": "offline_face_recognition",
                 }
                 _CLASSIFICATION_CACHE[cache_key] = res
                 return res
         except Exception as e_face:
-            logger.debug("تجاوز كشف الوجوه: %s", e_face)
+            logger.debug("تجاوز كشف الوجوه الأوفلاين: %s", e_face)
 
-    # 3. الطبقة الثالثة: للفيديوهات
+    # 3. الطبقة الثالثة: للفيديوهات (تحليل بصري 5 إطارات أوفلاين حقيقي)
     if is_video:
         try:
-            import video_classifier
-            v_cat = video_classifier.classify_video(p_str, api_key=None)
+            import offline_video_classifier
+            v_res = offline_video_classifier.classify_video_offline(p_str)
             res = {
-                "category": v_cat,
-                "confidence": 0.70,
-                "details": f"تصنيف فيديو محلي: {v_cat}",
-                "needs_review": (v_cat == CATEGORY_UNCLASSIFIED),
-                "method": "video_local_rules",
+                "category": v_res.category,
+                "confidence": v_res.confidence,
+                "details": f"تصنيف بصري للفيديو: {v_res.category} (إطارات: {v_res.details.get('frames_sampled', 0)})",
+                "needs_review": (v_res.status == "needs_review" or v_res.category in (CATEGORY_UNCLASSIFIED, "يحتاج مراجعة")),
+                "method": "offline_video_temporal_vision",
             }
             _CLASSIFICATION_CACHE[cache_key] = res
             return res
         except Exception as e_vid:
-            logger.debug("تجاوز تصنيف الفيديو المحلي: %s", e_vid)
+            logger.debug("تجاوز تحليل الفيديو البصري الأوفلاين: %s", e_vid)
 
     # النتيجة الافتراضية الآمنة
     default_res = by_name or {

@@ -168,7 +168,7 @@
                 # ──────────────────────────────────────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(180)
+                    adaptive_height: True
                     radius: [24, 24, 24, 24]
                     padding: dp(14)
                     elevation: 0
@@ -207,7 +207,8 @@
                         shorten_from: "left"
                         halign: "right"
                         size_hint_y: None
-                        height: dp(20)
+                        adaptive_height: True
+                        text_size: self.width, None
                         theme_text_color: "Custom"
                         text_color: 0.35, 0.45, 0.60, 1
 
@@ -310,14 +311,14 @@
                 MDCard:
                     id: permission_card
                     size_hint_y: None
-                    height: dp(130)
+                    adaptive_height: True
                     radius: [24, 24, 24, 24]
                     padding: dp(14)
                     elevation: 0
                     theme_bg_color: "Custom"
                     md_bg_color: 1.0, 1.0, 1.0, 0.98
                     orientation: "vertical"
-                    spacing: dp(6)
+                    spacing: dp(8)
 
                     MDBoxLayout:
                         orientation: "horizontal"
@@ -348,7 +349,8 @@
                         font_size: "11sp"
                         halign: "right"
                         size_hint_y: None
-                        height: dp(20)
+                        adaptive_height: True
+                        text_size: self.width, None
                         theme_text_color: "Custom"
                         text_color: 0.35, 0.45, 0.60, 1
 
@@ -783,13 +785,197 @@
                                 font_size: "10sp"
 
                 # ──────────────────────────────────────────────
+                # بطاقة قدرات الذكاء الاصطناعي الأوفلاين
+                # ──────────────────────────────────────────────
+                MDCard:
+                    size_hint_y: None
+                    adaptive_height: True
+                    radius: [24, 24, 24, 24]
+                    padding: [dp(16), dp(14), dp(16), dp(14)]
+                    elevation: 0
+                    theme_bg_color: "Custom"
+                    md_bg_color: 1.0, 1.0, 1.0, 0.98
+                    orientation: "vertical"
+                    spacing: dp(8)
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        size_hint_y: None
+                        height: dp(28)
+                        spacing: dp(8)
+
+                        Widget:
+
+                        MDLabel:
+                            id: ai_card_title
+                            text: app.ar("قدرات ومحركات الذكاء الاصطناعي الأوفلاين")
+                            bold: True
+                            font_size: "13sp"
+                            halign: "right"
+                            valign: "middle"
+                            adaptive_width: True
+                            theme_text_color: "Custom"
+                            text_color: 0.08, 0.16, 0.34, 1
+
+                        MDIcon:
+                            icon: "brain"
+                            font_size: "24sp"
+                            size_hint: None, None
+                            size: dp(26), dp(26)
+                            pos_hint: {"center_y": 0.5}
+                            theme_icon_color: "Custom"
+                            icon_color: 0.50, 0.22, 0.85, 1
+
+                    MDLabel:
+                        id: ai_card_desc
+                        text: app.ar("جميع التحليلات والنماذج تعمل محلياً داخل جهازك 100% دون إنترنت.")
+                        font_size: "11sp"
+                        halign: "right"
+                        size_hint_y: None
+                        adaptive_height: True
+                        text_size: self.width, None
+                        theme_text_color: "Custom"
+                        text_color: 0.35, 0.45, 0.60, 1
+
+                    MDBoxLayout:
+                        orientation: "vertical"
+                        size_hint_y: None
+                        adaptive_height: True
+                        spacing: dp(4)
+
+                        MDBoxLayout:
+                            orientation: "horizontal"
+                            size_hint_y: None
+                            height: dp(22)
+
+                            MDLabel:
+                                id: ai_ocr_status_label
+                                text: app.ar("جاهز ومفعل ✓")
+                                font_size: "11sp"
+                                bold: True
+                                halign: "left"
+                                theme_text_color: "Custom"
+                                text_color: 0.063, 0.780, 0.549, 1
+
+                            MDLabel:
+                                text: app.ar("• التعرف الضوئي (OCR) عربي:")
+                                font_size: "11sp"
+                                halign: "right"
+                                theme_text_color: "Custom"
+                                text_color: 0.20, 0.30, 0.45, 1
+
+                        MDBoxLayout:
+                            orientation: "horizontal"
+                            size_hint_y: None
+                            height: dp(22)
+
+                            MDLabel:
+                                id: ai_face_status_label
+                                text: app.ar("جاهز ومدرّب ✓")
+                                font_size: "11sp"
+                                bold: True
+                                halign: "left"
+                                theme_text_color: "Custom"
+                                text_color: 0.063, 0.780, 0.549, 1
+
+                            MDLabel:
+                                text: app.ar("• نموذج التعرف على الوجوه:")
+                                font_size: "11sp"
+                                halign: "right"
+                                theme_text_color: "Custom"
+                                text_color: 0.20, 0.30, 0.45, 1
+
+                        MDBoxLayout:
+                            orientation: "horizontal"
+                            size_hint_y: None
+                            height: dp(22)
+
+                            MDLabel:
+                                id: ai_video_status_label
+                                text: app.ar("جاهز (5 إطارات) ✓")
+                                font_size: "11sp"
+                                bold: True
+                                halign: "left"
+                                theme_text_color: "Custom"
+                                text_color: 0.063, 0.780, 0.549, 1
+
+                            MDLabel:
+                                text: app.ar("• مصنف الفيديو البصري:")
+                                font_size: "11sp"
+                                halign: "right"
+                                theme_text_color: "Custom"
+                                text_color: 0.20, 0.30, 0.45, 1
+
+                        MDBoxLayout:
+                            orientation: "horizontal"
+                            size_hint_y: None
+                            height: dp(22)
+
+                            MDLabel:
+                                id: ai_models_size_label
+                                text: app.ar("الحجم: 0.0 MB")
+                                font_size: "10sp"
+                                halign: "left"
+                                theme_text_color: "Custom"
+                                text_color: 0.45, 0.55, 0.70, 1
+
+                            MDLabel:
+                                text: app.ar("• وضع الفرز: أوفلاين فقط")
+                                font_size: "10sp"
+                                halign: "right"
+                                theme_text_color: "Custom"
+                                text_color: 0.45, 0.55, 0.70, 1
+
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(8)
+                        size_hint_y: None
+                        height: dp(38)
+
+                        MDButton:
+                            style: "filled"
+                            size_hint_x: 0.65
+                            radius: [14, 14, 14, 14]
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.50, 0.22, 0.85, 1
+                            on_release: root.check_ai_models_status()
+
+                            MDButtonIcon:
+                                icon: "shield-search"
+                                theme_icon_color: "Custom"
+                                icon_color: 1, 1, 1, 1
+
+                            MDButtonText:
+                                text: app.ar("فحص واختبار النماذج")
+                                bold: True
+                                font_size: "10sp"
+                                theme_text_color: "Custom"
+                                text_color: 1, 1, 1, 1
+
+                        MDButton:
+                            style: "outlined"
+                            size_hint_x: 0.35
+                            radius: [14, 14, 14, 14]
+                            theme_bg_color: "Custom"
+                            md_bg_color: 0.94, 0.92, 1.0, 0.95
+                            on_release: root.clear_ai_cache()
+
+                            MDButtonText:
+                                text: app.ar("مسح الكاش")
+                                bold: True
+                                font_size: "10sp"
+                                theme_text_color: "Custom"
+                                text_color: 0.50, 0.22, 0.85, 1
+
+                # ──────────────────────────────────────────────
                 # 8. بصمة الوجه
                 # ──────────────────────────────────────────────
                 MDCard:
                     size_hint_y: None
-                    height: dp(116)
+                    adaptive_height: True
                     radius: [24, 24, 24, 24]
                     padding: [dp(16), dp(12), dp(16), dp(12)]
+
                     elevation: 0
                     theme_bg_color: "Custom"
                     md_bg_color: 1.0, 1.0, 1.0, 0.98

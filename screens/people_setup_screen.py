@@ -197,15 +197,29 @@ class PeopleSetupScreen(Screen):
             self.ids.samples_grid.add_widget(card)
 
     def train_and_save(self) -> None:
-        """تدريب وحفظ بصمة الوجه المرجعية مع العتبة المحددة"""
-        if len(self.selected_paths) < 1:
+        """تدريب وحفظ بصمة الوجه المرجعية مع العتبة المحددة (3 - 5 صور)"""
+        if len(self.selected_paths) < 3:
             warn_msg = (
-                "يرجى اختيار أو التقاط صورة واحدة على الأقل لوجهك "
-                "(ويمكنك إضافة حتى 5 صور لزيادة الدقة)."
+                "يرجى اختيار أو التقاط 3 صور على الأقل وحتى 5 صور مختلفة لوجهك "
+                "لضمان دقة التعرف ومنع الأخطاء في زوايا الوجه المختلفة."
             )
-            _ = show_app_dialog(title="تنبيه", text=warn_msg)
+            _ = show_app_dialog(title="تنبيه: عدد الصور غير كافٍ", text=warn_msg)
             return
 
+        # 1. تدريب وحفظ عبر محرك الذكاء الاصطناعي الأوفلاين المتقدم
+        try:
+            import offline_face_recognizer
+            adv_ok, adv_msg = offline_face_recognizer.enroll_user_face(
+                self.selected_paths, threshold=self.threshold
+            )
+            if not adv_ok:
+                _ = show_app_dialog(title="تعذر تسجيل البصمة", text=adv_msg or "فشل التحقق من وضوح الوجوه في الصور.")
+                return
+        except Exception as e_adv:
+            logger.debug("تجاوز التسجيل المتقدم: %s", e_adv)
+
+
+        # 2. الحفظ التوافقي في النظام المحلي
         result = face_classifier.save_user_face_profile(
             self.selected_paths, threshold=self.threshold
         )
@@ -217,13 +231,38 @@ class PeopleSetupScreen(Screen):
                 icon="check-decagram",
                 notif_type="success",
             )
-            msg_ok = str(result.get("message", "تم الحفظ بنجاح"))
+            msg_ok = str(result.get("message", "تم حفظ وتحديث بصمة وجهك بنجاح."))
             _ = show_app_dialog(title="تم الحفظ بنجاح", text=msg_ok)
         else:
             msg_err = str(
                 result.get("message", "تعذر التعرف على الوجه في الصور")
             )
             _ = show_app_dialog(title="تعذر التعرف", text=msg_err)
+
+    def delete_face_profile(self) -> None:
+        """حذف بيانات وبصمات الوجه المسجلة نهائياً وتعطيل الميزة محلياً"""
+        try:
+            import offline_face_recognizer
+            offline_face_recognizer.delete_user_face_profile()
+        except Exception:
+            pass
+
+        try:
+            p = face_classifier.get_profile_path()
+            if p.exists():
+                p.unlink()
+        except Exception:
+            pass
+
+        self.selected_paths.clear()
+        if hasattr(self, "ids") and "samples_grid" in self.ids:
+            self.ids.samples_grid.clear_widgets()
+        self.refresh_profile_status()
+        _ = show_app_dialog(
+            title="حذف البصمة",
+            text="تم حذف بيانات وبصمة وجهك بالكامل من هاتفك بنجاح."
+        )
+
 
     def test_recognition(self) -> None:
         """تجربة فحص صورة فورياً"""

@@ -306,46 +306,29 @@ COMMON_SUBJECT_KEYWORDS = [
 
 def classify_with_local_ocr(image_path: str) -> str:
     """
-    استخراج النص باستخدام pytesseract محلياً، ومطابقة الكلمات.
-    تُستخدم هذه الدالة كبديل عند عدم توفر إنترنت وفقط إن كانت البيئة تدعم Tesseract فعلياً.
+    استخراج النص باستخدام محرك OCR الأوفلاين الحقيقي (offline_ocr) ومطابقة المواد.
     """
-    import offline_classifier
-    if not offline_classifier.is_offline_ocr_runtime_available():
-        raise ClassificationError(
-            "ميزة التعرف الضوئي OCR غير مفعلة لعدم توفر حزمة Tesseract وبيانات اللغة العربية داخل التطبيق (أوفلاين غير متاح)."
-        )
-
     try:
-        pytesseract = importlib.import_module("pytesseract")
-    except ModuleNotFoundError:
-        raise ClassificationError(
-            "مكتبة pytesseract غير مثبتة في النظام."
-        )
-
-    try:
-        with Image.open(image_path) as img:
-            # قص الثلث العلوي من الصورة
-            width, height = img.size
-            header_crop = img.crop((0, 0, width, int(height * 0.35)))
-
-            # استخراج النص باللغتين العربية والإنجليزية
-            extracted_text: str = pytesseract.image_to_string(
-                header_crop, lang="ara+eng"
+        import offline_ocr
+        if not offline_ocr.is_offline_ocr_available():
+            raise ClassificationError(
+                "OCR العربي الأوفلاين غير مثبت. سيتم استخدام اسم الملف أو الإدخال اليدوي."
             )
-
-            # مطابقة النص مع الكلمات المفتاحية للمواد
-            for kw in COMMON_SUBJECT_KEYWORDS:
-                if kw.lower() in extracted_text.lower():
-                    return kw
-
-            # إذا لم يُعثر على كلمة معروفة، نأخذ أول سطر غير فارغ
-            lines = [
-                line.strip()
-                for line in extracted_text.splitlines()
-                if len(line.strip()) > 3
-            ]
+        ocr_res = offline_ocr.extract_arabic_text_offline(image_path)
+        if not ocr_res.available:
+            raise ClassificationError(ocr_res.error or "تعذر استدعاء محرك OCR")
+        if ocr_res.subject:
+            return ocr_res.subject
+        if ocr_res.text:
+            lines = [l.strip() for l in ocr_res.text.splitlines() if len(l.strip()) > 3]
             if lines:
                 return lines[0][:30]
+        return ""
+    except ClassificationError:
+        raise
+    except Exception as ex:
+        raise ClassificationError(f"حدث خطأ أثناء تشغيل OCR: {ex}") from ex
+
 
     except ClassificationError:
         raise

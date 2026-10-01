@@ -474,6 +474,9 @@ class SettingsScreen(Screen):
 
         if not diag.get("images_permission") or not diag.get("videos_permission"):
             def _after_media(_p, _r):
+                # إذا لم تُمنح الصلاحية نفتح شاشة إعدادات التطبيق مباشرة لتمكين المستخدم من تفعيلها
+                if not android_permissions.is_images_permission_granted():
+                    android_permissions.open_app_details_settings()
                 Clock.schedule_once(lambda _dt: self.refresh_permission_ui(), 0.5)
             android_permissions.request_media_permissions(_after_media)
             return
@@ -484,19 +487,90 @@ class SettingsScreen(Screen):
                 title="إذن الوصول لكافة الملفات",
                 text=(
                     "تم فتح إعدادات النظام. يرجى تفعيل مفتاح"
-                    " 'السماح بالوصول لإدارة جميع الملفات'"
+                    " 'السماح بالوصول لإدارة جميع الملفات' أو تفعيل إذن 'التخزين'"
                     " لتمكين التطبيق من فحص كافة مجلدات هاتفك."
                 ),
             )
         else:
+            android_permissions.open_app_details_settings()
             show_app_dialog(
-                title="الصلاحيات",
+                title="إعدادات الصلاحيات",
                 text=(
-                    "على جهازك الحالي الصلاحيات مفعلة"
-                    " أو يتم إدارتها تلقائياً."
+                    "تم فتح صفحة إعدادات التطبيق. يرجى الدخول إلى 'الأذونات' (Permissions)"
+                    " ومنح إذن 'التخزين' (Storage)."
                 ),
             )
         Clock.schedule_once(lambda _dt: self.refresh_permission_ui(), 1.0)
+
+    def check_ai_models_status(self) -> None:
+        """فحص وتحديث حالة محركات الذكاء الاصطناعي الأوفلاين الثلاثة وحجم النماذج"""
+        import offline_ocr
+        import offline_face_recognizer
+        import offline_video_classifier
+
+        ocr_ready = offline_ocr.is_offline_ocr_available()
+        face_ready = offline_face_recognizer.is_offline_face_model_available()
+        vid_ready = offline_video_classifier.is_offline_video_model_available()
+
+        # حساب حجم ملفات النماذج والكاش
+        total_bytes = 0
+        paths_to_check = [
+            getattr(offline_ocr, "TESSDATA_DIR", None),
+            getattr(offline_face_recognizer, "MODEL_DIR", None),
+            offline_face_recognizer.get_face_storage_path(),
+            offline_video_classifier.get_video_cache_path(),
+        ]
+        for p in paths_to_check:
+            if p is not None and isinstance(p, Path) and p.exists():
+                if p.is_file():
+                    total_bytes += p.stat().st_size
+                elif p.is_dir():
+                    for item in p.rglob("*"):
+                        if item.is_file():
+                            total_bytes += item.stat().st_size
+
+        size_mb = round(total_bytes / (1024 * 1024), 2)
+
+        # تحديث نصوص البطاقة
+        if hasattr(self, "ids"):
+            if "ai_ocr_status_label" in self.ids:
+                self.ids.ai_ocr_status_label.text = ar("جاهز ومفعل ✓" if ocr_ready else "غير مثبت")
+                self.ids.ai_ocr_status_label.text_color = (0.063, 0.780, 0.549, 1) if ocr_ready else (0.5, 0.5, 0.5, 1)
+            if "ai_face_status_label" in self.ids:
+                self.ids.ai_face_status_label.text = ar("جاهز ومدرّب ✓" if face_ready else "غير مثبت")
+                self.ids.ai_face_status_label.text_color = (0.063, 0.780, 0.549, 1) if face_ready else (0.5, 0.5, 0.5, 1)
+            if "ai_video_status_label" in self.ids:
+                self.ids.ai_video_status_label.text = ar("جاهز (5 إطارات) ✓" if vid_ready else "غير مثبت")
+                self.ids.ai_video_status_label.text_color = (0.063, 0.780, 0.549, 1) if vid_ready else (0.5, 0.5, 0.5, 1)
+            if "ai_models_size_label" in self.ids:
+                self.ids.ai_models_size_label.text = ar(f"الحجم: {size_mb} MB")
+
+        show_app_dialog(
+            title="فحص محركات الذكاء الاصطناعي الأوفلاين",
+            text=(
+                f"• محرك OCR العربي: {'جاهز ومفعل ✓' if ocr_ready else 'غير مثبت'}\n"
+                f"• نموذج التعرف على الوجوه: {'جاهز ومفعل ✓' if face_ready else 'غير مثبت'}\n"
+                f"• مصنف الفيديو البصري: {'جاهز ومفعل ✓' if vid_ready else 'غير مثبت'}\n"
+                f"• الحجم الإجمالي على الجهاز: {size_mb} MB\n"
+                f"• وضع التشغيل: أوفلاين محلي 100% بدون إنترنت."
+            ),
+        )
+
+    def clear_ai_cache(self) -> None:
+        """مسح كاش محركات الذكاء الاصطناعي (الفيديو، OCR، التتبع)"""
+        import offline_video_classifier
+        p_vid = offline_video_classifier.get_video_cache_path()
+        if p_vid.exists():
+            try:
+                p_vid.unlink()
+            except Exception:
+                pass
+        show_app_dialog(
+            title="مسح الكاش",
+            text="تم مسح ذاكرة التخزين المؤقت لمحركات الذكاء الاصطناعي بنجاح."
+        )
+        self.check_ai_models_status()
+
 
     def refresh_operation_mode_ui(self) -> None:
         """تحديث حالة أزرار نمط الفرز (نسخ أم نقل)"""

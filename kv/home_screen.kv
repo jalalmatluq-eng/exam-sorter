@@ -55,9 +55,9 @@
             MDCard:
                 id: hero_card
                 size_hint_y: None
-                height: dp(165)
+                adaptive_height: True
                 radius: [26, 26, 26, 26]
-                padding: [dp(14), dp(12), dp(14), dp(10)]
+                padding: [dp(14), dp(12), dp(14), dp(12)]
                 elevation: 0
                 theme_bg_color: "Custom"
                 md_bg_color: 0.90, 0.95, 1.0, 0.98
@@ -65,6 +65,8 @@
                 MDBoxLayout:
                     orientation: "vertical"
                     spacing: dp(8)
+                    size_hint_y: None
+                    adaptive_height: True
 
                     MDBoxLayout:
                         orientation: "horizontal"
@@ -103,17 +105,20 @@
                         halign: "right"
                         valign: "middle"
                         size_hint_y: None
-                        height: dp(22)
+                        adaptive_height: True
+                        text_size: self.width, None
 
                     # كبسولات الإحصاء الكونية
                     MDBoxLayout:
                         orientation: "horizontal"
                         spacing: dp(10)
+                        size_hint_y: None
+                        height: dp(76)
 
                         # مجلدات
                         MDCard:
                             radius: [18, 18, 18, 18]
-                            padding: [dp(8), dp(6)]
+                            padding: [dp(8), dp(4)]
                             elevation: 0
                             theme_bg_color: "Custom"
                             md_bg_color: 0.93, 0.91, 1.0, 0.95
@@ -121,6 +126,7 @@
                             MDBoxLayout:
                                 orientation: "vertical"
                                 pos_hint: {"center_y": 0.5}
+                                spacing: dp(2)
 
                                 MDLabel:
                                     id: stats_count
@@ -128,21 +134,25 @@
                                     theme_text_color: "Custom"
                                     text_color: 0.45, 0.18, 0.80, 1
                                     bold: True
-                                    font_size: "20sp"
+                                    font_size: "17sp"
                                     halign: "center"
+                                    size_hint_y: None
+                                    height: dp(26)
 
                                 MDLabel:
                                     id: stats_title
                                     text: app.ar("المجلدات المنظمة")
                                     theme_text_color: "Custom"
                                     text_color: 0.35, 0.30, 0.55, 1
-                                    font_size: "10sp"
+                                    font_size: "11sp"
                                     halign: "center"
+                                    size_hint_y: None
+                                    height: dp(18)
 
                         # ملفات
                         MDCard:
                             radius: [18, 18, 18, 18]
-                            padding: [dp(8), dp(6)]
+                            padding: [dp(8), dp(4)]
                             elevation: 0
                             theme_bg_color: "Custom"
                             md_bg_color: 0.88, 0.96, 1.0, 0.95
@@ -150,6 +160,7 @@
                             MDBoxLayout:
                                 orientation: "vertical"
                                 pos_hint: {"center_y": 0.5}
+                                spacing: dp(2)
 
                                 MDLabel:
                                     id: stats_exams_count
@@ -157,16 +168,20 @@
                                     theme_text_color: "Custom"
                                     text_color: 0.02, 0.52, 0.85, 1
                                     bold: True
-                                    font_size: "20sp"
+                                    font_size: "17sp"
                                     halign: "center"
+                                    size_hint_y: None
+                                    height: dp(26)
 
                                 MDLabel:
                                     id: stats_exams_title
                                     text: app.ar("إجمالي الملفات")
                                     theme_text_color: "Custom"
                                     text_color: 0.20, 0.45, 0.65, 1
-                                    font_size: "10sp"
+                                    font_size: "11sp"
                                     halign: "center"
+                                    size_hint_y: None
+                                    height: dp(18)
 
             # ─── شريط أزرار الكبسولات الكونية ─────────────────
             MDScrollView:

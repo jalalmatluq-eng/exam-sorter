@@ -721,6 +721,9 @@ class HomeScreen(Screen):
             if action_req == "request_media":
                 def _on_grant():
                     def _after_perms(_p, _r):
+                        import android_permissions
+                        if not android_permissions.is_images_permission_granted():
+                            android_permissions.open_app_details_settings()
                         Clock.schedule_once(lambda _dt: self.start_scan_with_options(source_choice, target_choice), 0.5)
                     android_permissions.request_media_permissions(_after_perms)
 
@@ -730,6 +733,13 @@ class HomeScreen(Screen):
                     "filled": True,
                     "bg_color": (0.486, 0.302, 0.988, 1),
                 })
+                preflight_buttons.append({
+                    "text": "فتح إعدادات الهاتف مباشرة",
+                    "callback": lambda: android_permissions.open_app_details_settings(),
+                    "filled": False,
+                    "bg_color": (0.92, 0.95, 1.0, 1),
+                })
+
             elif action_req == "request_saf_sdcard":
                 preflight_buttons.append({
                     "text": "اختيار مجلد بطاقة SD (SAF)",

@@ -476,17 +476,21 @@ def classify_video_locally(
                 # أفلام ومسلسلات: مقاطع طويلة وشاشات سينمائية بوجوه متعددة
                 if duration >= 1200 and total_faces > 0 and (w / max(1, h)) >= 1.3:
                     return CATEGORY_MOVIES
-
-                # مقاطع قصيرة جداً لا تصنف مضحكة إلا بوجود كلمات مفتاحية داعمة
-                # لتجنب تصنيف فيديوهات العائلة أو المحاضرات كفيديوهات مضحكة
-                funny_cues = ["meme", "funny", "tiktok", "reels", "مضحك", "ضحك", "طقطقة", "نكتة", "كوميدي"]
-                if 0 < duration <= 45 and any(cue in clean_text for cue in funny_cues):
-                    return CATEGORY_FUNNY
         except Exception:
             pass
 
+        # 5. استدعاء التحليل البصري الحقيقي متعدد الإطارات (offline_video_classifier)
+        try:
+            import offline_video_classifier
+            v_res = offline_video_classifier.classify_video_offline(video_path)
+            if v_res.status == "success" and v_res.category not in (CATEGORY_UNCLASSIFIED, "يحتاج مراجعة"):
+                return v_res.category
+        except Exception as e_v:
+            print("تنبيه أثناء تشغيل مصنف الفيديو البصري الأوفلاين:", e_v)
+
     # لم نصل لقرار حاسم محلياً
     return None
+
 
 
 def classify_video_with_claude(

@@ -465,6 +465,19 @@ def detect_and_match_face(
     2. 'me': يوجد وجه بشري في الصورة يطابق بصمة صاحب الجهاز.
     3. 'other': يوجد وجه بشري في الصورة ولكنه لا يطابق بصمة صاحب الجهاز.
     """
+    # 1. محاولة التعرف عبر نموذج الذكاء الاصطناعي الأوفلاين المتقدم
+    try:
+        import offline_face_recognizer
+        face_res = offline_face_recognizer.classify_face_offline(image_path)
+        if face_res.status == "my_face":
+            return "me"
+        elif face_res.status == "other_face":
+            return "other"
+        elif face_res.status == "no_face":
+            return "none"
+    except Exception as e_rec:
+        logger.debug("تجاوز offline_face_recognizer: %s", e_rec)
+
     faces = detect_faces(image_path)
     if not faces:
         return "none"

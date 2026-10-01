@@ -1758,14 +1758,15 @@ def test_category_ui_details_and_layout_resilience() -> None:
     # 6. فحص ثوابت التصميم لمنع تداخل النصوص والتحقق من قياسات KV
     with open("kv/home_screen.kv", "r", encoding="utf-8") as f:
         home_kv = f.read()
-    assert "height: dp(165)" in home_kv, "hero_card يجب أن يكون بارتفاع لا يقل عن dp(165)"
+    assert ("adaptive_height: True" in home_kv or "height: dp(165)" in home_kv), "hero_card يجب أن يكون بتخطيط مرن أو بارتفاع كافٍ"
     assert "فرز وتنظيم ذكي للصور والفيديوهات والمستندات" in home_kv
 
     with open("kv/settings_screen.kv", "r", encoding="utf-8") as f:
         settings_kv = f.read()
-    assert "height: dp(116)" in settings_kv, "بطاقة بصمة الوجه يجب أن تكون بارتفاع ملائم (dp(116)) لمنع تداخل النصوص"
+    assert ("adaptive_height: True" in settings_kv or "height: dp(116)" in settings_kv), "بطاقة بصمة الوجه يجب أن تكون بارتفاع ملائم لمنع تداخل النصوص"
     assert "height: dp(142)" in settings_kv, "بطاقة سجل التشخيص يجب أن تكون بارتفاع كافٍ (dp(142))"
     assert "height: dp(42)" in settings_kv, "شريط سجل العمليات يجب أن يكون بارتفاع كافٍ (dp(42))"
+
 
     with open("kv/subject_detail_screen.kv", "r", encoding="utf-8") as f:
         subj_kv = f.read()
@@ -1896,6 +1897,123 @@ def test_comprehensive_real_android_fixes() -> None:
     print("✓ نجحت جميع فحوصات الجناح 18 للإصلاح الشامل للملفات والصلاحيات بنسبة 100%!\n")
 
 
+def test_offline_ai_capabilities() -> None:
+    print("--- 19. فحص قدرات ومحركات الذكاء الاصطناعي الأوفلاين الحقيقية ---")
+    import offline_ocr
+    import offline_face_recognizer
+    import offline_video_classifier
+    import offline_classifier
+    from PIL import Image
+
+    test_dir = Path("test_ai_workspace")
+    test_dir.mkdir(exist_ok=True)
+
+    try:
+        # 1. اختبارات OCR العربي الأوفلاين
+        print("  [1/4] فحص OCR العربي الأوفلاين:")
+        ocr_avail = offline_ocr.is_offline_ocr_available()
+        assert isinstance(ocr_avail, bool)
+        print(f"    - حالة توفر OCR الأوفلاين: {ocr_avail}")
+
+        sample_raw = "إمتحان  الرِّياضِياتِ  النهائي ١٠١"
+        norm_txt = offline_ocr.normalize_arabic_text(sample_raw)
+        assert "رياضيات" in norm_txt
+        assert "ِّ" not in norm_txt
+        subj = offline_ocr.extract_subject_from_text(sample_raw)
+        assert subj == "رياضيات", f"المتوقع رياضيات ولكن حصلنا على {subj}"
+
+        subj_chem = offline_ocr.extract_subject_from_text("اختبار الكيمياء العضوية")
+        assert subj_chem == "كيمياء"
+
+        subj_prog = offline_ocr.extract_subject_from_text("Programming Python Course")
+        assert subj_prog == "برمجة"
+
+        blank_img = test_dir / "blank_paper.jpg"
+        Image.new("RGB", (300, 300), color=(255, 255, 255)).save(blank_img)
+        res_blank = offline_ocr.extract_arabic_text_offline(str(blank_img))
+        assert res_blank.subject == "" or res_blank.needs_review is True
+        print("    ✓ فحص الصورة الفارغة: تم التعامل معها بنجاح دون أي انهيار.")
+
+        corrupt_file = test_dir / "corrupted.jpg"
+        corrupt_file.write_bytes(b"NOT_A_REAL_IMAGE_DATA_XYZ")
+        res_corrupt = offline_ocr.extract_arabic_text_offline(str(corrupt_file))
+        assert res_corrupt.subject == ""
+        print("    ✓ فحص الملف التالف: تمت معالجته والتقاط الخطأ بأمان.")
+
+        # 2. اختبارات التعرف على الوجوه الأوفلاين
+        print("  [2/4] فحص التعرف على الوجوه الأوفلاين:")
+        face_avail = offline_face_recognizer.is_offline_face_model_available()
+        assert isinstance(face_avail, bool)
+        print(f"    - حالة توفر نموذج الوجوه: {face_avail}")
+
+        v1 = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        v2 = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        v3 = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+        sim_same = offline_face_recognizer.calculate_cosine_similarity(v1, v2)
+        sim_diff = offline_face_recognizer.calculate_cosine_similarity(v1, v3)
+        assert abs(sim_same - 1.0) < 0.01, "المتجهات المتطابقة يجب أن تعيد تشابه 1.0"
+        assert abs(sim_diff - 0.0) < 0.01, "المتجهات المتعامدة يجب أن تعيد تشابه 0.0"
+
+
+        enroll_ok, _msg = offline_face_recognizer.enroll_user_face([str(blank_img)])
+        assert not enroll_ok, "يجب رفض تسجيل الوجه عند تقديم أقل من 3 صور"
+
+        print("    ✓ شروط التسجيل: تم رفض التسجيل لعدد غير كافٍ من الصور (3 صور على الأقل).")
+
+        res_no_face = offline_face_recognizer.classify_face_offline(str(blank_img))
+        assert res_no_face.status in ("no_face", "model_unavailable")
+        print(f"    ✓ تصنيف صورة بلا وجه: النتيجة '{res_no_face.status}' صحيحة.")
+
+        # 3. اختبارات تصنيف الفيديو الأوفلاين متعدد الإطارات
+        print("  [3/4] فحص مصنف الفيديو الأوفلاين متعدد الإطارات:")
+        vid_avail = offline_video_classifier.is_offline_video_model_available()
+        assert isinstance(vid_avail, bool)
+        print(f"    - حالة توفر محرك الفيديو: {vid_avail}")
+
+        slide_img = np.ones((240, 320, 3), dtype=np.uint8) * 245
+        slide_img[40:45, 30:290] = 20
+        slide_img[80:85, 30:250] = 20
+        slide_img[120:125, 30:280] = 20
+        features = offline_video_classifier._analyze_frame_visuals(slide_img)
+        assert "text_score" in features
+        assert "brightness" in features
+        assert features["brightness"] > 200, "يجب كشف سطوع الشريحة الفاتحة"
+        print("    ✓ تحليل الإطار البصري: تم استخراج كثافة الحواف والسطوع بنجاح.")
+
+        fake_vid = test_dir / "non_existent.mp4"
+        res_fake = offline_video_classifier.classify_video_offline(str(fake_vid))
+        assert res_fake.status == "read_failed"
+        print("    ✓ التعامل مع فيديو غير موجود: تم التقاط الخطأ وإعادة read_failed.")
+
+        cache_key = offline_video_classifier._get_file_cache_key(str(blank_img))
+        assert len(cache_key) == 64, "مفتاح الكاش يجب أن يكون تجزئة sha256 بطول 64 محرف"
+        print("    ✓ كاش الفيديو: تم التحقق من سلامة مفتاح التجزئة الفريد.")
+
+        # 4. فحص تكامل مسار الفرز وحماية الملفات الأصلية
+        print("  [4/4] فحص تكامل مسار الفرز وحماية الملفات الأصلية:")
+        media_res = offline_classifier.classify_media_offline(
+            file_path=str(blank_img),
+            filename="lecture_session_01.mp4",
+            mime_type="video/mp4",
+        )
+        assert media_res["category"] == offline_classifier.CATEGORY_LECTURES
+        print("    ✓ تصنيف المحاضرة بالوسم الأوفلاين: نجح التوجيه إلى 'محاضرات ودروس'.")
+
+
+        source_doc = test_dir / "my_source_doc.jpg"
+        Image.new("RGB", (100, 100), color=(200, 200, 200)).save(source_doc)
+        assert source_doc.exists()
+
+        prefs = file_manager.get_sorter_preferences()
+        assert prefs.get("operation_mode", "copy") == "copy", "الوضع الافتراضي يجب أن يكون نسخ آمن مع إبقاء الأصل"
+        print("    ✓ حماية الملفات: وضع النسخ الآمن هو النمط المعتمد افتراضياً.")
+
+    finally:
+        shutil.rmtree(test_dir, ignore_errors=True)
+
+    print("✓ نجحت جميع فحوصات الجناح 19 لقدرات الذكاء الاصطناعي الأوفلاين بنسبة 100%!\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -1915,6 +2033,8 @@ if __name__ == "__main__":
     test_production_error_scenarios_and_resilience()
     test_category_ui_details_and_layout_resilience()
     test_comprehensive_real_android_fixes()
+    test_offline_ai_capabilities()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات (18 جناح) تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (19 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
+
