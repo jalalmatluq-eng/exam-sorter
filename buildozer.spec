@@ -1,6 +1,6 @@
 [app]
 
-title = CosmoSort
+title = Rateb
 package.name = cosmosort
 package.domain = com.cosmosort.ai
 source.dir = .

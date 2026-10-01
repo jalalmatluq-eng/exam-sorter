@@ -95,12 +95,12 @@ class HomeScreen(Screen):
         """تطبيق إعادة التشكيل العربي على عناصر الشاشة الثابتة"""
         if hasattr(self, "ids"):
             if "top_bar_title" in self.ids:
-                self.ids.top_bar_title.text = ar("CosmoSort | جامع العوالم")
+                self.ids.top_bar_title.text = ar("رتّب | Rateb AI")
             if "hero_title" in self.ids:
-                self.ids.hero_title.text = ar("جامع وسائط العالم | CosmoHub")
+                self.ids.hero_title.text = ar("رتّب | المُنظّم الذكي")
             if "hero_sub" in self.ids:
                 self.ids.hero_sub.text = ar(
-                    "يلم كل وسائط العالم وينظمها بذكاء اصطناعي"
+                    "فرز وتنظيم شامل للصور والفيديوهات والمستندات بالذكاء الاصطناعي"
                 )
             if "stats_title" in self.ids:
                 self.ids.stats_title.text = ar("المجلدات المنظمة")

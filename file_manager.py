@@ -755,237 +755,60 @@ def open_all_files_permission_settings() -> bool:
 
 
 def is_directory_writable(dir_path: Path) -> bool:
-    """
-    التحقق الفعلي من إمكانية إنشاء وكتابة وحذف الملفات داخل المجلد المحدد.
-    هام: لا نختبر في جذر بطاقة SD مباشرة لأن نظام أندرويد يحظر إنشاء ملفات نقطية في الجذر.
-    """
-    try:
-        dir_path.mkdir(parents=True, exist_ok=True)
-        test_file = dir_path / f".write_test_{int(time.time() * 1000)}"
-        test_file.write_text("ok", encoding="utf-8")
-        test_file.unlink(missing_ok=True)
-        return True
-    except (PermissionError, OSError) as e:
-        logger.debug("المجلد غير قابل للكتابة %s: %s", dir_path, e)
-        return False
+    """التحقق الفعلي الصارم من إمكانية إنشاء وكتابة وحذف الملفات داخل المجلد"""
+    import storage_backend
+    return storage_backend.is_directory_writable(dir_path)
 
 
 def find_external_sdcard_root() -> Path | None:
     """
-    اكتشاف مسار بطاقة الذاكرة الخارجية MicroSD بطرق Android الرسمية:
-    1. StorageManager.getStorageVolumes() عبر Pyjnius.
-    2. Context.getExternalFilesDirs(None) عبر Pyjnius.
-    3. فحص مجلد /storage عن أي معرف بطاقة غير emulated.
-    4. استرجاع المسار المحفوظ مسبقاً إذا كان متاحاً.
-    مع التأكد من إمكانية الكتابة داخل [مسار البطاقة]/الملفات المنظمة/ بدلاً من فحص جذر البطاقة.
+    اكتشاف مسار بطاقة الذاكرة الخارجية MicroSD فقط عند ثبوت وجودها وإمكانية الوصول إليها.
+    هام: لا يتم قبول المسار لمجرد وجوده؛ يجب أن يكون متاحاً ومقروءاً فعلياً.
     """
-    try:
-        from kivy.utils import platform
-        if platform == "android":
-            candidate_roots: list[Path] = []
-
-            # 1. الطريقة الأولى: StorageManager / StorageVolume
-            try:
-                from android import mActivity
-                from jnius import autoclass
-                Context = autoclass("android.content.Context")
-                storage_manager = mActivity.getSystemService(Context.STORAGE_SERVICE)
-                if storage_manager is not None:
-                    volumes = storage_manager.getStorageVolumes()
-                    if volumes is not None:
-                        for i in range(volumes.size()):
-                            vol = volumes.get(i)
-                            if vol is not None and vol.isRemovable():
-                                uuid = vol.getUuid()
-                                if uuid:
-                                    p = Path(f"/storage/{uuid}")
-                                    if p not in candidate_roots:
-                                        candidate_roots.append(p)
-                                try:
-                                    dir_file = vol.getDirectory()
-                                    if dir_file is not None:
-                                        dir_path = Path(dir_file.getAbsolutePath())
-                                        if dir_path not in candidate_roots:
-                                            candidate_roots.append(dir_path)
-                                except Exception:
-                                    pass
-            except Exception as e:
-                logger.debug("StorageManager check: %s", e)
-
-            # 2. الطريقة الثانية: getExternalFilesDirs(None)
-            try:
-                from android import mActivity
-                ext_dirs = mActivity.getExternalFilesDirs(None)
-                if ext_dirs:
-                    for ed in ext_dirs:
-                        if ed is not None:
-                            p_str = ed.getAbsolutePath()
-                            if "/Android/data" in p_str and not p_str.startswith("/storage/emulated/"):
-                                root_part = p_str.split("/Android/data")[0]
-                                p = Path(root_part)
-                                if p not in candidate_roots:
-                                    candidate_roots.append(p)
-            except Exception as e:
-                logger.debug("getExternalFilesDirs check: %s", e)
-
-            # 3. الطريقة الثالثة: فحص محتويات /storage المباشرة
-            storage_dir = Path("/storage")
-            if storage_dir.exists() and storage_dir.is_dir():
-                try:
-                    for item in storage_dir.iterdir():
-                        is_sys = item.name in ("emulated", "self", "knox", "sdcard0")
-                        if item.is_dir() and not is_sys:
-                            if item not in candidate_roots:
-                                candidate_roots.append(item)
-                except Exception:
-                    pass
-
-            # 4. الطريقة الرابعة: التحقق من المسار المحفوظ في التفضيلات
-            try:
-                saved_sd = str(get_sorter_preferences().get("detected_sdcard_path", "")).strip()
-                if saved_sd:
-                    p = Path(saved_sd)
-                    if p not in candidate_roots:
-                        candidate_roots.append(p)
-            except Exception:
-                pass
-
-            # فحص كل مسار مرشح: التحقق من وجوده وإمكانية إنشاء مجلد الملفات المنظمة داخله
-            for root_candidate in candidate_roots:
-                if not root_candidate.exists() or not root_candidate.is_dir():
-                    continue
-                # لا نختبر في جذر البطاقة مباشرة! نختبر مجلد [root]/الملفات المنظمة/
-                target_folder = root_candidate / ORGANIZED_FOLDER_NAME
-                writable = is_directory_writable(target_folder)
-                if writable:
-                    try:
-                        save_sorter_preferences({"detected_sdcard_path": str(root_candidate)})
-                    except Exception:
-                        pass
-                    return root_candidate
-                elif root_candidate.exists():
-                    try:
-                        save_sorter_preferences({"detected_sdcard_path": str(root_candidate)})
-                    except Exception:
-                        pass
-                    return root_candidate
-
-    except (ImportError, OSError, RuntimeError) as e:
-        logger.debug("find_external_sdcard_root error: %s", e)
-
+    import storage_backend
+    locs = storage_backend.detect_storage_locations()
+    sd = locs.get("sdcard")
+    if sd and sd.detected and sd.path and sd.path != "غير متوفرة حالياً":
+        p = Path(sd.path)
+        if p.name == ORGANIZED_FOLDER_NAME:
+            return p.parent
+        return p
     return None
 
 
 def get_available_storage_destinations() -> dict[str, dict[str, object]]:
     """
-    استكشاف مسارات التخزين المتاحة على الجهاز (الداخلية والخارجية)
-    مع إحصائيات المساحة المتوفرة في كل منهما لتسهيل الاختيار على المستخدم.
+    استكشاف مسارات التخزين المتاحة على الجهاز (الداخلية والخارجية) بدقة،
+    مع بيان إمكانية الكتابة وسبب الفشل وحاجة بطاقة SD لإذن SAF.
     """
-    destinations: dict[str, dict[str, object]] = {}
-    try:
-        from kivy.utils import platform
-        if platform == "android":
-            # 1. الذاكرة الداخلية
-            internal_root = Path("/storage/emulated/0")
-            internal_target = internal_root / ORGANIZED_FOLDER_NAME
-            int_free_gb, int_total_gb = 0.0, 0.0
-            try:
-                du = shutil.disk_usage(str(internal_root))
-                int_free_gb = round(du.free / (1024 ** 3), 1)
-                int_total_gb = round(du.total / (1024 ** 3), 1)
-            except OSError:
-                pass
-
-            destinations["internal"] = {
-                "id": "internal",
-                "name": "الذاكرة الداخلية المشتركة",
-                "path": str(internal_target),
-                "available": True,
-                "is_writable": is_directory_writable(internal_target),
-                "free_gb": int_free_gb,
-                "total_gb": int_total_gb,
-                "description": (
-                    f"المسار: /storage/emulated/0/{ORGANIZED_FOLDER_NAME} "
-                    f"({int_free_gb} GB متاح)"
-                ),
-            }
-
-            # 2. بطاقة الذاكرة الخارجية (MicroSD Card)
-            sd_root = find_external_sdcard_root()
-            if sd_root and sd_root.exists():
-                sd_target = sd_root / ORGANIZED_FOLDER_NAME
-                sd_free_gb, sd_total_gb = 0.0, 0.0
-                try:
-                    du = shutil.disk_usage(str(sd_root))
-                    sd_free_gb = round(du.free / (1024 ** 3), 1)
-                    sd_total_gb = round(du.total / (1024 ** 3), 1)
-                except OSError:
-                    pass
-
-                is_writable = is_directory_writable(sd_target)
-                destinations["sdcard"] = {
-                    "id": "sdcard",
-                    "name": "بطاقة الذاكرة الخارجية (MicroSD)",
-                    "path": str(sd_target),
-                    "available": True,
-                    "is_writable": is_writable,
-                    "free_gb": sd_free_gb,
-                    "total_gb": sd_total_gb,
-                    "description": (
-                        f"المسار: {sd_target} ({sd_free_gb} GB متاح)"
-                    ),
-                }
-            else:
-                destinations["sdcard"] = {
-                    "id": "sdcard",
-                    "name": "بطاقة الذاكرة الخارجية (MicroSD)",
-                    "path": "غير متوفرة حالياً",
-                    "available": False,
-                    "is_writable": False,
-                    "free_gb": 0.0,
-                    "total_gb": 0.0,
-                    "description": (
-                        "لم يتم العثور على كرت MicroSD مركب في الجهاز"
-                    ),
-                }
-            return destinations
-    except (ImportError, OSError, RuntimeError):
-        pass
-
-    # على بيئة سطح المكتب للتطوير
-    project_base = Path(__file__).resolve().parent / ORGANIZED_FOLDER_NAME
-    project_base.mkdir(parents=True, exist_ok=True)
-    free_gb, total_gb = 0.0, 0.0
-    try:
-        du = shutil.disk_usage(str(project_base))
-        free_gb = round(du.free / (1024 ** 3), 1)
-        total_gb = round(du.total / (1024 ** 3), 1)
-    except OSError:
-        pass
-
-    destinations["internal"] = {
-        "id": "internal",
-        "name": "القرص الأساسي (المشروع)",
-        "path": str(project_base),
-        "available": True,
-        "free_gb": free_gb,
-        "total_gb": total_gb,
-        "description": f"المسار: {project_base} ({free_gb} GB متاح)",
-    }
-    destinations["sdcard"] = {
-        "id": "sdcard",
-        "name": "بطاقة الذاكرة الخارجية",
-        "path": "غير متوفرة في بيئة المحاكاة",
-        "available": False,
-        "free_gb": 0.0,
-        "total_gb": 0.0,
-        "description": "غير متوفرة في بيئة المحاكاة/سطح المكتب",
-    }
-    return destinations
+    import storage_backend
+    locs = storage_backend.detect_storage_locations()
+    dests: dict[str, dict[str, object]] = {}
+    for loc_id, loc in locs.items():
+        dests[loc_id] = {
+            "id": loc.id,
+            "name": loc.name,
+            "path": loc.path,
+            "uri": loc.uri,
+            "available": loc.detected and loc.mounted,
+            "is_writable": loc.writable,
+            "requires_saf": loc.requires_saf,
+            "free_gb": loc.free_gb,
+            "total_gb": loc.total_gb,
+            "failure_reason": loc.failure_reason,
+            "description": loc.description,
+        }
+    return dests
 
 
 def get_media_sorter_base_path() -> Path:
-    """تحديد المسار الأساسي الموحد لمجلدات مُنظّم الوسائط"""
+    """
+    تحديد المسار الأساسي الموحد لمجلدات مُنظّم الوسائط مع حماية استثنائية وهجرة الأسماء القديمة:
+    - التحقق الصارم من بطاقة SD ومنع الانهيار عند فشل mkdir.
+    - عدم الرجوع الصامت للداخلية إذا تم اختيار كرت SD؛ تسجيل تنبيه واضح وإتاحة مسار آمن.
+    - دمج المجلدات القديمة تلقائياً دون تكرار أو فقد للملفات.
+    """
+    import storage_backend
     prefs = get_sorter_preferences()
     target_pref = prefs.get("target_storage", "internal")
 
@@ -993,32 +816,41 @@ def get_media_sorter_base_path() -> Path:
         from kivy.utils import platform
         if platform == "android":
             if target_pref == "sdcard":
-                sd_root = find_external_sdcard_root()
-                if sd_root:
-                    sd_target = sd_root / ORGANIZED_FOLDER_NAME
-                    sd_target.mkdir(parents=True, exist_ok=True)
-                    return sd_target
+                locs = storage_backend.detect_storage_locations()
+                sd = locs.get("sdcard")
+                if sd and sd.detected and sd.path and sd.path != "غير متوفرة حالياً":
+                    sd_target = Path(sd.path)
+                    if sd_target.name != ORGANIZED_FOLDER_NAME:
+                        sd_target = sd_target / ORGANIZED_FOLDER_NAME
+                    try:
+                        sd_target.mkdir(parents=True, exist_ok=True)
+                        storage_backend.migrate_legacy_folders(sd_target)
+                        return sd_target
+                    except (PermissionError, OSError) as e:
+                        logger.warning("تعذر إنشاء مجلد الوجهة على بطاقة SD (%s): %s", sd_target, e)
+                        if sd.requires_saf:
+                            logger.info("بطاقة SD تتطلب إذن SAF للوصول")
                 else:
-                    print(
-                        "تنبيه: تم اختيار الذاكرة الخارجية لكن لم يتم "
-                        "العثور على كرت MicroSD، الرجوع للداخلية."
-                    )
+                    logger.warning("تم اختيار بطاقة الذاكرة الخارجية لكنها غير متاحة أو تتطلب إذن SAF")
 
-            internal_base = (
-                Path("/storage/emulated/0") / ORGANIZED_FOLDER_NAME
-            )
+            # الذاكرة الداخلية المشتركة
+            internal_base = Path("/storage/emulated/0") / ORGANIZED_FOLDER_NAME
             try:
                 internal_base.mkdir(parents=True, exist_ok=True)
+                storage_backend.migrate_legacy_folders(internal_base)
                 return internal_base
-            except OSError:
+            except (PermissionError, OSError) as e:
+                logger.debug("تنبيه أثناء إنشاء مجلد الذاكرة الداخلية: %s", e)
                 if internal_base.exists():
+                    storage_backend.migrate_legacy_folders(internal_base)
                     return internal_base
     except (ImportError, OSError, RuntimeError) as e:
-        print("تنبيه أثناء تهيئة مسار الملفات المنظمة:", e)
+        logger.debug("تنبيه أثناء تهيئة مسار الملفات المنظمة: %s", e)
 
     base = Path(__file__).resolve().parent / ORGANIZED_FOLDER_NAME
     try:
         base.mkdir(parents=True, exist_ok=True)
+        storage_backend.migrate_legacy_folders(base)
     except OSError:
         pass
     return base
@@ -1027,28 +859,20 @@ def get_media_sorter_base_path() -> Path:
 def create_initial_category_folders(
     base_path: Path | None = None
 ) -> list[Path]:
-    """إنشاء وتجهيز شجرة المجلدات الرسمية للملفات المنظمة"""
+    """إنشاء وتجهيز شجرة المجلدات الرسمية للملفات المنظمة وهجرة الأسماء القديمة"""
+    import storage_backend
     base = (
         base_path if base_path is not None
         else get_media_sorter_base_path()
     )
     try:
         base.mkdir(parents=True, exist_ok=True)
+        storage_backend.migrate_legacy_folders(base)
     except OSError:
         pass
 
-    folder_names = [
-        "صوري",
-        "صور اخوتي وزملائي",
-        "أفلام ومسلسلات",
-        "محاضرات ودروس",
-        "أغاني وأناشيد",
-        "فيديوهات مضحكة",
-        "صور الاختبارات",
-        "خارج التصنيف",
-    ]
     created: list[Path] = []
-    for f_name in folder_names:
+    for f_name in storage_backend.STANDARD_CATEGORIES:
         p = base / f_name
         try:
             p.mkdir(parents=True, exist_ok=True)
@@ -1266,12 +1090,14 @@ def copy_to_category(
 ) -> Path:
     """
     نسخ الملف بأمان إلى مجلد التصنيف المحدد مع الحفاظ التام على الملف الأصلي:
-    1. إنشاء مجلد التصنيف إن لم يكن موجوداً.
-    2. حل تعارض الأسماء تلقائياً.
-    3. التحقق الحاسم من اكتمال النسخ وتطابق الحجم بالبايت.
-    4. الحفاظ على الملف المصدر دون حذفه.
+    1. توحيد اسم التصنيف وهجرة أي تسميات قديمة.
+    2. إنشاء مجلد التصنيف إن لم يكن موجوداً.
+    3. حل تعارض الأسماء تلقائياً.
+    4. النسخ عبر دفق آمن (Atomic Streaming Copy) مع التحقق من الحجم.
     5. توثيق العملية في transfer_history.json.
     """
+    import storage_backend
+    clean_cat = storage_backend.normalize_category_name(category_name)
     src = Path(src_path).resolve()
     if not src.exists() or not src.is_file():
         raise FileNotFoundError(f"الملف المصدر غير موجود: {src}")
@@ -1283,7 +1109,7 @@ def copy_to_category(
 
     clean_parts = [
         sanitize_folder_name(p)
-        for p in category_name.replace("\\", "/").split("/")
+        for p in clean_cat.replace("\\", "/").split("/")
         if p.strip()
     ]
     target_folder = target_base
@@ -1301,7 +1127,7 @@ def copy_to_category(
         _log_transfer_record(
             str(src),
             str(primary_dest),
-            category_name,
+            clean_cat,
             src_size,
             base_path=target_base,
             is_copy=is_copy,
@@ -1316,7 +1142,7 @@ def copy_to_category(
             _log_transfer_record(
                 str(src),
                 str(dest),
-                category_name,
+                clean_cat,
                 src_size,
                 base_path=target_base,
                 is_copy=is_copy,
@@ -1325,26 +1151,21 @@ def copy_to_category(
         dest = target_folder / f"{stem}_{counter:02d}{suffix}"
         counter += 1
 
-    # نسخ مطابق مع الحفاظ التام على الأصل
-    _ = shutil.copy2(src, dest)
-
-    # التحقق الحاسم: التأكد من اكتمال النسخ وتطابق الحجم
-    if not dest.exists():
-        raise OSError(f"فشل التحقق: الملف غير موجود بعد النسخ: {dest}")
+    # نسخ مطابق وذري عبر دفق تدفقي مع التحقق الحاسم من تطابق الحجم بالبايت
+    success = storage_backend.copy_path_to_path(src, dest)
+    if not success or not dest.exists():
+        raise OSError(f"فشل التحقق: تعذر إتمام نسخ الملف إلى الوجهة: {dest}")
 
     dest_size = dest.stat().st_size
     if dest_size != src_size:
         dest.unlink(missing_ok=True)
-        err_msg = (
-            f"عدم تطابق الحجم: المصدر {src_size} بايت، الوجهة {dest_size} بايت"
-        )
-        raise OSError(err_msg)
+        raise OSError(f"عدم تطابق الحجم بعد النسخ: المصدر {src_size} بايت، الوجهة {dest_size} بايت")
 
     # توثيق العملية
     _log_transfer_record(
         str(src),
         str(dest),
-        category_name,
+        clean_cat,
         src_size,
         base_path=target_base,
         is_copy=is_copy,
@@ -1359,7 +1180,7 @@ def move_to_category(
     base_path: Path | None = None,
     copy_only: bool = True
 ) -> Path:
-    """نقل أو نسخ الملف إلى مجلد التصنيف المحدد"""
+    """نقل أو نسخ الملف إلى مجلد التصنيف المحدد مع ضمان عدم حذف الأصل إلا بعد نجاح الوجهة وتطابق حجمها"""
     if copy_only:
         return copy_to_category(
             src_path, category_name, base_path=base_path, is_copy=True
@@ -1372,5 +1193,9 @@ def move_to_category(
     dest = copy_to_category(
         src, category_name, base_path=base_path, is_copy=False
     )
+    if not dest.exists() or dest.stat().st_size != src.stat().st_size:
+        raise OSError(f"فشل التحقق من الوجهة قبل حذف الأصل: {dest}")
+
     src.unlink()
     return dest
+

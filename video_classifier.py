@@ -11,7 +11,7 @@
 
 التصنيفات الناتجة:
 - "فيديوهات مضحكة"
-- "محاضرات وتعلم"
+- "محاضرات ودروس"
 - "أفلام ومسلسلات"
 - "أغاني وأناشيد"
 - "خارج التصنيف" (في حال عدم مطابقة أي صنف)
@@ -515,7 +515,7 @@ def classify_video_with_claude(
             " صنّف هذا الفيديو إلى واحد فقط"
             " من هذه التصنيفات بدقة:\n"
             "- فيديوهات مضحكة\n"
-            "- محاضرات وتعلم\n"
+            "- محاضرات ودروس\n"
             "- أفلام ومسلسلات\n"
             "- أغاني وأناشيد\n"
             "- غير ذلك\n"
@@ -570,7 +570,7 @@ def classify_video_with_claude(
                     if "مضحك" in reply:
                         return CATEGORY_FUNNY
                     elif (
-                        "محاضر" in reply or "تعلم" in reply or "تعليم" in reply
+                        "محاضر" in reply or "تعلم" in reply or "تعليم" in reply or "درس" in reply or "دروس" in reply
                     ):
                         return CATEGORY_LECTURE
                     elif (

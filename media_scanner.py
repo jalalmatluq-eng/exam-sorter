@@ -14,12 +14,15 @@
 - تشغيل الفحص على دفعات (Batches) لتفادي تجميد النظام.
 """
 
+from __future__ import annotations
+
 import logging
 import os
 import sqlite3
 import time
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 try:
     import cv2
@@ -30,23 +33,19 @@ import numpy as np
 import classifier
 import face_classifier
 import file_manager
+import storage_backend
 import video_classifier
 
 logger = logging.getLogger("MediaScanner")
 
-IMAGE_EXTENSIONS = {
-    ".jpg", ".jpeg", ".png", ".webp",
-    ".gif", ".bmp", ".heic", ".heif",
-}
-VIDEO_EXTENSIONS = {
-    ".mp4", ".mkv", ".3gp", ".mov",
-    ".avi", ".webm", ".m4v", ".flv",
-}
+IMAGE_EXTENSIONS = storage_backend.IMAGE_EXTENSIONS
+VIDEO_EXTENSIONS = storage_backend.VIDEO_EXTENSIONS
 
-CATEGORY_MY_PHOTOS = "صوري"
-CATEGORY_FRIENDS_PHOTOS = "صور اخوتي وزملائي"
-CATEGORY_EXAMS_ROOT = "صور الاختبارات"
-CATEGORY_UNCLASSIFIED = "خارج التصنيف"
+CATEGORY_MY_PHOTOS = storage_backend.CATEGORY_MY_PHOTOS
+CATEGORY_FRIENDS_PHOTOS = storage_backend.CATEGORY_FRIENDS_PHOTOS
+CATEGORY_EXAMS_ROOT = storage_backend.CATEGORY_EXAMS_ROOT
+CATEGORY_UNCLASSIFIED = storage_backend.CATEGORY_UNCLASSIFIED
+CATEGORY_LECTURES = storage_backend.CATEGORY_LECTURES
 
 
 def get_cache_db_path() -> Path:
@@ -296,108 +295,182 @@ def scan_storage_roots(source_storage: str | None = None) -> list[Path]:
 
 
 def _scan_android_mediastore(
+    source_storage: str | None = None,
     scanned_details: dict[str, dict[str, object]] | None = None,
     force_rescan: bool = False,
-) -> list[Path]:
+) -> list[storage_backend.MediaItem]:
     """
-    مسار بديل آمن: استعلام صور وفيديوهات الجهاز عبر MediaStore
-    في حال لم تُمنح صلاحية إدارة كافة الملفات (Scoped Storage / All Files Access).
+    استعلام آمن وشامل لصور وفيديوهات الجهاز عبر Android MediaStore:
+    - استخدام الأعمدة القياسية: _ID, DISPLAY_NAME, MIME_TYPE, SIZE, DATE_MODIFIED.
+    - دعم RELATIVE_PATH و _DATA (إن توفرا دون اعتماد قسري على _DATA).
+    - بناء Content URIs رسمية صالحة للفتح عبر ContentResolver.
+    - احترام اختيار الذاكرة (source_storage): internal فقط، sdcard فقط، أو both.
     """
-    found: list[Path] = []
+    found: list[storage_backend.MediaItem] = []
     scanned_map = scanned_details or {}
     try:
-        from android import mActivity  # type: ignore
-        from jnius import autoclass  # type: ignore
+        from kivy.utils import platform
+        if platform != "android":
+            return found
+
+        from android import mActivity
+        from jnius import autoclass
 
         MediaStoreImages = autoclass("android.provider.MediaStore$Images$Media")
         MediaStoreVideo = autoclass("android.provider.MediaStore$Video$Media")
-        content_uris = [
-            MediaStoreImages.EXTERNAL_CONTENT_URI,
-            MediaStoreVideo.EXTERNAL_CONTENT_URI,
+        ContentUris = autoclass("android.content.ContentUris")
+
+        targets = [
+            (MediaStoreImages.EXTERNAL_CONTENT_URI, "image"),
+            (MediaStoreVideo.EXTERNAL_CONTENT_URI, "video"),
         ]
 
         cr = mActivity.getContentResolver()
-        for uri in content_uris:
-            cursor = cr.query(uri, ["_data"], None, None, None)
-            if cursor is not None:
-                try:
-                    col_idx = cursor.getColumnIndexOrThrow("_data")
-                    while cursor.moveToNext():
-                        raw_str = cursor.getString(col_idx)
-                        if not raw_str or "الملفات المنظمة" in raw_str:
-                            continue
-                        p = Path(raw_str)
-                        if not p.exists() or not p.is_file():
-                            continue
-                        ext = p.suffix.lower()
-                        if ext not in IMAGE_EXTENSIONS and ext not in VIDEO_EXTENSIONS:
-                            continue
+        for base_table_uri, _media_kind in targets:
+            cursor = None
+            try:
+                # استعلام بأعمدة آمنة لا ترمي استثناء getColumnIndexOrThrow
+                cursor = cr.query(base_table_uri, None, None, None, None)
+                if cursor is None:
+                    continue
 
-                        if not force_rescan and raw_str in scanned_map:
-                            info = scanned_map[raw_str]
-                            dest_str = str(info.get("dest_path", ""))
-                            if dest_str:
-                                dest_p = Path(dest_str)
-                                try:
-                                    if (
-                                        dest_p.exists()
-                                        and dest_p.stat().st_size == p.stat().st_size
-                                    ):
-                                        continue
-                                except OSError:
-                                    pass
-                        found.append(p)
-                finally:
+                id_idx = cursor.getColumnIndex("_id")
+                name_idx = cursor.getColumnIndex("_display_name")
+                mime_idx = cursor.getColumnIndex("mime_type")
+                size_idx = cursor.getColumnIndex("_size")
+                date_idx = cursor.getColumnIndex("date_modified")
+                rel_idx = cursor.getColumnIndex("relative_path")
+                data_idx = cursor.getColumnIndex("_data")
+
+                while cursor.moveToNext():
+                    item_id = cursor.getLong(id_idx) if id_idx >= 0 else 0
+                    if item_id <= 0:
+                        continue
+
+                    item_uri_obj = ContentUris.withAppendedId(base_table_uri, item_id)
+                    item_uri_str = str(item_uri_obj.toString())
+
+                    name_val = cursor.getString(name_idx) if name_idx >= 0 else ""
+                    mime_val = cursor.getString(mime_idx) if mime_idx >= 0 else ""
+                    size_val = cursor.getLong(size_idx) if size_idx >= 0 else 0
+                    date_val = float(cursor.getLong(date_idx)) if date_idx >= 0 else 0.0
+
+                    rel_path = cursor.getString(rel_idx) if rel_idx >= 0 else ""
+                    data_path = cursor.getString(data_idx) if data_idx >= 0 else ""
+
+                    display_name = name_val or (Path(data_path).name if data_path else f"media_{item_id}")
+                    ext = Path(display_name).suffix.lower()
+                    if not ext and mime_val in storage_backend.MIME_TYPE_MAP:
+                        ext = storage_backend.MIME_TYPE_MAP[mime_val]
+                        display_name = f"{display_name}{ext}"
+
+                    is_img = (ext in storage_backend.IMAGE_EXTENSIONS) or (mime_val and "image" in mime_val)
+                    is_vid = (ext in storage_backend.VIDEO_EXTENSIONS) or (mime_val and "video" in mime_val)
+                    if not is_img and not is_vid:
+                        continue
+
+                    full_check_str = f"{rel_path or ''}/{data_path or ''}/{display_name}".lower()
+                    if "الملفات المنظمة" in full_check_str or "mediasorter" in full_check_str:
+                        continue
+
+                    # تصنيف التخزين (internal أو sdcard)
+                    is_sdcard = False
+                    if data_path:
+                        is_sdcard = not data_path.startswith("/storage/emulated/")
+                    elif rel_path:
+                        is_sdcard = not rel_path.startswith("/storage/emulated/")
+
+                    storage_id = "sdcard" if is_sdcard else "internal"
+
+                    if source_storage == "internal" and is_sdcard:
+                        continue
+                    if source_storage == "sdcard" and not is_sdcard:
+                        continue
+
+                    cache_key = data_path if (data_path and os.path.exists(data_path)) else item_uri_str
+                    if not force_rescan and cache_key in scanned_map:
+                        info = scanned_map[cache_key]
+                        dest_str = str(info.get("dest_path", ""))
+                        if dest_str:
+                            dest_p = Path(dest_str)
+                            try:
+                                if dest_p.exists() and dest_p.stat().st_size == size_val:
+                                    continue
+                            except OSError:
+                                pass
+
+                    item = storage_backend.MediaItem(
+                        id=item_uri_str,
+                        source_type="content_uri" if not (data_path and os.path.exists(data_path)) else "path",
+                        path=data_path if (data_path and os.path.exists(data_path)) else "",
+                        uri=item_uri_str,
+                        display_name=display_name,
+                        mime_type=mime_val or ("image/jpeg" if is_img else "video/mp4"),
+                        size_bytes=size_val,
+                        date_modified=date_val,
+                        storage_id=storage_id,
+                    )
+                    found.append(item)
+            finally:
+                if cursor is not None:
                     cursor.close()
     except Exception as e:
-        logger.debug("تنبيه: تعذر استعلام MediaStore عبر أندرويد: %s", e)
+        logger.warning("استثناء أثناء استعلام MediaStore: %s", e)
+
     return found
 
 
 def find_unsorted_media(
     roots: list[Path] | None = None,
-    max_depth: int = 8,
+    max_depth: int = 10,
     source_storage: str | None = None,
     force_rescan: bool = False,
-) -> list[Path]:
+) -> list[Any]:
     """
-    البحث الشجري عن جميع الصور والفيديوهات غير المصنفة:
-    - فحص الذاكرة الداخلية / المشتركة وبطاقة SD بمرونة كاملة.
-    - استثناء مجلد الملفات المنظمة ومجلدات أندرويد المحمية والنظامية.
-    - استثناء الملف إذا كان قد نُسخ بالفعل وتأكدنا من وجود نسخته في الوجهة وتطابق حجمها.
-    - إعادة فحص الملف إذا كان مفقوداً في الوجهة أو إذا طُلب force_rescan.
-    - مسار بديل عبر MediaStore إن لم تتوفر صلاحية الوصول الكامل للملفات.
+    البحث الشجري الموحد والشامل عن جميع الصور والفيديوهات غير المصنفة:
+    - دمج نتائج فحص نظام الملفات (os.walk) مع نتائج MediaStore دون استبعاد أي منهما.
+    - احترام اختيار الذاكرة (internal / sdcard / both) بشكل صارم وفعلي.
+    - عدم استبعاد WhatsApp / Telegram في Android/media مع استبعاد Android/data و Android/obb.
+    - استبعاد مجلد الملفات المنظمة والملفات المفحوصة مسبقاً بعد التحقق من وجود نسختها في الوجهة.
     """
-    scanned_details = get_scanned_files_details()
+    if source_storage is None:
+        prefs = file_manager.get_sorter_preferences()
+        source_storage = str(prefs.get("source_storage", "both"))
 
-    # مسار بديل عبر MediaStore في حال حظر أو رفض إذن إدارة كل الملفات
+    scanned_details = get_scanned_files_details()
+    combined_items: list[Any] = []
+    seen_identifiers: set[str] = set()
+
+    # 1. استعلام MediaStore الرسمي على أندرويد
     try:
         from kivy.utils import platform
-        if platform == "android" and not file_manager.is_all_files_access_granted():
-            ms_files = _scan_android_mediastore(
+        if platform == "android":
+            ms_items = _scan_android_mediastore(
+                source_storage=source_storage,
                 scanned_details=scanned_details,
                 force_rescan=force_rescan,
             )
-            if ms_files:
-                logger.info("تم العثور على %d ملف عبر MediaStore البديل", len(ms_files))
-                return ms_files
-    except Exception:
-        pass
+            for item in ms_items:
+                key = item.path.lower() if item.path else item.uri
+                if key not in seen_identifiers:
+                    seen_identifiers.add(key)
+                    combined_items.append(item)
+            logger.info("تم العثور على %d ملف وسائط عبر MediaStore", len(ms_items))
+    except Exception as e:
+        logger.debug("تنبيه استعلام MediaStore: %s", e)
 
+    # 2. فحص نظام الملفات عبر الجذور (os.walk)
     if roots is None:
         roots = scan_storage_roots(source_storage=source_storage)
 
-    found_files: list[Path] = []
     excluded_dir_names = {
         "الملفات المنظمة", "الملفات_المنظمة", "mediasorter",
         "examsorter", ".git", ".venv", "venv",
         "__pycache__", "temp", "node_modules", ".buildozer",
         "امثلة_نسخة_احتياطية", "backup", "backups",
-        "android", ".android", "data", "obb", "cache", ".thumbnails",
-        "lost.dir", "alms",
+        ".android", ".thumbnails", "lost.dir", "alms",
     }
 
-    # المجلدات ذات الأولوية الشائعة للوسائط ليتم فحصها أولاً
     priority_dirs = {
         "dcim", "pictures", "movies", "download", "whatsapp",
         "telegram", "documents", "bluetooth", "snapseed", "camera",
@@ -405,9 +478,7 @@ def find_unsorted_media(
     }
 
     try:
-        active_target_base = (
-            file_manager.get_media_sorter_base_path().resolve()
-        )
+        active_target_base = file_manager.get_media_sorter_base_path().resolve()
     except (OSError, RuntimeError):
         active_target_base = None
 
@@ -429,38 +500,41 @@ def find_unsorted_media(
                     dirs[:] = []
                     continue
 
-                # استبعاد المجلدات الممنوعة وتعديل dirs في المكان
                 kept_dirs: list[str] = []
                 for d in dirs:
                     d_lower = d.lower()
                     if d.startswith(".") or d_lower in excluded_dir_names:
                         continue
                     full_sub_path = curr_root_path / d
-                    if (
-                        active_target_base is not None
-                        and full_sub_path == active_target_base
-                    ):
+                    if active_target_base is not None and full_sub_path == active_target_base:
                         continue
-                    full_sub = full_sub_path.as_posix().lower()
-                    if (
-                        "/android" in full_sub
-                        or "/data" in full_sub
-                        or "/obb" in full_sub
-                        or "/cache" in full_sub
-                    ):
+
+                    # استبعاد Android/data و Android/obb المحمية فقط مع السماح بـ Android/media
+                    try:
+                        rel = full_sub_path.relative_to(root_dir).as_posix().lower()
+                        if rel == "android/data" or rel.startswith("android/data/"):
+                            continue
+                        if rel == "android/obb" or rel.startswith("android/obb/"):
+                            continue
+                    except ValueError:
+                        pass
+
+                    if d_lower in ("data", "obb") and curr_root_path.name.lower() == "android":
                         continue
+
                     kept_dirs.append(d)
 
-                # ترتيب المجلدات لفرز مجلدات الوسائط الأساسية أولاً
                 kept_dirs.sort(
                     key=lambda x: (0 if x.lower() in priority_dirs else 1, x.lower())
                 )
                 dirs[:] = kept_dirs
 
-                # فحص عمق التفرع
-                depth = len(Path(root).relative_to(root_dir).parts)
-                if depth > max_depth:
-                    continue
+                try:
+                    depth = len(Path(root).relative_to(root_dir).parts)
+                    if depth > max_depth:
+                        continue
+                except ValueError:
+                    pass
 
                 for f in files:
                     if f.startswith("."):
@@ -469,8 +543,12 @@ def find_unsorted_media(
                     if ext in IMAGE_EXTENSIONS or ext in VIDEO_EXTENSIONS:
                         full_path = Path(root) / f
                         str_full = str(full_path)
+                        str_key = str_full.lower()
 
-                        # التحقق الذكي من اكتمال فرز الملف سابقاً
+                        if str_key in seen_identifiers:
+                            continue
+                        seen_identifiers.add(str_key)
+
                         if not force_rescan and str_full in scanned_details:
                             info = scanned_details[str_full]
                             dest_path_str = str(info.get("dest_path", ""))
@@ -485,23 +563,12 @@ def find_unsorted_media(
                                         continue
                                 except OSError:
                                     pass
-                            else:
-                                if active_target_base and active_target_base.exists():
-                                    candidate = active_target_base / full_path.name
-                                    try:
-                                        if (
-                                            candidate.exists()
-                                            and candidate.stat().st_size == full_path.stat().st_size
-                                        ):
-                                            continue
-                                    except OSError:
-                                        pass
 
-                        found_files.append(full_path)
+                        combined_items.append(full_path)
         except (OSError, RuntimeError) as e:
             logger.warning("خطأ أثناء فحص المجلد %s: %s", root_dir, e)
 
-    return found_files
+    return combined_items
 
 
 def is_visual_document_or_paper(image_path: str) -> bool:
@@ -629,91 +696,111 @@ def _guess_exam_subject(filename: str) -> str:
 
 
 def process_one_file(
-    file_path: str | Path,
+    file_path: str | Path | Any,
     api_key: str | None = None,
-    copy_only: bool | None = None
+    copy_only: bool | None = None,
 ) -> dict[str, object]:
     """
     تطبيق قواعد التصنيف بدقة وتسلسل الأولويات المعتمد، ونقل أو نسخ الملف بأمان:
-    1. صور اختبارات جامعية -> مجلد المادة.
-    2. صوري أنا -> مجلد "صوري".
-    3. صور فيها أشخاص آخرون -> مجلد "صور الزملاء والإخوة".
-    4. فيديوهات مضحكة / محاضرات / أفلام / أغاني.
-    5. خارج التصنيف.
+    - دعم كامل للمسارات الفيزيائية (Path) وكائنات الوسائط المحمولة (MediaItem).
+    - استثناء الملفات السامة المسببة لانهيارات سابقة عبر poison_files.
+    - تفادي إيقاف الدفعة بالكامل عند فشل قراءة أي ملف أو فيديو تالف.
     """
-    p = Path(file_path).resolve()
-    p_str = str(p)
-    if p_str in file_manager.get_poison_files_set():
-        logger.info("تخطي ملف سام مستبعد من الفحص: %s", p_str)
+    item_id = str(file_path)
+    if isinstance(file_path, storage_backend.MediaItem):
+        item_id = file_path.path or file_path.uri or file_path.id
+
+    if item_id in file_manager.get_poison_files_set():
+        logger.info("تخطي ملف سام مستبعد من الفحص: %s", item_id)
         return {
             "success": False,
             "skipped": True,
             "reason": "poison_file",
-            "source": p_str,
+            "source": item_id,
             "error": "ملف مستبعد لتسببه بانهيار سابق",
         }
 
-    file_manager.mark_file_processing_start(p_str)
+    file_manager.mark_file_processing_start(item_id)
     try:
         return _process_one_file_internal(
-            p, api_key=api_key, copy_only=copy_only
+            file_path, api_key=api_key, copy_only=copy_only
         )
+    except Exception as e:
+        logger.error("استثناء غير متوقع أثناء معالجة الملف %s: %s", item_id, e, exc_info=True)
+        return {
+            "success": False,
+            "source": item_id,
+            "category": CATEGORY_UNCLASSIFIED,
+            "error": str(e),
+        }
     finally:
         file_manager.mark_file_processing_end()
 
 
 def _process_one_file_internal(
-    p: Path,
+    file_item: str | Path | Any,
     api_key: str | None = None,
     copy_only: bool | None = None,
 ) -> dict[str, object]:
-    """المعالجة الفعلية للملف بعد تجاوز درع الملف السام"""
-    if not p.exists() or not p.is_file():
-        return {"success": False, "error": "الملف غير موجود"}
+    """المعالجة الفعلية للملف مع دعم Content URI والمؤقت الذري"""
+    temp_stream_file: Path | None = None
+    is_uri_source = False
+    source_key = ""
 
-    ext = p.suffix.lower()
-    target_category = CATEGORY_UNCLASSIFIED
-    detected_details = ""
-    orig_size = p.stat().st_size
-    orig_mtime = p.stat().st_mtime
-
-    # تحديد نمط العملية (نسخ آمن أم نقل مع حذف الأصل)
-    if copy_only is None:
-        prefs = file_manager.get_sorter_preferences()
-        is_copy: bool = (prefs.get("operation_mode", "copy") == "copy")
+    if isinstance(file_item, storage_backend.MediaItem):
+        source_key = file_item.uri or file_item.path or file_item.id
+        if file_item.path and Path(file_item.path).exists():
+            p = Path(file_item.path).resolve()
+        else:
+            # نسخ Content URI إلى temp خاص بالتطبيق بطريقة streaming
+            is_uri_source = True
+            temp_dir = file_manager.get_temp_dir()
+            temp_stream_file = temp_dir / f"stream_{int(time.time() * 1000)}_{file_item.name}"
+            copied = storage_backend.copy_uri_to_path(file_item.uri, temp_stream_file)
+            if not copied or not temp_stream_file.exists():
+                return {"success": False, "source": source_key, "error": "تعذر قراءة دفق Content URI"}
+            p = temp_stream_file
+    elif isinstance(file_item, Path):
+        p = file_item.resolve()
+        source_key = str(p)
     else:
-        is_copy = copy_only
+        source_str = str(file_item)
+        if source_str.startswith("content://"):
+            is_uri_source = True
+            source_key = source_str
+            temp_dir = file_manager.get_temp_dir()
+            temp_stream_file = temp_dir / f"stream_{int(time.time() * 1000)}.jpg"
+            copied = storage_backend.copy_uri_to_path(source_str, temp_stream_file)
+            if not copied or not temp_stream_file.exists():
+                return {"success": False, "source": source_key, "error": "تعذر قراءة دفق Content URI"}
+            p = temp_stream_file
+        else:
+            p = Path(source_str).resolve()
+            source_key = str(p)
 
-    # =========================================================================
-    # 1. إذا كان الملف صورة (Image Routing)
-    # =========================================================================
-    if ext in IMAGE_EXTENSIONS:
-        # أولوية 1: صور الاختبارات والمقررات بالاسم أو الرؤية أو OCR
-        if is_likely_exam_paper(str(p)):
+    try:
+        if not p.exists() or not p.is_file():
+            return {"success": False, "source": source_key, "error": "الملف غير موجود"}
+
+        ext = p.suffix.lower()
+        target_category = CATEGORY_UNCLASSIFIED
+        detected_details = ""
+        orig_size = p.stat().st_size
+        orig_mtime = p.stat().st_mtime
+
+        # تحديد نمط العملية (نسخ آمن أم نقل مع حذف الأصل)
+        if copy_only is None:
+            prefs = file_manager.get_sorter_preferences()
+            is_copy: bool = (prefs.get("operation_mode", "copy") == "copy")
+        else:
+            is_copy = copy_only
+
+        # =====================================================================
+        # 1. إذا كان الملف صورة (Image Routing)
+        # =====================================================================
+        if ext in IMAGE_EXTENSIONS:
+            # أولوية 1: صور الاختبارات والمقررات بالاسم أو الرؤية أو OCR
             try:
-                subject_name = classifier.classify_exam_image(
-                    str(p), api_key=api_key, fallback_to_ocr=True
-                )
-                if subject_name and subject_name.strip():
-                    clean_sub = subject_name.strip()
-                    target_category = f"{CATEGORY_EXAMS_ROOT}/{clean_sub}"
-                    detected_details = f"ورقة اختبار مادة: {clean_sub}"
-            except Exception:
-                guessed = _guess_exam_subject(p.name)
-                target_category = f"{CATEGORY_EXAMS_ROOT}/{guessed}"
-                detected_details = f"ورقة اختبار مادة: {guessed}"
-
-        # إذا لم تحسم كاختبار بالاسم أو الرؤية، نفحص الوجوه
-        if target_category == CATEGORY_UNCLASSIFIED:
-            face_result = face_classifier.detect_and_match_face(str(p))
-            if face_result == "me":
-                target_category = CATEGORY_MY_PHOTOS
-                detected_details = "مطابقة بصمة وجه صاحب الجهاز"
-            elif face_result == "other":
-                target_category = CATEGORY_FRIENDS_PHOTOS
-                detected_details = "اكتشاف وجوه أصدقاء وإخوة"
-            else:
-                # إذا كانت الصورة خالية من الوجوه: نفحص إن كانت ورقة اختبار
                 if is_likely_exam_paper(str(p)):
                     try:
                         subject_name = classifier.classify_exam_image(
@@ -721,54 +808,48 @@ def _process_one_file_internal(
                         )
                         if subject_name and subject_name.strip():
                             clean_sub = subject_name.strip()
-                            target_category = (
-                                f"{CATEGORY_EXAMS_ROOT}/{clean_sub}"
-                            )
-                            detected_details = (
-                                f"ورقة اختبار مادة مصنفة: {clean_sub}"
-                            )
+                            target_category = f"{CATEGORY_EXAMS_ROOT}/{clean_sub}"
+                            detected_details = f"ورقة اختبار مادة: {clean_sub}"
                     except Exception:
                         guessed = _guess_exam_subject(p.name)
-                        target_category = (
-                            f"{CATEGORY_EXAMS_ROOT}/{guessed}"
-                        )
+                        target_category = f"{CATEGORY_EXAMS_ROOT}/{guessed}"
                         detected_details = f"ورقة اختبار مادة: {guessed}"
-                elif api_key or os.getenv("ANTHROPIC_API_KEY"):
-                    try:
-                        subject_name = classifier.classify_exam_image(
-                            str(p), api_key=api_key, fallback_to_ocr=True
-                        )
-                        if subject_name and subject_name.strip():
-                            clean_sub = subject_name.strip()
-                            target_category = (
-                                f"{CATEGORY_EXAMS_ROOT}/{clean_sub}"
-                            )
-                            detected_details = (
-                                f"ورقة اختبار مادة مصنفة: {clean_sub}"
-                            )
-                    except Exception as e:
-                        logger.debug("فشل تصنيف الورقة بالذكاء: %s", e)
+            except Exception as e:
+                logger.debug("تنبيه فحص ورقة الاختبار: %s", e)
 
-                if target_category == CATEGORY_UNCLASSIFIED:
-                    target_category = CATEGORY_UNCLASSIFIED
-                    detected_details = "لا يوجد وجه بشري أو ترويسة اختبار"
+            # إذا لم تحسم كاختبار، نفحص الوجوه
+            if target_category == CATEGORY_UNCLASSIFIED:
+                try:
+                    face_result = face_classifier.detect_and_match_face(str(p))
+                    if face_result == "me":
+                        target_category = CATEGORY_MY_PHOTOS
+                        detected_details = "مطابقة بصمة وجه صاحب الجهاز"
+                    elif face_result == "other":
+                        target_category = CATEGORY_FRIENDS_PHOTOS
+                        detected_details = "اكتشاف وجوه أصدقاء وإخوة"
+                except Exception as e:
+                    logger.debug("تنبيه أثناء فحص الوجوه: %s", e)
 
-    # =========================================================================
-    # 2. إذا كان الملف مقطع فيديو (Video Routing)
-    # =========================================================================
-    elif ext in VIDEO_EXTENSIONS:
-        v_cat = video_classifier.classify_video(str(p), api_key=api_key)
-        target_category = v_cat
-        detected_details = f"تصنيف فيديو: {v_cat}"
+        # =====================================================================
+        # 2. إذا كان الملف مقطع فيديو (Video Routing)
+        # =====================================================================
+        elif ext in VIDEO_EXTENSIONS:
+            try:
+                v_cat = video_classifier.classify_video(str(p), api_key=api_key)
+                target_category = v_cat
+                detected_details = f"تصنيف فيديو: {v_cat}"
+            except Exception as e:
+                logger.warning("تنبيه أثناء تصنيف الفيديو: %s", e)
+                target_category = CATEGORY_UNCLASSIFIED
+                detected_details = "فيديو غير محدد (خارج التصنيف)"
 
-    # تنفيذ العملية (نسخ آمن أو نقل) مع الحفاظ على التوثيق
-    # =========================================================================
-    try:
-        dest_path = file_manager.move_to_category(
-            p, target_category, copy_only=is_copy
+        # =====================================================================
+        # 3. تنفيذ العملية (نسخ آمن أو نقل) مع الحفاظ على التوثيق
+        # =====================================================================
+        dest_path = file_manager.copy_to_category(
+            p, target_category, is_copy=is_copy
         )
         dest_p = Path(dest_path)
-        # التحقق الحاسم من نجاح الوجهة وتطابق الحجم بالبايت قبل اعتباره منجزاً
         if not dest_p.exists():
             raise IOError(f"الملف الوجهة غير موجود بعد النقل/النسخ: {dest_path}")
         if dest_p.stat().st_size != orig_size:
@@ -776,40 +857,38 @@ def _process_one_file_internal(
                 f"حجم الملف في الوجهة لا يطابق الأصل: {dest_p.stat().st_size} vs {orig_size}"
             )
 
+        # إذا كنا في وضع النقل Move: نحذف الأصل فقط بعد التحقق التام
+        if not is_copy:
+            if is_uri_source and isinstance(file_item, storage_backend.MediaItem):
+                storage_backend.delete_media_item(file_item)
+            elif not is_uri_source and p.exists():
+                p.unlink()
+
         # تسجيل الملف في كاش التتبع بعد التأكد التام
         record_processed_file(
-            str(p),
+            source_key,
             orig_size,
             orig_mtime,
             target_category,
             dest_path=str(dest_path),
             dest_size=orig_size,
         )
-        if not is_copy:
-            record_processed_file(
-                str(dest_path),
-                orig_size,
-                orig_mtime,
-                target_category,
-                dest_path=str(dest_path),
-                dest_size=orig_size,
-            )
+
         return {
             "success": True,
-            "source": str(p),
+            "source": source_key,
             "destination": str(dest_path),
             "category": target_category,
             "details": detected_details,
             "mode": "copy" if is_copy else "move",
         }
-    except (OSError, ValueError, RuntimeError) as e:
-        logger.error("فشل معالجة الملف %s: %s", p, e)
-        return {
-            "success": False,
-            "source": str(p),
-            "category": target_category,
-            "error": str(e),
-        }
+    finally:
+        # حذف الملف المؤقت في حال استخدام streaming Content URI
+        if temp_stream_file is not None and temp_stream_file.exists():
+            try:
+                temp_stream_file.unlink()
+            except OSError:
+                pass
 
 
 def run_batch_scan(

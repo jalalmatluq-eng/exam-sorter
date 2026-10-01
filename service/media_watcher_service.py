@@ -118,9 +118,9 @@ def setup_android_foreground_notification() -> None:
             except Exception:
                 builder = NotificationBuilder(app_context)
 
-            builder.setContentTitle("CosmoSort | حارس الوسائط الكوني")
+            builder.setContentTitle("رتّب | المُنظّم الذكي للوسائط")
             builder.setContentText(
-                "المراقبة الذكية لفرز وسائط العالم قيد العمل في الخلفية"
+                "خدمة المراقبة والفرز التلقائي للوسائط قيد العمل في الخلفية"
             )
             builder.setSmallIcon(
                 app_context.getApplicationInfo().icon
@@ -319,35 +319,53 @@ def stop_watcher_thread() -> None:
 
 
 def start_system_service() -> None:
-    """بدء خدمة المراقبة بحسب البيئة"""
+    """بدء خدمة المراقبة بحسب البيئة مع فحص توفر الخدمة وعدم الانهيار"""
     from kivy.utils import platform
     set_service_desired_state(True)
     if platform == "android":
         try:
-            from android import mActivity  # type: ignore[import-untyped]
+            from android import mActivity
             from jnius import autoclass
             pkg = mActivity.getPackageName()
-            Service = autoclass(f"{pkg}.ServiceMediawatcher")
-            Service.start(mActivity, "")
-            print("✓ تم استدعاء بدء خدمة أندرويد بنجاح.")
-            return
+            service_class = None
+            for s_name in (f"{pkg}.ServiceMediawatcher", f"{pkg}.ServiceMediaWatcher"):
+                try:
+                    service_class = autoclass(s_name)
+                    break
+                except Exception:
+                    pass
+
+            if service_class is not None:
+                service_class.start(mActivity, "")
+                print("✓ تم استدعاء بدء خدمة أندرويد بنجاح.")
+                return
+            else:
+                print("تنبيه: لم يتم العثور على فئة الخدمة الخلفية، سيتم استخدام الثريد الداخلي.")
         except Exception as e:
             print("تنبيه: تعذر بدء خدمة أندرويد، البديل الثريد:", e)
     start_watcher_thread()
 
 
 def stop_system_service() -> None:
-    """إيقاف خدمة المراقبة بحسب البيئة"""
+    """إيقاف خدمة المراقبة بحسب البيئة بأمان"""
     from kivy.utils import platform
     set_service_desired_state(False)
     if platform == "android":
         try:
-            from android import mActivity  # type: ignore[import-untyped]
+            from android import mActivity
             from jnius import autoclass
             pkg = mActivity.getPackageName()
-            Service = autoclass(f"{pkg}.ServiceMediawatcher")
-            Service.stop(mActivity)
-            print("✓ تم استدعاء إيقاف خدمة أندرويد بنجاح.")
+            service_class = None
+            for s_name in (f"{pkg}.ServiceMediawatcher", f"{pkg}.ServiceMediaWatcher"):
+                try:
+                    service_class = autoclass(s_name)
+                    break
+                except Exception:
+                    pass
+
+            if service_class is not None:
+                service_class.stop(mActivity)
+                print("✓ تم استدعاء إيقاف خدمة أندرويد بنجاح.")
         except Exception as e:
             print("تنبيه: تعذر إيقاف خدمة أندرويد:", e)
     stop_watcher_thread()

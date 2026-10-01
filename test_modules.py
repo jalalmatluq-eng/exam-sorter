@@ -10,13 +10,17 @@ import shutil
 import time
 from pathlib import Path
 
-import cv2
+try:
+    import cv2
+except Exception:
+    cv2 = None  # type: ignore
 import numpy as np
 from PIL import Image
 
 import classifier
 import face_classifier
 import file_manager
+import storage_backend
 import video_classifier
 from service import media_watcher_service
 from utils.arabic_helper import ar, get_arabic_font_path
@@ -357,6 +361,77 @@ def test_export_logs() -> None:
     print("✓ نجح فحص تصدير سجل التشخيص بالكامل.\n")
 
 
+def test_unified_storage_backend() -> None:
+    print("--- 10. فحص طبقة التخزين الموحدة وهجرة المجلدات والنسخ الآمن ---")
+
+    # 1. فحص استكشاف مواقع التخزين
+    locations = storage_backend.detect_storage_locations()
+    assert "internal" in locations, "يجب اكتشاف الذاكرة الداخلية دائماً!"
+    assert "sdcard" in locations, "يجب تحديد حالة بطاقة SD دائماً!"
+    internal_loc = locations["internal"]
+    assert internal_loc.readable is True
+    print(f"✓ موقع التخزين الداخلي: {internal_loc.name}, متاح={internal_loc.detected}")
+
+    # 2. فحص توحيد أسماء التصنيفات
+    assert storage_backend.normalize_category_name("محاضرات وتعلم") == "محاضرات ودروس"
+    assert storage_backend.normalize_category_name("محاضرات_وتعلم") == "محاضرات ودروس"
+    assert storage_backend.normalize_category_name("صور_الاختبارات") == "صور الاختبارات"
+    assert storage_backend.normalize_category_name("افلام ومسلسلات") == "أفلام ومسلسلات"
+    print("✓ تم التحقق من توحيد أسماء التصنيفات القديمة بدقة.")
+
+    # 3. فحص هجرة المجلدات القديمة تلقائياً
+    test_root = Path("test_data_migration")
+    test_root.mkdir(parents=True, exist_ok=True)
+    old_folder = test_root / "محاضرات وتعلم"
+    old_folder.mkdir(parents=True, exist_ok=True)
+    test_file = old_folder / "lecture_01.mp4"
+    test_file.write_text("dummy lecture content", encoding="utf-8")
+
+    migrated_count = storage_backend.migrate_legacy_folders(test_root)
+    assert migrated_count >= 1, "يجب هجرة الملفات من المجلد القديم!"
+    new_file = test_root / "محاضرات ودروس" / "lecture_01.mp4"
+    assert new_file.exists(), "الملف المهاجر يجب أن يتواجد في المجلد القياسي الموحد!"
+    assert not old_folder.exists(), "المجلد القديم الفارغ يجب أن يحذف بعد الهجرة!"
+    print(f"✓ تمت هجرة المجلد القديم بنجاح ({migrated_count} ملف).")
+
+    # 4. فحص النسخ الذري مع التحقق من الحجم
+    src_test = test_root / "source_atomic.bin"
+    src_test.write_bytes(b"HELLO STREAMING STORAGE " * 500)
+    dest_test = test_root / "dest_atomic.bin"
+    ok = storage_backend.copy_path_to_path(src_test, dest_test)
+    assert ok is True
+    assert dest_test.exists()
+    assert dest_test.stat().st_size == src_test.stat().st_size
+    print("✓ نجح النسخ الذري عبر دفق آمن مع التحقق من الحجم بالبايت.")
+
+    # 5. فحص حذف MediaItem
+    media_item = storage_backend.MediaItem(
+        id=str(dest_test),
+        source_type="path",
+        path=str(dest_test),
+        display_name="dest_atomic.bin",
+        size_bytes=dest_test.stat().st_size,
+    )
+    assert media_item.name == "dest_atomic.bin"
+    assert media_item.exists() is True
+    del_ok = storage_backend.delete_media_item(media_item)
+    assert del_ok is True
+    assert not dest_test.exists()
+    print("✓ نجح التعامل مع MediaItem والتحقق من الحذف الآمن.")
+
+    # 6. فحص وجهات التخزين في file_manager
+    dests = file_manager.get_available_storage_destinations()
+    assert "internal" in dests
+    assert "sdcard" in dests
+    assert "is_writable" in dests["internal"]
+    assert "requires_saf" in dests["sdcard"]
+    print("✓ تم التحقق من واجهة وجهات التخزين وتوافقها مع SAF.")
+
+    # تنظيف
+    shutil.rmtree(test_root, ignore_errors=True)
+    print("✓ نجح فحص طبقة التخزين الموحدة بالكامل.\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -367,6 +442,7 @@ if __name__ == "__main__":
     test_service_watcher()
     test_poison_files_and_pending_scan()
     test_export_logs()
+    test_unified_storage_backend()
     print("==================================================")
     print("  جميع الفحوصات الآلية للوحدات تمت بنجاح 100%!  ")
     print("==================================================")

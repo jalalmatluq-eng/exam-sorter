@@ -140,10 +140,10 @@ class IntroScreen(Screen):
     def on_enter(self, *args: Any) -> None:
         """بدء حركة الدوران الكوني بمجرد فتح الشاشة"""
         if hasattr(self.ids, "app_title"):
-            self.ids.app_title.text = ar("CosmoSort | كوزمو سورت")
+            self.ids.app_title.text = ar("رتّب | Rateb AI")
         if hasattr(self.ids, "app_tagline"):
             self.ids.app_tagline.text = ar(
-                "دليلك المفضل والذكي لتنظيم وترتيب ملفاتك في فضاء واحد"
+                "دليلك الأذكى والأسرع لتنظيم وترتيب وسائطك وملفاتك تلقائياً"
             )
 
         # إعادة ضبط المتغيرات

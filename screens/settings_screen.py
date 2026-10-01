@@ -273,18 +273,35 @@ class SettingsScreen(Screen):
             print("خطأ أثناء تحديث واجهة التخزين:", e)
 
     def select_storage_destination(self, choice: str) -> None:
-        """اختيار وجهة التخزين والفرز (داخلية / كرت SD)"""
+        """اختيار وجهة التخزين والفرز (داخلية / كرت SD) مع دعم كامل لـ SAF"""
         dests = file_manager.get_available_storage_destinations()
         if choice == "sdcard":
             sd_info = dests.get("sdcard")
             if not sd_info or not sd_info.get("available"):
+                reason = (str(sd_info.get("failure_reason", "")) if sd_info else "") or "لم يتم العثور على بطاقة MicroSD مركبة في الجهاز."
                 show_app_dialog(
                     title="كرت الذاكرة غير متوفر",
                     text=(
-                        "لم يتم العثور على بطاقة ذاكرة"
-                        " خارجية SD Card قابلة للكتابة."
-                        " تم الإبقاء على الذاكرة الداخلية."
+                        f"تعذر اعتماد بطاقة الذاكرة الخارجية SD:\n\n{reason}\n\n"
+                        "تم الإبقاء على الذاكرة الداخلية."
                     ),
+                )
+                return
+
+            if sd_info.get("requires_saf"):
+                def _launch_saf_picker() -> None:
+                    self.pick_saf_sdcard_folder()
+
+                from utils.ui_helper import show_confirm_dialog
+                show_confirm_dialog(
+                    title="مطلوب إذن مجلد بطاقة SD",
+                    text=(
+                        "على نظام أندرويد الحديث، تتطلب الكتابة في بطاقة الذاكرة الخارجية SD اختيار المجلد المراد الحفظ فيه عبر منتقي ملفات النظام (Storage Access Framework).\n\n"
+                        "اضغط 'متابعة' لاختيار مجلد بطاقة SD ومنح إذن الكتابة الدائم."
+                    ),
+                    on_confirm=_launch_saf_picker,
+                    confirm_text="اختيار المجلد (SAF)",
+                    cancel_text="إلغاء",
                 )
                 return
 
@@ -310,6 +327,16 @@ class SettingsScreen(Screen):
                 f" لحفظ وفرز كافة الوسائط:\n\n{new_path}"
             ),
         )
+
+    def pick_saf_sdcard_folder(self) -> None:
+        """إطلاق منتقي المجلدات SAF لاختيار مجلد بطاقة SD ومنح إذن دائم"""
+        import storage_backend
+        success = storage_backend.request_saf_folder_picker()
+        if not success:
+            show_app_dialog(
+                title="منتقي المجلدات",
+                text="ميزة Storage Access Framework متاحة على أجهزة أندرويد فقط.",
+            )
 
     def open_current_media_folder(self) -> None:
         """فتح مجلد الملفات المنظمة الحالي في تطبيق الملفات"""

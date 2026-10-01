@@ -1,5 +1,5 @@
 """
-تطبيق CosmoSort (كوزمو سورت): منظّم الوسائط الكوني والذكي لفرز الصور والفيديوهات والاختبارات.
+تطبيق Rateb (رتّب): المُنظّم الذكي للوسائط لفرز الصور والفيديوهات والمستندات والاختبارات.
 - تهيئة إطار العمل KivyMD وضبط الثيم والخطوط العربية.
 - تحميل ملفات التصميم (.kv) وتسجيل الشاشات.
 - إدارة أذونات الأجهزة والخدمات بالخلفية والانتقال بين الشاشات.
@@ -113,6 +113,22 @@ def _handle_uncaught_exception(exctype: Any, value: Any, tb: Any) -> None:
 
 sys.excepthook = _handle_uncaught_exception
 
+
+def _handle_thread_exception(args: Any) -> None:
+    err = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+    thread_name = getattr(args.thread, "name", "unknown_thread")
+    logger.critical("CRITICAL THREAD EXCEPTION in [%s]: %s", thread_name, err)
+    if DEBUG_LOG_FILE is not None:
+        try:
+            with open(DEBUG_LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(f"\n--- THREAD CRASH [{thread_name}] ---\n{err}\n")
+        except Exception:
+            pass
+
+
+import threading
+threading.excepthook = _handle_thread_exception
+
 # تحميل المتغيرات من .env بأمان
 try:
     dotenv_file = Path(__file__).resolve().parent / ".env"
@@ -163,14 +179,14 @@ except Exception as _e:
 
 
 class CosmoSortApp(MDApp):
-    title: str = "CosmoSort - جامع العوالم الذكي"
+    title: str = "Rateb - رتّب | المُنظّم الذكي"
     api_key: str = ""
     arabic_font: str = ""
     batch_queue: list[object]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
-        self.title = "CosmoSort - جامع العوالم الذكي"
+        self.title = "Rateb - رتّب | المُنظّم الذكي"
         self.api_key = os.getenv("ANTHROPIC_API_KEY", "")
         self.arabic_font = font_path or "Roboto"
         self.batch_queue = []
@@ -241,14 +257,129 @@ class CosmoSortApp(MDApp):
         if Window is not None:
             Window.bind(on_keyboard=self.on_hardware_back_key)
 
-        # بدء تشغيل خدمة المراقبة بالخلفية إذا كانت مفعلة برغبة المستخدم
+        return sm
+
+    def on_start(self) -> None:
+        """يُستدعى تلقائياً فور اكتمال MDApp.build() وبدء عرض الإطار الرسومي"""
+        logger.info("تم اكتمال MDApp.build() وبدء دورة حياة on_start")
+
+        # 1. تسجيل التشخيص الشامل للجهاز والصلاحيات والتخزين
+        self._log_system_diagnostics()
+
+        # 2. ربط معالج نتائج أنشطة أندرويد الرسمية (SAF Folder Picker)
+        if platform == "android":
+            try:
+                from android import activity
+                activity.bind(on_activity_result=self.on_activity_result)
+                logger.info("تم ربط on_activity_result بنجاح لمتابعة أذونات SAF")
+            except Exception as e:
+                logger.debug("تنبيه أثناء ربط activity result: %s", e)
+
+            # طلب الصلاحيات الأساسية بعد ظهور الواجهة
+            Clock.schedule_once(lambda _dt: self.request_android_permissions(), 1.0)
+
+        # 3. تشغيل خدمة المراقبة بالخلفية فقط إذا كانت مفعلة برغبة المستخدم بعد تأخير آمن
         if media_watcher_service.is_service_desired_running():
             def _delayed_service_start(_dt: float) -> None:
-                media_watcher_service.start_system_service()
+                try:
+                    if platform == "android":
+                        if file_manager.is_all_files_access_granted():
+                            media_watcher_service.start_system_service()
+                        else:
+                            logger.info("تأجيل تشغيل خدمة المراقبة لحين منح صلاحية الوصول للملفات")
+                    else:
+                        media_watcher_service.start_system_service()
+                except Exception as e:
+                    logger.error("فشل بدء الخدمة في on_start: %s", e, exc_info=True)
 
-            Clock.schedule_once(_delayed_service_start, 2.0)
+            Clock.schedule_once(_delayed_service_start, 3.5)
 
-        return sm
+    def _log_system_diagnostics(self) -> None:
+        """تسجيل تفاصيل المنظومة ومسارات التخزين بدقة في سجل دائم"""
+        try:
+            lines = [
+                f"Rateb App Version: 2.0.1",
+                f"Platform: {platform} | Python: {sys.version.split()[0]}",
+            ]
+            if platform == "android":
+                try:
+                    from jnius import autoclass
+                    Build = autoclass("android.os.Build")
+                    BuildVersion = autoclass("android.os.Build$VERSION")
+                    lines.append(f"Device: {Build.MANUFACTURER} {Build.MODEL}")
+                    lines.append(f"Android SDK: {BuildVersion.SDK_INT} (Release: {BuildVersion.RELEASE})")
+                    lines.append(f"ABIs: {list(Build.SUPPORTED_ABIS)}")
+                except Exception as e:
+                    lines.append(f"Build info query error: {e}")
+
+                try:
+                    lines.append(f"All Files Access: {file_manager.is_all_files_access_granted()}")
+                except Exception as e:
+                    lines.append(f"All Files Access query error: {e}")
+
+            try:
+                import storage_backend
+                locs = storage_backend.detect_storage_locations()
+                for lid, loc in locs.items():
+                    lines.append(
+                        f"Storage [{lid}]: detected={loc.detected}, mounted={loc.mounted}, "
+                        f"writable={loc.writable}, requires_saf={loc.requires_saf}, "
+                        f"free={loc.free_gb}GB, path={loc.path}"
+                    )
+            except Exception as e:
+                lines.append(f"Storage locations query error: {e}")
+
+            logger.info("=== SYSTEM DIAGNOSTICS REPORT ===\n%s\n=================================", "\n".join(lines))
+        except Exception as e:
+            logger.debug("Failed writing diagnostics: %s", e)
+
+    def on_activity_result(self, request_code: int, result_code: int, intent: Any) -> None:
+        """معالجة نتيجة منتقي مجلدات بطاقة الذاكرة الخارجية عبر SAF (Request Code 4201)"""
+        logger.info("on_activity_result: request_code=%s, result_code=%s", request_code, result_code)
+        if request_code == 4201:
+            try:
+                from jnius import autoclass
+                Activity = autoclass("android.app.Activity")
+                if result_code == Activity.RESULT_OK and intent is not None:
+                    tree_uri = intent.getData()
+                    if tree_uri is not None:
+                        from android import mActivity
+                        Intent = autoclass("android.content.Intent")
+                        take_flags = (
+                            Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                        )
+                        cr = mActivity.getContentResolver()
+                        try:
+                            cr.takePersistableUriPermission(tree_uri, take_flags)
+                            logger.info("تم منح وحفظ takePersistableUriPermission بنجاح")
+                        except Exception as e:
+                            logger.warning("تنبيه takePersistableUriPermission: %s", e)
+
+                        uri_str = str(tree_uri.toString())
+                        import storage_backend
+                        storage_backend.save_saf_persisted_uri(uri_str)
+                        file_manager.save_sorter_preferences({
+                            "target_storage": "sdcard",
+                            "saf_sdcard_uri": uri_str,
+                        })
+
+                        from utils.ui_helper import show_modern_notification
+                        show_modern_notification(
+                            "تم اعتماد كرت SD",
+                            "تم منح إذن الحفظ والفرز في بطاقة الذاكرة الخارجية بنجاح",
+                            notif_type="success",
+                        )
+
+                        if self.root and hasattr(self.root, "get_screen"):
+                            try:
+                                settings = self.root.get_screen("settings_screen")
+                                if settings and hasattr(settings, "refresh_storage_destination_ui"):
+                                    settings.refresh_storage_destination_ui()
+                            except Exception:
+                                pass
+            except Exception as e:
+                logger.error("خطأ أثناء معالجة إذن SAF: %s", e, exc_info=True)
 
     def on_hardware_back_key(
         self, _window: object, key: int, *_args: object
@@ -335,6 +466,7 @@ class CosmoSortApp(MDApp):
 
 # التوافق مع أي استدعاءات خارجية سابقة
 ExamSorterApp = CosmoSortApp
+RatebApp = CosmoSortApp
 
 if __name__ == "__main__":
     CosmoSortApp().run()

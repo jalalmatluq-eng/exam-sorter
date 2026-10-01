@@ -24,7 +24,7 @@
 
             MDTopAppBarTitle:
                 id: top_bar_title
-                text: app.ar("الإعدادات | CosmoSort")
+                text: app.ar("الإعدادات | رتّب")
                 theme_text_color: "Custom"
                 text_color: 0.08, 0.16, 0.34, 1
                 bold: True
@@ -263,25 +263,46 @@
                                 text_color: 0.35, 0.45, 0.60, 1
                                 font_size: "11sp"
 
-                    MDButton:
-                        style: "text"
+                    MDBoxLayout:
+                        orientation: "horizontal"
+                        spacing: dp(4)
                         size_hint_y: None
                         height: dp(32)
-                        pos_hint: {"right": 1}
-                        on_release: root.open_current_media_folder()
 
-                        MDButtonIcon:
-                            icon: "folder-open-outline"
-                            theme_icon_color: "Custom"
-                            icon_color: 0.02, 0.52, 0.80, 1
+                        MDButton:
+                            style: "text"
+                            size_hint_x: 0.5
+                            on_release: root.open_current_media_folder()
 
-                        MDButtonText:
-                            id: text_open_folder_btn
-                            text: app.ar("فتح مجلد الملفات المنظمة")
-                            font_size: "11sp"
-                            bold: True
-                            theme_text_color: "Custom"
-                            text_color: 0.02, 0.52, 0.80, 1
+                            MDButtonIcon:
+                                icon: "folder-open-outline"
+                                theme_icon_color: "Custom"
+                                icon_color: 0.02, 0.52, 0.80, 1
+
+                            MDButtonText:
+                                id: text_open_folder_btn
+                                text: app.ar("فتح المجلد المنظم")
+                                font_size: "10sp"
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 0.02, 0.52, 0.80, 1
+
+                        MDButton:
+                            style: "text"
+                            size_hint_x: 0.5
+                            on_release: root.pick_saf_sdcard_folder()
+
+                            MDButtonIcon:
+                                icon: "folder-key-network-outline"
+                                theme_icon_color: "Custom"
+                                icon_color: 0.486, 0.302, 0.988, 1
+
+                            MDButtonText:
+                                text: app.ar("إذن مجلد SD (SAF)")
+                                font_size: "10sp"
+                                bold: True
+                                theme_text_color: "Custom"
+                                text_color: 0.486, 0.302, 0.988, 1
 
                 # ──────────────────────────────────────────────
                 # 3. صلاحية الوصول
