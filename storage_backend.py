@@ -665,14 +665,14 @@ def _detect_android_sdcard() -> StorageLocation:
     sd_target = (found_root / ORGANIZED_FOLDER_NAME) if found_root else Path("/storage/sdcard_saf")
     direct_writable = is_directory_writable(sd_target) if found_root else False
 
+    requires_saf = not direct_writable
     is_writable = direct_writable or has_valid_saf
-    requires_saf = not direct_writable and not has_valid_saf
     fail_reason = ""
 
-    if requires_saf:
+    if requires_saf and not has_valid_saf:
         fail_reason = "تتطلب بطاقة SD اختيار مجلد الحفظ عبر SAF لمنح إذن الكتابة"
         desc = f"مركبة ({found_root}) ولكن تحتاج إذن المجلد (SAF)"
-    elif has_valid_saf and not direct_writable:
+    elif has_valid_saf:
         desc = f"متاحة للكتابة عبر إذن SAF الممنوح ({sd_free} GB متاح)"
     else:
         desc = f"المسار: {sd_target} ({sd_free} GB متاح)"
@@ -712,17 +712,18 @@ def get_active_target_location(target_choice: str | None = None) -> TargetLocati
         locs = detect_storage_locations()
         sd = locs.get("sdcard")
 
+        # 1. إذا كان يوجد SAF URI صالح وممنوح للبطاقة، فالوجهة SAF دائماً
+        saf_uri = (sd.uri if sd else "") or get_saf_persisted_uri()
+        if is_saf_uri_valid(saf_uri):
+            return TargetLocation(
+                storage_type="sdcard",
+                is_saf=True,
+                tree_uri=saf_uri,
+                display_name="بطاقة الذاكرة الخارجية عبر SAF",
+                is_valid=True,
+            )
+
         if not sd or not sd.detected:
-            # التحقق هل يوجد إذن SAF صالح مسبقاً حتى لو فشل كشف الروت الفيزيائي
-            saf_uri = get_saf_persisted_uri()
-            if is_saf_uri_valid(saf_uri):
-                return TargetLocation(
-                    storage_type="sdcard",
-                    is_saf=True,
-                    tree_uri=saf_uri,
-                    display_name="بطاقة الذاكرة الخارجية (SAF)",
-                    is_valid=True,
-                )
             return TargetLocation(
                 storage_type="sdcard",
                 is_saf=False,
@@ -730,7 +731,7 @@ def get_active_target_location(target_choice: str | None = None) -> TargetLocati
                 error_message="بطاقة الذاكرة الخارجية (MicroSD) غير متوفرة أو غير مركبة بالجهاز.",
             )
 
-        # إذا كانت قابلة للكتابة المباشرة (مثل بيئات Android 9 أو مجلد التطبيق المخصص)
+        # 2. إذا كانت قابلة للكتابة المباشرة الفيزيائية دون SAF (مثل بيئات Android 9 أو المجلد المخصص)
         if sd.writable and not sd.requires_saf and sd.path and sd.path != "غير متوفرة حالياً":
             target_p = Path(sd.path)
             return TargetLocation(
@@ -741,17 +742,7 @@ def get_active_target_location(target_choice: str | None = None) -> TargetLocati
                 is_valid=True,
             )
 
-        # بطاقة SD تتطلب SAF
-        saf_uri = sd.uri or get_saf_persisted_uri()
-        if is_saf_uri_valid(saf_uri):
-            return TargetLocation(
-                storage_type="sdcard",
-                is_saf=True,
-                tree_uri=saf_uri,
-                display_name="بطاقة الذاكرة الخارجية عبر SAF",
-                is_valid=True,
-            )
-
+        # 3. بطاقة SD مركبة ولكنها تتطلب إذن SAF
         return TargetLocation(
             storage_type="sdcard",
             is_saf=True,

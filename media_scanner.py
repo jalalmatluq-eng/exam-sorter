@@ -1112,7 +1112,11 @@ def _process_one_file_internal(
         if not target_location.is_valid:
             raise OSError(f"وجهة التخزين المحددة غير صالحة: {target_location.error_message}")
 
-        item_to_process = file_item if is_uri_source else p
+        item_to_process = (
+            file_item
+            if isinstance(file_item, storage_backend.MediaItem)
+            else (file_item if is_uri_source else p)
+        )
         dest_res = file_manager.copy_to_category(
             item_to_process,
             target_category,
