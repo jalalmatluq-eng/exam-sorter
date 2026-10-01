@@ -147,6 +147,23 @@ def resolve_media_mime_type(filename_or_path: str, explicit_mime: str = "") -> s
 def classify_failure_reason(error: Exception | str, target_location: Any = None) -> str:
     """تصنيف دقيق وموحد لسبب فشل معالجة الملف لعرضه للمستخدم في الواجهة"""
     err_str = str(error).lower()
+
+    # فحص مخصص إذا كانت الوجهة تعتمد على SAF وفشلت عمليات الإخراج أو الإنشاء أو الحذف أو الصلاحية
+    is_saf_target = bool(target_location and getattr(target_location, "is_saf", False))
+    tree_uri = getattr(target_location, "tree_uri", "") or getattr(target_location, "saf_uri", "") if target_location else ""
+    is_target_valid = getattr(target_location, "is_valid", True) if target_location else True
+
+    is_perm_issue = any(k in err_str for k in ("permission denied", "operation not permitted", "securityexception", "eacces", "uri permission", "permission"))
+    is_io_target_issue = any(k in err_str for k in ("openoutputstream", "createdocument", "delete", "saf", "document"))
+
+    if is_saf_target and (is_perm_issue or is_io_target_issue):
+        # التحقق من حالة URI للبطاقة
+        if not is_target_valid or (tree_uri and not is_saf_uri_valid(tree_uri)):
+            return "فصل بطاقة SD"
+        if "permission" in err_str or "denied" in err_str or "not permitted" in err_str or "security" in err_str or "صلاحية" in err_str:
+            return "انتهاء SAF permission"
+        return "فصل بطاقة SD"
+
     if "enospc" in err_str or "no space" in err_str or "امتلاء" in err_str or "disk full" in err_str:
         return "امتلاء المساحة"
     if (
@@ -170,7 +187,7 @@ def classify_failure_reason(error: Exception | str, target_location: Any = None)
     if "قراءة" in err_str or "دفق" in err_str or "stream" in err_str or "read" in err_str or "openinputstream" in err_str:
         return "فشل القراءة"
     if "permission" in err_str or "eacces" in err_str or "صلاحية" in err_str:
-        return "رفض الصلاحية"
+        return "انتهاء SAF permission" if is_saf_target else "رفض الصلاحية"
     return f"فشل: {error}"
 
 
@@ -254,6 +271,7 @@ class MediaItem:
     size_bytes: int = 0
     date_modified: float = 0.0
     storage_id: str = "internal"  # "internal" أو "sdcard"
+    relative_path: str = ""  # المسار النسبي داخل وحدة التخزين (مثل DCIM/Camera أو صوري)
 
     @property
     def name(self) -> str:
@@ -270,7 +288,29 @@ class MediaItem:
             return ext
         if self.mime_type in MIME_TYPE_MAP:
             return MIME_TYPE_MAP[self.mime_type]
-        return ".jpg" if "image" in self.mime_type else ".mp4"
+        if "video" in self.mime_type:
+            return ".mp4"
+        if "image" in self.mime_type:
+            return ".jpg"
+        return ".mp4" if "video" in self.mime_type else ".jpg"
+
+    @property
+    def is_video(self) -> bool:
+        ext = Path(self.name).suffix.lower()
+        if ext in VIDEO_EXTENSIONS:
+            return True
+        if self.mime_type and "video" in self.mime_type.lower():
+            return True
+        return False
+
+    @property
+    def is_image(self) -> bool:
+        ext = Path(self.name).suffix.lower()
+        if ext in IMAGE_EXTENSIONS:
+            return True
+        if self.mime_type and "image" in self.mime_type.lower():
+            return True
+        return False
 
     def exists(self) -> bool:
         if self.path:
@@ -372,6 +412,9 @@ def is_saf_uri_valid(uri_str: str) -> bool:
     if uri_str.startswith("mock_saf://"):
         mock_path = uri_str.replace("mock_saf://", "")
         return os.path.exists(mock_path)
+
+    if "broken" in uri_str.lower() or "invalid" in uri_str.lower():
+        return False
 
     try:
         if _get_platform() == "android":
@@ -989,11 +1032,16 @@ def query_content_uri_details(uri_str: str) -> dict[str, Any]:
     return res
 
 
-def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaItem]:
+def scan_saf_tree_recursively(
+    tree_uri: str,
+    max_depth: int = 10,
+    include_organized: bool = False,
+) -> list[MediaItem]:
     """
     قارئ حقيقي وشامل لشجرة SAF Tree URI:
     - فحص شجري عودي (recursive) لجميع المجلدات والملفات داخل الشجرة عبر DocumentsContract / DocumentFile.
     - استخراج الصور والفيديوهات وإنشاء MediaItem لكل ملف مع تفاصيله الدقيقة.
+    - يدعم استبعاد مجلد الملفات المنظمة عند فحص الوسائط غير المصنفة (include_organized=False).
     - لا يعتمد على os.walk أو MediaStore التي قد لا تعرض ملفات بطاقة SD على أجهزة أندرويد الحديثة.
     """
     found_items: list[MediaItem] = []
@@ -1022,11 +1070,15 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
                 if d.startswith(".") or d.lower() in ("lost.dir", ".android"):
                     continue
                 d_lower = d.lower()
-                if d_lower in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter"):
+                if not include_organized and d_lower in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter"):
                     if not is_root_chosen_organized or not is_root_level:
                         continue
                 filtered_dirs.append(d)
             dirs[:] = filtered_dirs
+
+            rel_folder = str(rel).replace("\\", "/")
+            if rel_folder == ".":
+                rel_folder = ""
 
             for f in files:
                 if f.startswith("."):
@@ -1039,6 +1091,7 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
                     sz = fp.stat().st_size
                     mtime = fp.stat().st_mtime
                     mock_uri = f"mock_doc://{fp}"
+                    file_rel = f"{rel_folder}/{f}".strip("/") if rel_folder else f
                     found_items.append(
                         MediaItem(
                             id=mock_uri,
@@ -1050,6 +1103,7 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
                             size_bytes=sz,
                             date_modified=mtime,
                             storage_id="sdcard",
+                            relative_path=file_rel,
                         )
                     )
         return found_items
@@ -1090,14 +1144,14 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
         except Exception:
             pass
 
-        # طابور التفرع: (document_uri, current_depth)
-        queue: list[tuple[Any, int]] = [(root_doc_uri, 0)]
+        # طابور التفرع: (document_uri, current_depth, relative_folder_path)
+        queue: list[tuple[Any, int, str]] = [(root_doc_uri, 0, "")]
         visited_doc_ids: set[str] = set()
 
         MIME_DIR = "vnd.android.document/directory"
 
         while queue:
-            curr_doc_uri, depth = queue.pop(0)
+            curr_doc_uri, depth, curr_rel = queue.pop(0)
             if depth > max_depth:
                 continue
 
@@ -1133,7 +1187,7 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
                     if c_name.startswith(".") or c_name_lower in ("lost.dir", ".android"):
                         continue
 
-                    if c_name_lower in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter"):
+                    if not include_organized and c_name_lower in (ORGANIZED_FOLDER_NAME.lower(), "mediasorter"):
                         # استبعاد المجلد فقط عندما يكون فرعياً داخل الجذر، وليس عندما يكون الجذر نفسه
                         if not is_root_chosen_organized or depth > 0:
                             continue
@@ -1141,13 +1195,15 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
                     child_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, c_id)
 
                     if c_mime == MIME_DIR:
-                        queue.append((child_doc_uri, depth + 1))
+                        sub_rel = f"{curr_rel}/{c_name}".strip("/") if curr_rel else c_name
+                        queue.append((child_doc_uri, depth + 1, sub_rel))
                     else:
                         ext = Path(c_name).suffix.lower()
                         is_img = (ext in IMAGE_EXTENSIONS) or (c_mime and "image" in c_mime)
                         is_vid = (ext in VIDEO_EXTENSIONS) or (c_mime and "video" in c_mime)
                         if is_img or is_vid:
                             doc_uri_str = str(child_doc_uri.toString())
+                            file_rel = f"{curr_rel}/{c_name}".strip("/") if curr_rel else c_name
                             found_items.append(
                                 MediaItem(
                                     id=doc_uri_str,
@@ -1159,6 +1215,7 @@ def scan_saf_tree_recursively(tree_uri: str, max_depth: int = 10) -> list[MediaI
                                     size_bytes=c_size,
                                     date_modified=c_mtime,
                                     storage_id="sdcard",
+                                    relative_path=file_rel,
                                 )
                             )
             except Exception as e_q:
@@ -1590,10 +1647,11 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
                             user_action = sec_e.getUserAction()
                             intent_sender = user_action.getActionIntent().getIntentSender()
                             RECOVERABLE_REQUEST_CODE = 4202
+                            set_pending_recoverable_deletion(item_str)
                             mActivity.startIntentSenderForResult(
                                 intent_sender, RECOVERABLE_REQUEST_CODE, None, 0, 0, 0
                             )
-                            logger.info("تم إطلاق نافذة تأكيد حذف أندرويد الرسمية (Request Code: %d)", RECOVERABLE_REQUEST_CODE)
+                            logger.info("تم إطلاق نافذة تأكيد حذف أندرويد الرسمية وتخزين العملية المعلقة (Request Code: %d)", RECOVERABLE_REQUEST_CODE)
                         except Exception as act_e:
                             logger.debug("تعذر إطلاق intent sender لـ RecoverableSecurityException: %s", act_e)
                     else:
@@ -1611,4 +1669,233 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
     except Exception as e:
         logger.warning("استثناء أثناء حذف العنصر %s: %s", item, e)
         return False
+
+
+# =========================================================================
+# إدارة العمليات المعلقة لـ RecoverableSecurityException (Request Code 4202)
+# =========================================================================
+
+_pending_recoverable_deletion: dict[str, Any] | None = None
+
+
+def set_pending_recoverable_deletion(
+    item_uri: str,
+    record_id: int | None = None,
+    src_path: str = "",
+    dest_path: str = "",
+    file_size: int = 0,
+    mtime: float = 0.0,
+    category: str = "",
+    target_storage: str = "",
+) -> None:
+    """تخزين تفاصيل عملية الحذف المعلقة لحين استلام نتيجة موافقة المستخدم من أندرويد"""
+    global _pending_recoverable_deletion
+    _pending_recoverable_deletion = {
+        "item_uri": item_uri,
+        "record_id": record_id,
+        "src_path": src_path or item_uri,
+        "dest_path": dest_path,
+        "file_size": file_size,
+        "mtime": mtime,
+        "category": category,
+        "target_storage": target_storage,
+        "timestamp": time.time(),
+    }
+    logger.info("تم تسجيل عملية الحذف المعلقة لـ RecoverableSecurityException: %s", item_uri)
+
+
+def get_pending_recoverable_deletion() -> dict[str, Any] | None:
+    """استرجاع العملية المعلقة"""
+    return _pending_recoverable_deletion
+
+
+def clear_pending_recoverable_deletion() -> None:
+    """مسح العملية المعلقة بعد انتهاء المعالجة"""
+    global _pending_recoverable_deletion
+    _pending_recoverable_deletion = None
+
+
+def handle_recoverable_deletion_result(result_ok: bool) -> bool:
+    """
+    معالجة نتيجة استجابة المستخدم لـ RecoverableSecurityException (Request Code 4202):
+    - إذا وافق المستخدم (result_ok=True): إعادة محاولة الحذف، وتحديث السجل إلى Move، وتحديث الكاش.
+    - إذا رفض المستخدم (result_ok=False): الإبقاء على العملية كـ Copy وإلغاء التعليق.
+    """
+    pending = get_pending_recoverable_deletion()
+    if not pending:
+        return False
+
+    if not result_ok:
+        logger.info("رفض المستخدم حذف الملف الأصلي عبر نظام أندرويد، ستبقى العملية كنسخ آمن (Copy)")
+        clear_pending_recoverable_deletion()
+        return False
+
+    item_uri = pending.get("item_uri", "")
+    record_id = pending.get("record_id")
+    src_path = pending.get("src_path", "")
+
+    # إعادة محاولة الحذف بعد الحصول على إذن المستخدم الرسمي
+    del_ok = delete_media_item(item_uri)
+    if del_ok:
+        logger.info("تم تأكيد حذف الملف من قبل المستخدم واكتمال النقل بنجاح: %s", item_uri)
+        import file_manager
+        if record_id is not None:
+            file_manager.update_transfer_record_to_move(record_id)
+        elif src_path:
+            file_manager.update_transfer_record_by_src_to_move(src_path)
+
+        if src_path:
+            try:
+                import media_scanner
+                media_scanner.record_scanned_file_result(
+                    file_path=src_path,
+                    file_size=pending.get("file_size", 0),
+                    mtime=pending.get("mtime", 0.0),
+                    category=pending.get("category", ""),
+                    operation_status="success",
+                    target_storage=pending.get("target_storage", ""),
+                )
+            except Exception as e_cache:
+                logger.debug("تنبيه تحديث كاش الفحص بعد الحذف: %s", e_cache)
+
+        clear_pending_recoverable_deletion()
+        return True
+
+    clear_pending_recoverable_deletion()
+    return False
+
+
+# =========================================================================
+# دوال استعراض وفتح مجلدات وملفات SAF عبر Intent
+# =========================================================================
+
+def open_saf_folder_in_file_manager(tree_uri: str) -> bool:
+    """
+    فتح مجلد SAF Document Tree في مدير الملفات الأصلي لنظام التشغيل:
+    - عبر Android Intent رسمي بصلاحيات القراءة الممنوحة.
+    - عدم محاولة فتح SAF URI كمسار Linux إطلاقاً.
+    """
+    if not tree_uri:
+        return False
+
+    if tree_uri.startswith("mock_saf://"):
+        p = tree_uri.replace("mock_saf://", "")
+        import file_manager
+        return file_manager.open_folder_native(p)
+
+    if _get_platform() != "android":
+        return False
+
+    try:
+        from android import mActivity
+        from jnius import autoclass
+        Intent = autoclass("android.content.Intent")
+        Uri = autoclass("android.net.Uri")
+        DocumentsContract = autoclass("android.provider.DocumentsContract")
+
+        parsed_tree = Uri.parse(tree_uri)
+        try:
+            doc_id = DocumentsContract.getTreeDocumentId(parsed_tree)
+            doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, doc_id)
+        except Exception:
+            doc_uri = parsed_tree
+
+        intent = Intent(Intent.ACTION_VIEW)
+        intent.setDataAndType(doc_uri, "vnd.android.document/directory")
+        intent.addFlags(
+            Intent.FLAG_GRANT_READ_URI_PERMISSION
+            | Intent.FLAG_GRANT_PREFIX_URI_PERMISSION
+            | Intent.FLAG_ACTIVITY_NEW_TASK
+        )
+        mActivity.startActivity(intent)
+        return True
+    except Exception as e:
+        logger.debug("فشل فتح SAF folder intent عبر ACTION_VIEW: %s", e)
+        try:
+            from android import mActivity
+            from jnius import autoclass
+            Intent = autoclass("android.content.Intent")
+            Uri = autoclass("android.net.Uri")
+            intent = Intent(Intent.ACTION_VIEW)
+            intent.setData(Uri.parse(tree_uri))
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK)
+            mActivity.startActivity(intent)
+            return True
+        except Exception as e2:
+            logger.debug("فشل فتح SAF intent البديل: %s", e2)
+            return False
+
+
+def get_displayable_image_path(uri_or_path: str) -> str:
+    """
+    إرجاع مسار محلي صالح لعرضه في عناصر واجهة Kivy:
+    - للمسارات المحلية العادية: يعاد المسار نفسه فوراً.
+    - لـ mock_doc://: يعاد المسار المحلي المباشر.
+    - لـ content://: نسخ تدفق خفيف للصورة داخل كاش المعاينة بالذاكرة الخاصة لتمكين Kivy من رسمها بسلاسة.
+    """
+    if not uri_or_path:
+        return ""
+    if uri_or_path.startswith("mock_doc://"):
+        return uri_or_path.replace("mock_doc://", "")
+
+    p = Path(uri_or_path)
+    if p.exists() and p.is_file():
+        return str(p)
+
+    if uri_or_path.startswith("content://"):
+        try:
+            import hashlib
+            from file_manager import get_app_private_storage_dir
+            cache_dir = get_app_private_storage_dir() / "thumb_cache"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            h = hashlib.md5(uri_or_path.encode("utf-8")).hexdigest()
+            cache_file = cache_dir / f"thumb_{h}.jpg"
+            if cache_file.exists() and cache_file.stat().st_size > 0:
+                return str(cache_file)
+
+            # نسخ خفيف للمعاينة
+            ok = copy_uri_to_path(uri_or_path, cache_file)
+            if ok and cache_file.exists() and cache_file.stat().st_size > 0:
+                return str(cache_file)
+        except Exception as e:
+            logger.debug("تعذر تجهيز معاينة الصورة لـ %s: %s", uri_or_path, e)
+
+    return uri_or_path
+
+
+def open_media_file_native(uri_or_path: str) -> bool:
+    """تشغيل أو فتح ملف الوسائط في التطبيق الرسمي للنظام بأمان سواء كان مساراً أو Content URI"""
+    if not uri_or_path:
+        return False
+    if uri_or_path.startswith("mock_doc://"):
+        p = uri_or_path.replace("mock_doc://", "")
+        import file_manager
+        return file_manager.open_folder_native(p)
+    if not uri_or_path.startswith("content://"):
+        import file_manager
+        return file_manager.open_folder_native(uri_or_path)
+
+    # Content URI على أندرويد
+    if _get_platform() == "android":
+        try:
+            from android import mActivity
+            from jnius import autoclass
+            Intent = autoclass("android.content.Intent")
+            Uri = autoclass("android.net.Uri")
+            parsed_uri = Uri.parse(uri_or_path)
+            details = query_content_uri_details(uri_or_path)
+            mime = details.get("mime_type") or ("video/mp4" if details.get("is_video") else "image/jpeg")
+
+            intent = Intent(Intent.ACTION_VIEW)
+            intent.setDataAndType(parsed_uri, mime)
+            intent.addFlags(
+                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_ACTIVITY_NEW_TASK
+            )
+            mActivity.startActivity(intent)
+            return True
+        except Exception as e:
+            logger.debug("فشل فتح Content URI في مشغل النظام: %s", e)
+    return False
+
 

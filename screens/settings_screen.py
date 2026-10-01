@@ -356,13 +356,16 @@ class SettingsScreen(Screen):
         import storage_backend
         target_loc = storage_backend.get_active_target_location()
         if target_loc.is_saf:
-            show_app_dialog(
-                title="مجلد الملفات المنظمة (SD Card)",
-                text=(
-                    f"الملفات المنظمة محفوظة في بطاقة الذاكرة الخارجية عبر SAF:\n\n{target_loc.display_name}\n\n"
-                    "يمكنك تصفحها وفتحها مباشرة عبر تطبيق 'ملفاتي' داخل بطاقة SD في مجلد 'الملفات المنظمة'."
-                ),
-            )
+            tree_uri = target_loc.tree_uri or target_loc.saf_uri
+            opened = storage_backend.open_saf_folder_in_file_manager(tree_uri)
+            if not opened:
+                show_app_dialog(
+                    title="مجلد الملفات المنظمة (SD Card)",
+                    text=(
+                        f"الملفات المنظمة محفوظة في بطاقة الذاكرة الخارجية عبر SAF:\n\n{target_loc.display_name}\n\n"
+                        "يمكنك تصفحها وفتحها مباشرة عبر تطبيق 'ملفاتي' داخل بطاقة SD في مجلد 'الملفات المنظمة'."
+                    ),
+                )
             return
 
         path = target_loc.path or file_manager.get_internal_media_sorter_base_path()
@@ -851,9 +854,11 @@ class SettingsScreen(Screen):
     def find_duplicates_action(self) -> None:
         """كشف الملفات المكررة داخل مجلدات التخزين مع خيار الحذف الآمن المباشر"""
         try:
+            import storage_backend
             import storage_utils
 
-            dupes = storage_utils.find_duplicate_files()
+            target_loc = storage_backend.get_active_target_location()
+            dupes = storage_utils.find_duplicate_files(target_location=target_loc)
             if not dupes:
                 _ = show_app_dialog(
                     title="لا توجد مكررات ✓",
@@ -868,14 +873,17 @@ class SettingsScreen(Screen):
             total_bytes = 0
             for g in dupes:
                 for f in g[1:]:
-                    try:
-                        total_bytes += Path(f).stat().st_size
-                    except OSError:
-                        pass
+                    if str(f).startswith("content://") or str(f).startswith("mock_doc://"):
+                        total_bytes += storage_backend.get_uri_file_size(str(f))
+                    else:
+                        try:
+                            total_bytes += Path(f).stat().st_size
+                        except OSError:
+                            pass
             size_mb = round(total_bytes / 1048576, 2)
 
             def _do_remove_dupes() -> None:
-                del_count, freed = storage_utils.remove_duplicate_files(dupes)
+                del_count, freed = storage_utils.remove_duplicate_files(dupes, target_location=target_loc)
                 freed_mb = round(freed / 1048576, 2)
                 _ = show_app_dialog(
                     title="تم التنظيف بنجاح ✓",
@@ -886,7 +894,10 @@ class SettingsScreen(Screen):
                     ),
                 )
 
-            sample_text = "\n".join(f"• {Path(g[0]).name}" for g in dupes[:3])
+            sample_text = "\n".join(
+                f"• {storage_backend.query_content_uri_details(str(g[0])).get('display_name') or Path(g[0]).name}"
+                for g in dupes[:3]
+            )
             _ = show_confirm_dialog(
                 title="كشف ملفات مكررة",
                 text=(

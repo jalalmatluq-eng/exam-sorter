@@ -799,13 +799,16 @@ class HomeScreen(Screen):
         import storage_backend
         target_loc = storage_backend.get_active_target_location()
         if target_loc.is_saf:
-            _ = show_app_dialog(
-                title="مجلد الملفات المنظمة (SD Card)",
-                text=(
-                    f"الوسائط المصنفة محفوظة في بطاقة الذاكرة الخارجية عبر إذن SAF:\n\n{target_loc.display_name}\n\n"
-                    "يمكنك تصفحها والوصول إليها عبر تطبيق 'ملفاتي' مباشرة داخل بطاقة SD في مجلد 'الملفات المنظمة'."
-                ),
-            )
+            tree_uri = target_loc.tree_uri or target_loc.saf_uri
+            opened = storage_backend.open_saf_folder_in_file_manager(tree_uri)
+            if not opened:
+                _ = show_app_dialog(
+                    title="مجلد الملفات المنظمة (SD Card)",
+                    text=(
+                        f"الوسائط المصنفة محفوظة في بطاقة الذاكرة الخارجية عبر إذن SAF:\n\n{target_loc.display_name}\n\n"
+                        "يمكنك تصفحها والوصول إليها عبر تطبيق 'ملفاتي' مباشرة داخل بطاقة SD في مجلد 'الملفات المنظمة'."
+                    ),
+                )
             return
 
         base_path = target_loc.path or file_manager.get_internal_media_sorter_base_path()

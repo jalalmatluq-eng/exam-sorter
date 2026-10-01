@@ -27,7 +27,10 @@ logger = logging.getLogger("FileManager")
 
 def get_base_storage_path() -> Path:
     """تحديد المسار الأساسي لحفظ ملفات الاختبارات المنظمة"""
-    base = get_media_sorter_base_path() / "صور الاختبارات"
+    try:
+        base = get_media_sorter_base_path() / "صور الاختبارات"
+    except OSError:
+        base = get_internal_media_sorter_base_path() / "صور الاختبارات"
     try:
         base.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -180,26 +183,91 @@ def cleanup_temp_files(temp_dir: Path | None = None) -> int:
     return cleaned_count
 
 
-def list_subjects(base_path: Path | None = None) -> list[dict[str, object]]:
+def list_subjects(
+    base_path: Path | None = None,
+    target_location: Any | None = None,
+) -> list[dict[str, object]]:
     """
-    إرجاع قائمة بجميع المواد والأقسام المخزنة وعدد الملفات في كل مجلد.
-    مرتبة تنازلياً بحسب عدد الملفات ثم أبجدياً.
+    إرجاع قائمة بجميع المواد والأقسام المخزنة وعدد الملفات في كل مجلد:
+    - يدعم المسار الفيزيائي (Path) للذاكرة الداخلية.
+    - يدعم SAF Tree URI لبطاقة الذاكرة الخارجية دون استدعاء Path.iterdir أو get_media_sorter_base_path.
+    - مرتبة تنازلياً بحسب عدد الملفات ثم أبجدياً.
     """
+    import storage_backend
+    if target_location is None:
+        if base_path is not None:
+            target_location = storage_backend.TargetLocation(
+                storage_type="custom",
+                is_saf=False,
+                path=Path(base_path),
+                display_name=str(base_path),
+                is_valid=True,
+            )
+        else:
+            target_location = storage_backend.get_active_target_location()
+
     valid_extensions = {
         ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif",
         ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm", ".m4v", ".flv"
     }
+    subjects_dict: dict[str, dict[str, object]] = {}
+
+    # 1. إذا كانت الوجهة SAF Tree URI لبطاقة الذاكرة الخارجية
+    if target_location and target_location.is_saf:
+        tree_uri = target_location.tree_uri or target_location.saf_uri
+        if tree_uri and storage_backend.is_saf_uri_valid(tree_uri):
+            try:
+                saf_items = storage_backend.scan_saf_tree_recursively(tree_uri, include_organized=True)
+                for item in saf_items:
+                    rel = getattr(item, "relative_path", "")
+                    if rel:
+                        parts = rel.replace("\\", "/").strip("/").split("/")
+                        if parts and parts[0] == storage_backend.ORGANIZED_FOLDER_NAME:
+                            parts = parts[1:]
+                        if parts:
+                            subj_name = parts[0]
+                            if subj_name in ("صور الاختبارات", "صور اختبارات") and len(parts) > 1:
+                                subj_name = parts[1]
+                        else:
+                            subj_name = "خارج التصنيف"
+                    else:
+                        raw_p = item.path or item.id
+                        parts = raw_p.replace("\\", "/").strip("/").split("/")
+                        subj_name = parts[-2] if len(parts) >= 2 else "خارج التصنيف"
+
+                    if subj_name not in subjects_dict:
+                        subjects_dict[subj_name] = {
+                            "name": subj_name,
+                            "folder_path": f"{tree_uri}/{subj_name}",
+                            "count": 0,
+                            "latest_modified": 0.0,
+                            "is_saf": True,
+                        }
+                    subjects_dict[subj_name]["count"] = int(str(subjects_dict[subj_name]["count"])) + 1
+                    cur_m = float(str(subjects_dict[subj_name]["latest_modified"]))
+                    subjects_dict[subj_name]["latest_modified"] = max(cur_m, float(item.date_modified))
+            except Exception as e:
+                logger.error("خطأ أثناء استعلام مجلدات SAF في list_subjects: %s", e)
+
+        subjects = list(subjects_dict.values())
+        subjects.sort(key=lambda s: (-int(str(s["count"])), str(s["name"])))
+        return subjects
+
+    # 2. إذا كانت الوجهة مسار محلي فيزيائي (الذاكرة الداخلية)
     roots: list[Path] = []
-    if base_path is not None:
+    if target_location and target_location.path:
+        roots.append(target_location.path)
+        exam_p = target_location.path / "صور الاختبارات"
+        if exam_p.exists() and exam_p not in roots:
+            roots.append(exam_p)
+    elif base_path is not None:
         roots.append(Path(base_path))
     else:
-        media_root = get_media_sorter_base_path()
-        roots.append(media_root)
-        exam_root = media_root / "صور الاختبارات"
-        if exam_root.exists() and exam_root not in roots:
-            roots.append(exam_root)
-
-    subjects_dict: dict[str, dict[str, object]] = {}
+        int_base = get_internal_media_sorter_base_path()
+        roots.append(int_base)
+        exam_base = int_base / "صور الاختبارات"
+        if exam_base.exists() and exam_base not in roots:
+            roots.append(exam_base)
 
     for root in roots:
         try:
@@ -263,35 +331,33 @@ def list_subjects(base_path: Path | None = None) -> list[dict[str, object]]:
                             "latest_modified": s_mod,
                         }
                     else:
-                        old_c = int(
-                            str(subjects_dict[sub_name]["count"])
-                        )
-                        subjects_dict[sub_name]["count"] = (
-                            old_c + s_count
-                        )
-                        old_m = float(
-                            str(
-                                subjects_dict[sub_name][
-                                    "latest_modified"
-                                ]
-                            )
-                        )
-                        subjects_dict[sub_name][
-                            "latest_modified"
-                        ] = max(old_m, float(s_mod))
+                        old_c = int(str(subjects_dict[sub_name]["count"]))
+                        subjects_dict[sub_name]["count"] = old_c + s_count
+                        old_m = float(str(subjects_dict[sub_name]["latest_modified"]))
+                        subjects_dict[sub_name]["latest_modified"] = max(old_m, float(s_mod))
 
-                    count += sub_exam_count
+                    count += s_count
 
                 name = item.name
                 if name in subjects_dict:
                     cur_c = int(str(subjects_dict[name]["count"]))
                     subjects_dict[name]["count"] = cur_c + count
-                    cur_m = float(
-                        str(subjects_dict[name]["latest_modified"])
-                    )
-                    subjects_dict[name]["latest_modified"] = max(
-                        cur_m, float(latest_mod)
-                    )
+                    cur_m = float(str(subjects_dict[name]["latest_modified"]))
+                    subjects_dict[name]["latest_modified"] = max(cur_m, float(latest_mod))
+                else:
+                    subjects_dict[name] = {
+                        "name": name,
+                        "folder_path": str(item),
+                        "count": count,
+                        "latest_modified": latest_mod,
+                    }
+            else:
+                name = item.name
+                if name in subjects_dict:
+                    cur_c = int(str(subjects_dict[name]["count"]))
+                    subjects_dict[name]["count"] = cur_c + count
+                    cur_m = float(str(subjects_dict[name]["latest_modified"]))
+                    subjects_dict[name]["latest_modified"] = max(cur_m, float(latest_mod))
                 else:
                     subjects_dict[name] = {
                         "name": name,
@@ -305,84 +371,148 @@ def list_subjects(base_path: Path | None = None) -> list[dict[str, object]]:
     return subjects
 
 
+# اسم بديل موحد ومطابق لمتطلبات المعمارية
+get_subjects = list_subjects
+
+
 def get_subject_images(
-    subject_name: str, base_path: Path | None = None
+    subject_name: str,
+    base_path: Path | None = None,
+    target_location: Any | None = None,
 ) -> list[str]:
-    """استرجاع قائمة مسارات الصور لمادة معينة مرتبة من الأحدث إلى الأقدم"""
+    """
+    استرجاع قائمة مسارات أو URIs الصور والفيديوهات لمادة أو قسم معين مرتبة من الأحدث إلى الأقدم:
+    - إذا كانت الوجهة SAF، يستخرج ملفات المادة عبر scan_saf_tree_recursively.
+    - إذا كانت الذاكرة الداخلية، يستخرج الملفات عبر المسار المحلي.
+    - يمنع استخدام get_media_sorter_base_path عند اختيار SAF.
+    """
+    import storage_backend
     clean_name = sanitize_folder_name(subject_name)
-    candidates: list[Path] = []
-    if base_path is not None:
-        candidates.append(Path(base_path) / clean_name)
-        candidates.append(Path(base_path) / "صور الاختبارات" / clean_name)
-    else:
-        candidates.append(get_base_storage_path() / clean_name)
-        media_root = get_media_sorter_base_path()
-        candidates.append(media_root / clean_name)
-        candidates.append(media_root / "صور الاختبارات" / clean_name)
-        candidates.append(media_root / "صور اختبارات" / clean_name)
+
+    if target_location is None:
+        if base_path is not None:
+            target_location = storage_backend.TargetLocation(
+                storage_type="custom",
+                is_saf=False,
+                path=Path(base_path),
+                display_name=str(base_path),
+                is_valid=True,
+            )
+        else:
+            target_location = storage_backend.get_active_target_location()
 
     valid_extensions = {
         ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif",
         ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm", ".m4v", ".flv"
     }
-    images: list[str] = []
 
+    # 1. إذا كانت الوجهة SAF Tree URI
+    if target_location and target_location.is_saf:
+        tree_uri = target_location.tree_uri or target_location.saf_uri
+        if tree_uri and storage_backend.is_saf_uri_valid(tree_uri):
+            try:
+                saf_items = storage_backend.scan_saf_tree_recursively(tree_uri, include_organized=True)
+                matching: list[tuple[str, float]] = []
+                for item in saf_items:
+                    rel = getattr(item, "relative_path", "")
+                    matched = False
+                    if rel:
+                        parts = rel.replace("\\", "/").strip("/").split("/")
+                        if parts and parts[0] == storage_backend.ORGANIZED_FOLDER_NAME:
+                            parts = parts[1:]
+                        if clean_name in parts:
+                            matched = True
+                    else:
+                        raw_p = item.path or item.id
+                        if clean_name.lower() in raw_p.lower():
+                            matched = True
+                    if matched:
+                        file_uri = item.uri or item.path
+                        matching.append((file_uri, float(item.date_modified)))
+
+                matching.sort(key=lambda x: x[1], reverse=True)
+                return [m[0] for m in matching]
+            except Exception as e:
+                logger.error("خطأ أثناء جلب ملفات المادة عبر SAF: %s", e)
+        return []
+
+    # 2. وجهة مسار محلي فيزيائي
+    candidates: list[Path] = []
+    if target_location and target_location.path:
+        candidates.append(target_location.path / clean_name)
+        candidates.append(target_location.path / "صور الاختبارات" / clean_name)
+    elif base_path is not None:
+        candidates.append(Path(base_path) / clean_name)
+        candidates.append(Path(base_path) / "صور الاختبارات" / clean_name)
+    else:
+        int_base = get_internal_media_sorter_base_path()
+        candidates.append(int_base / clean_name)
+        candidates.append(int_base / "صور الاختبارات" / clean_name)
+
+    images: list[str] = []
     for subject_folder in candidates:
         if subject_folder.exists() and subject_folder.is_dir():
-            if clean_name in ("صور الاختبارات", "صور اختبارات"):
-                for root, _, files in os.walk(str(subject_folder)):
-                    for f in files:
-                        if Path(f).suffix.lower() in valid_extensions:
-                            full_img = Path(root) / f
-                            if str(full_img) not in images:
-                                images.append(str(full_img))
-            else:
-                for img in subject_folder.iterdir():
-                    is_valid = (
-                        img.is_file()
-                        and img.suffix.lower() in valid_extensions
-                        and str(img) not in images
-                    )
-                    if is_valid:
-                        images.append(str(img))
+            for root, _, files in os.walk(str(subject_folder)):
+                for f in files:
+                    if Path(f).suffix.lower() in valid_extensions:
+                        full_img = Path(root) / f
+                        if str(full_img) not in images:
+                            images.append(str(full_img))
 
     images.sort(key=lambda p: os.path.getmtime(p), reverse=True)
     return images
 
 
 def delete_image_file(image_path: str) -> bool:
-    """حذف صورة معينة بأمان من مجلد المادة."""
+    """حذف صورة أو فيديو معينة بأمان من مجلد المادة سواء كانت مساراً محلياً أو SAF Document URI"""
+    import storage_backend
     try:
-        p = Path(image_path)
-        if p.exists() and p.is_file():
-            p.unlink()
-            return True
-    except OSError as e:
-        print("خطأ أثناء حذف الصورة:", e)
-    return False
+        return storage_backend.delete_media_item(image_path)
+    except Exception as e:
+        logger.warning("خطأ أثناء حذف الصورة/الملف %s: %s", image_path, e)
+        return False
 
 
 def delete_subject_folder(
-    subject_name: str, base_path: Path | None = None
+    subject_name: str,
+    base_path: Path | None = None,
+    target_location: Any | None = None,
 ) -> bool:
-    """حذف مجلد مادة بالكامل وجميع الصور بداخله."""
-    if base_path is None:
-        base_path = get_base_storage_path()
+    """حذف مجلد مادة بالكامل وجميع الصور بداخله بأمان عبر Path أو SAF"""
+    import storage_backend
+    if target_location is None:
+        if base_path is not None:
+            target_location = storage_backend.TargetLocation(
+                storage_type="custom",
+                is_saf=False,
+                path=Path(base_path),
+                display_name=str(base_path),
+                is_valid=True,
+            )
+        else:
+            target_location = storage_backend.get_active_target_location()
 
     clean_name = sanitize_folder_name(subject_name)
-    subject_folder = Path(base_path) / clean_name
 
+    if target_location and target_location.is_saf:
+        imgs = get_subject_images(clean_name, target_location=target_location)
+        for img in imgs:
+            delete_image_file(img)
+        return True
+
+    base = target_location.path if (target_location and target_location.path) else (Path(base_path) if base_path else get_internal_media_sorter_base_path())
+    subject_folder = base / clean_name
     try:
         if subject_folder.exists() and subject_folder.is_dir():
             shutil.rmtree(subject_folder)
             return True
     except OSError as e:
-        print("خطأ أثناء حذف مجلد المادة:", e)
+        logger.warning("خطأ أثناء حذف مجلد المادة: %s", e)
     return False
 
 
 def clean_empty_subject_folders(base_path: Path | None = None) -> int:
-    """فحص مجلد التخزين وحذف أي مجلدات مواد فارغة."""
+    """فحص مجلد التخزين وحذف أي مجلدات مواد فارغة بأمان دون التأثير على SAF"""
     valid_extensions = {
         ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif",
         ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm", ".m4v", ".flv"
@@ -391,27 +521,31 @@ def clean_empty_subject_folders(base_path: Path | None = None) -> int:
     if base_path is not None:
         roots.append(Path(base_path))
     else:
-        roots.append(get_base_storage_path())
-        media_root = get_media_sorter_base_path()
-        if media_root.resolve() != get_base_storage_path().resolve():
-            roots.append(media_root)
+        int_base = get_internal_media_sorter_base_path()
+        roots.append(int_base)
+        exam_p = int_base / "صور الاختبارات"
+        if exam_p.exists():
+            roots.append(exam_p)
 
     deleted_count = 0
     for root in roots:
         if not root.exists():
             continue
-        for item in list(root.iterdir()):
-            if item.is_dir():
-                media_files = [
-                    f for f in item.iterdir()
-                    if f.is_file() and f.suffix.lower() in valid_extensions
-                ]
-                if len(media_files) == 0:
-                    try:
-                        shutil.rmtree(item)
-                        deleted_count += 1
-                    except OSError:
-                        pass
+        try:
+            for item in list(root.iterdir()):
+                if item.is_dir():
+                    media_files = [
+                        f for f in item.iterdir()
+                        if f.is_file() and f.suffix.lower() in valid_extensions
+                    ]
+                    if len(media_files) == 0:
+                        try:
+                            shutil.rmtree(item)
+                            deleted_count += 1
+                        except OSError:
+                            pass
+        except (OSError, PermissionError):
+            continue
 
     return deleted_count
 
@@ -968,8 +1102,9 @@ def _log_transfer_record(
         except (OSError, json.JSONDecodeError):
             records = []
 
+    rec_id = int(datetime.now(UTC).timestamp() * 1000)
     records.append({
-        "id": int(datetime.now(UTC).timestamp() * 1000),
+        "id": rec_id,
         "source": str(src_path),
         "destination": str(dest_path),
         "category": category,
@@ -985,6 +1120,7 @@ def _log_transfer_record(
             json.dump(records, f, ensure_ascii=False, indent=2)
     except (OSError, TypeError) as e:
         logger.warning("تعذر تحديث سجل العمليات: %s", e)
+    return rec_id
 
 
 def _update_last_transfer_record_to_copy(base_path: Path | None = None) -> None:
@@ -1001,6 +1137,55 @@ def _update_last_transfer_record_to_copy(base_path: Path | None = None) -> None:
                 json.dump(records, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.debug("تعذر تحديث سجل النقل إلى نسخ: %s", e)
+
+
+def update_transfer_record_to_move(record_id: int, base_path: Path | None = None) -> bool:
+    """تحديث سجل عملية معينة في transfer_history.json من Copy إلى Move بعد موافقة المستخدم ونجاح الحذف"""
+    log_file = get_transfer_log_path(base_path)
+    if not log_file.exists():
+        return False
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            records = json.load(f)
+        updated = False
+        if isinstance(records, list):
+            for rec in records:
+                if rec.get("id") == record_id:
+                    rec["is_copy"] = False
+                    updated = True
+                    break
+        if updated:
+            with open(log_file, "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+            return True
+    except Exception as e:
+        logger.warning("خطأ أثناء تحديث سجل النقل إلى Move: %s", e)
+    return False
+
+
+def update_transfer_record_by_src_to_move(src_path: str, base_path: Path | None = None) -> bool:
+    """تحديث أحدث سجل نقل للملف المصدر المحدد إلى Move بعد نجاح الحذف"""
+    log_file = get_transfer_log_path(base_path)
+    if not log_file.exists():
+        return False
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            records = json.load(f)
+        updated = False
+        src_lower = src_path.lower()
+        if isinstance(records, list):
+            for rec in reversed(records):
+                if str(rec.get("source", "")).lower() == src_lower:
+                    rec["is_copy"] = False
+                    updated = True
+                    break
+        if updated:
+            with open(log_file, "w", encoding="utf-8") as f:
+                json.dump(records, f, ensure_ascii=False, indent=2)
+            return True
+    except Exception as e:
+        logger.warning("خطأ أثناء تحديث سجل النقل بالمسار إلى Move: %s", e)
+    return False
 
 
 def get_transfer_history(

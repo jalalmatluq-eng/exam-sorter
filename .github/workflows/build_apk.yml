@@ -35,7 +35,7 @@ jobs:
           # opencv headless: same API as opencv-python, no system libGL needed on CI runners
           pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless kivy kivymd
 
-      - name: Run test_modules.py (13 suites including SAF, app-private storage, & SD card simulation)
+      - name: Run test_modules.py (14 suites including SAF, app-private storage, & SD card simulation)
         run: |
           python test_modules.py
 

@@ -109,8 +109,12 @@ class SubjectDetailScreen(Screen):
             self.ids.images_grid.add_widget(card)
 
     def create_image_card(self, img_path: str) -> MDCard:
-        """إنشاء بطاقة عرض أنيقة لكل صورة داخل الشبكة"""
+        """إنشاء بطاقة عرض أنيقة لكل صورة داخل الشبكة مع دعم مسارات SAF والذاكرة الداخلية"""
+        import storage_backend
         filename = Path(img_path).name
+        if img_path.startswith("content://"):
+            details = storage_backend.query_content_uri_details(img_path)
+            filename = details.get("display_name") or filename
 
         card = MDCard(
             size_hint=(1, None),
@@ -127,7 +131,10 @@ class SubjectDetailScreen(Screen):
         )
 
         ext = Path(img_path).suffix.lower()
-        is_video = ext in [".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"]
+        is_video = ext in storage_backend.VIDEO_EXTENSIONS
+        if not is_video and img_path.startswith("content://"):
+            details = storage_backend.query_content_uri_details(img_path)
+            is_video = bool(details.get("is_video") or ("video" in details.get("mime_type", "")))
 
         if is_video:
             video_thumb_box = BoxLayout(
@@ -155,7 +162,8 @@ class SubjectDetailScreen(Screen):
             video_thumb_box.add_widget(v_badge)
             card.add_widget(video_thumb_box)
         else:
-            thumb = Image(source=img_path, size_hint=(1, 0.72))
+            display_source = storage_backend.get_displayable_image_path(img_path)
+            thumb = Image(source=display_source, size_hint=(1, 0.72))
             card.add_widget(thumb)
 
         # شريط سفلي للبطاقة يحوي الاسم وأيقونة الحذف
@@ -196,10 +204,18 @@ class SubjectDetailScreen(Screen):
         return card
 
     def preview_image(self, img_path: str):
-        """عرض الصورة بحجم كبير أو تشغيل الفيديو في مشغل النظام"""
+        """عرض الصورة بحجم كبير أو تشغيل الفيديو في مشغل النظام الرسمي"""
+        import storage_backend
         filename = Path(img_path).name
+        if img_path.startswith("content://"):
+            details = storage_backend.query_content_uri_details(img_path)
+            filename = details.get("display_name") or filename
+
         ext = Path(img_path).suffix.lower()
-        is_video = ext in [".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm"]
+        is_video = ext in storage_backend.VIDEO_EXTENSIONS
+        if not is_video and img_path.startswith("content://"):
+            details = storage_backend.query_content_uri_details(img_path)
+            is_video = bool(details.get("is_video") or ("video" in details.get("mime_type", "")))
 
         content = BoxLayout(
             orientation="vertical", spacing=dp(10), padding=dp(10)
@@ -243,7 +259,7 @@ class SubjectDetailScreen(Screen):
                 pos_hint={"center_x": 0.5},
             )
             play_btn.bind(
-                on_release=lambda x: file_manager.open_folder_native(img_path)
+                on_release=lambda x: storage_backend.open_media_file_native(img_path)
             )
             v_center_box.add_widget(v_big_icon)
             v_center_box.add_widget(v_filename)
@@ -251,7 +267,8 @@ class SubjectDetailScreen(Screen):
             v_center_box.add_widget(play_btn)
             content.add_widget(v_center_box)
         else:
-            full_img = Image(source=img_path)
+            display_source = storage_backend.get_displayable_image_path(img_path)
+            full_img = Image(source=display_source)
             content.add_widget(full_img)
 
         actions_box = BoxLayout(
@@ -324,11 +341,32 @@ class SubjectDetailScreen(Screen):
         self.go_back()
 
     def open_in_explorer(self):
-        """فتح مجلد المادة في مستكشف النظام"""
+        """فتح مجلد المادة في مستكشف النظام دون تحويل SAF URI لمسار لينكس"""
         if not self.subject_name:
             return
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location()
+        if target_loc.is_saf:
+            tree_uri = target_loc.tree_uri or target_loc.saf_uri
+            success = storage_backend.open_saf_folder_in_file_manager(tree_uri)
+            if not success:
+                show_app_dialog(
+                    title="مجلد المادة (SD Card)",
+                    text=(
+                        f"أوراق مادة '{self.subject_name}' محفوظة في بطاقة الذاكرة الخارجية:\n\n"
+                        f"{target_loc.display_name}\n\n"
+                        "يمكنك تصفحها والوصول إليها عبر تطبيق 'ملفاتي' داخل مجلد 'الملفات المنظمة'."
+                    ),
+                )
+            return
+
         clean_name = file_manager.sanitize_folder_name(self.subject_name)
-        folder = Path(file_manager.get_base_storage_path()) / clean_name
+        base_dir = target_loc.path or file_manager.get_internal_media_sorter_base_path()
+        candidates = [
+            base_dir / "صور الاختبارات" / clean_name,
+            base_dir / clean_name,
+        ]
+        folder = candidates[0] if candidates[0].exists() else (candidates[1] if candidates[1].exists() else base_dir)
         success = file_manager.open_folder_native(str(folder))
         if not success:
             show_app_dialog(

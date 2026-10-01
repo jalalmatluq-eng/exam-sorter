@@ -229,6 +229,10 @@ def record_processed_file(
         return False
 
 
+# اسم بديل موحد ومريح
+record_scanned_file_result = record_processed_file
+
+
 def unrecord_processed_file(
     file_path: str, dest_path: str | None = None
 ) -> None:
@@ -479,35 +483,50 @@ def _scan_android_mediastore(
     return found
 
 
-def _extract_media_dedup_keys(item: Any) -> tuple[str, tuple[str, int, int, str]]:
+def _extract_media_dedup_keys(item: Any) -> dict[str, Any]:
     """
-    استخراج مفاتيح إزالة التكرار:
-    1. identifier: URI أو المسار الفعلي.
-    2. composite_key: (الاسم بحروف صغيرة، الحجم بالبايت، التاريخ بصحيح الثواني، volume).
+    استخراج مفاتيح إزالة التكرار بدقة وفقاً للمستويات الأربعة المعتمدة:
+    1. URI: Content URI أو SAF Tree Document URI.
+    2. Path: المسار المحلي على نظام الملفات.
+    3. relative_key: (volume, relative_path.lower(), name.lower()).
+    4. fallback_key: (name.lower(), size, mtime, volume).
     """
     uri = ""
+    path = ""
     name = ""
     size = 0
     mtime = 0
-    volume = "unknown"
+    volume = "internal"
+    rel_path = ""
 
     if isinstance(item, storage_backend.MediaItem):
-        uri = item.uri or item.id
+        if item.uri:
+            uri = item.uri
+        elif item.id.startswith("content://"):
+            uri = item.id
+        if item.path:
+            path = item.path
+        elif not item.id.startswith("content://"):
+            path = item.id
+
         name = item.name.lower()
         size = int(item.size_bytes)
         mtime = int(item.date_modified)
         volume = getattr(item, "storage_id", "") or ""
+        rel_path = getattr(item, "relative_path", "")
+
         if not volume:
-            path_str = item.path or uri
+            path_str = path or uri
             if "/emulated/" in path_str:
                 volume = "internal"
             elif "documents" in uri or "sdcard" in path_str.lower():
                 volume = "sdcard"
             else:
                 volume = "internal"
+
     elif isinstance(item, Path):
         resolved = item.resolve()
-        uri = str(resolved)
+        path = str(resolved)
         name = item.name.lower()
         try:
             st = item.stat()
@@ -515,18 +534,23 @@ def _extract_media_dedup_keys(item: Any) -> tuple[str, tuple[str, int, int, str]
             mtime = int(st.st_mtime)
         except OSError:
             pass
-        path_lower = str(resolved).lower()
+        path_lower = path.lower()
         volume = "internal" if ("/emulated/" in path_lower or "c:" in path_lower) else "sdcard"
+
     else:
-        uri = str(item)
-        if uri.startswith("content://"):
+        item_str = str(item)
+        if item_str.startswith("content://"):
+            uri = item_str
             details = storage_backend.query_content_uri_details(uri)
             name = (details.get("display_name") or Path(uri).name).lower()
             size = int(details.get("size_bytes") or 0)
             mtime = int(details.get("date_modified") or 0)
             volume = "sdcard" if ("externalstorage" in uri or "document" in uri) else "internal"
+            rel_path = details.get("relative_path", "")
+            path = details.get("file_path", "")
         else:
-            p = Path(uri)
+            p = Path(item_str)
+            path = str(p.resolve())
             name = p.name.lower()
             try:
                 st = p.stat()
@@ -534,10 +558,29 @@ def _extract_media_dedup_keys(item: Any) -> tuple[str, tuple[str, int, int, str]
                 mtime = int(st.st_mtime)
             except OSError:
                 pass
-            volume = "internal" if "/emulated/" in uri.lower() else "sdcard"
+            volume = "internal" if "/emulated/" in item_str.lower() else "sdcard"
 
-    vol_normalized = "sdcard" if volume in ("sdcard", "external", "secondary") else "internal"
-    return uri, (name, size, mtime, vol_normalized)
+    vol_norm = "sdcard" if volume in ("sdcard", "external", "secondary") else "internal"
+    norm_rel = rel_path.replace("\\", "/").strip("/").lower()
+    if not norm_rel and path:
+        # استخراج المجلد النسبي القياسي
+        parts = Path(path).parts
+        for std_dir in ("dcim", "pictures", "movies", "download", "whatsapp", "telegram", "documents"):
+            lower_parts = [p.lower() for p in parts]
+            if std_dir in lower_parts:
+                idx = lower_parts.index(std_dir)
+                norm_rel = "/".join(lower_parts[idx:-1])
+                break
+
+    return {
+        "uri": uri,
+        "path": path,
+        "name": name,
+        "size": size,
+        "mtime": mtime,
+        "volume": vol_norm,
+        "relative_path": norm_rel,
+    }
 
 
 def find_unsorted_media(
@@ -549,7 +592,11 @@ def find_unsorted_media(
     """
     البحث الشجري الموحد والشامل عن جميع الصور والفيديوهات غير المصنفة:
     - دمج نتائج فحص نظام الملفات (os.walk) مع نتائج MediaStore و SAF دون تكرار.
-    - منع تكرار الملفات عند دمج MediaStore مع SAF عبر مفتاح مركب: (URI إن تطابق، وإلا الاسم + الحجم + التاريخ + volume).
+    - منع تكرار الملفات عند دمج MediaStore مع SAF وفق هرمية إزالة التكرار الصارمة (4 مستويات):
+        1. URI متطابق.
+        2. المسار المتطابق.
+        3. volume + relative_path + name.
+        4. name + size + mtime كحل احتياطي (لا يتم الاعتماد على name + size فقط).
     - احترام اختيار الذاكرة (internal / sdcard / both) بشكل صارم وفعلي.
     - عدم استبعاد WhatsApp / Telegram في Android/media مع استبعاد Android/data و Android/obb.
     - استبعاد مجلد الملفات المنظمة والملفات المفحوصة مسبقاً بعد التحقق من وجود نسختها في الوجهة.
@@ -560,25 +607,48 @@ def find_unsorted_media(
 
     scanned_details = get_scanned_files_details()
     combined_items: list[Any] = []
-    seen_identifiers: set[str] = set()
-    seen_signatures: set[tuple[str, int, int, str]] = set()
+    seen_uris: set[str] = set()
+    seen_paths: set[str] = set()
+    seen_rel_keys: set[tuple[str, str, str]] = set()  # (volume, relative_path, name)
+    seen_fallback_sigs: set[tuple[str, int, int, str]] = set()  # (name, size, mtime, volume)
 
     def try_add_item(candidate: Any) -> bool:
-        ident, comp_key = _extract_media_dedup_keys(candidate)
-        ident_lower = ident.lower() if ident else ""
-        if ident_lower and ident_lower in seen_identifiers:
-            return False
-        name, sz, mt, vol = comp_key
-        if sz > 0 and (name, sz, mt, vol) in seen_signatures:
-            logger.info("تخطي ملف مكرر بين مصادر التخزين: %s (%s, %d bytes)", name, vol, sz)
+        keys = _extract_media_dedup_keys(candidate)
+        uri = keys["uri"]
+        path = keys["path"]
+        vol = keys["volume"]
+        rel = keys["relative_path"]
+        name = keys["name"]
+        size = keys["size"]
+        mtime = keys["mtime"]
+
+        # Level 1: Matching URI
+        if uri and uri.lower() in seen_uris:
             return False
 
-        if ident_lower:
-            seen_identifiers.add(ident_lower)
-        if sz > 0:
-            seen_signatures.add((name, sz, mt, vol))
-            if vol == "sdcard":
-                seen_signatures.add((name, sz, mt, "external"))
+        # Level 2: Matching Path
+        if path and path.lower() in seen_paths:
+            return False
+
+        # Level 3: (volume + relative_path + name)
+        if rel and (vol, rel, name) in seen_rel_keys:
+            logger.info("تخطي ملف مكرر بالمجلد النسبي (المستوى 3): %s/%s (%s)", rel, name, vol)
+            return False
+
+        # Level 4: (name + size + mtime) as fallback - never name + size only!
+        if size > 0 and mtime > 0 and (name, size, mtime, vol) in seen_fallback_sigs:
+            logger.info("تخطي ملف مكرر بالبصمة الاحتياطية (المستوى 4): %s (%s, %d bytes)", name, vol, size)
+            return False
+
+        # تسجيل الملف غير المكرر
+        if uri:
+            seen_uris.add(uri.lower())
+        if path:
+            seen_paths.add(path.lower())
+        if rel:
+            seen_rel_keys.add((vol, rel, name))
+        if size > 0 and mtime > 0:
+            seen_fallback_sigs.add((name, size, mtime, vol))
 
         combined_items.append(candidate)
         return True
@@ -708,7 +778,9 @@ def find_unsorted_media(
         saf_tree_uri = storage_backend.get_saf_persisted_uri()
         if saf_tree_uri and storage_backend.is_saf_uri_valid(saf_tree_uri):
             try:
-                saf_items = storage_backend.scan_saf_tree_recursively(saf_tree_uri, max_depth=max_depth)
+                saf_items = storage_backend.scan_saf_tree_recursively(
+                    saf_tree_uri, max_depth=max_depth, include_organized=False
+                )
                 logger.info("تم العثور على %d ملف وسائط عبر قارئ SAF Tree الشجري", len(saf_items))
                 for s_item in saf_items:
                     k = s_item.uri
@@ -959,6 +1031,14 @@ def _process_one_file_internal(
             }
 
         ext = p.suffix.lower()
+        file_mime = getattr(file_item, "mime_type", "") if isinstance(file_item, storage_backend.MediaItem) else ""
+        if not ext and file_mime:
+            resolved_mime = storage_backend.resolve_media_mime_type(p.name, file_mime)
+            ext = storage_backend.MIME_TYPE_MAP.get(resolved_mime, ".mp4" if "video" in resolved_mime else ".jpg")
+
+        is_video = (ext in VIDEO_EXTENSIONS) or (file_mime and "video" in file_mime.lower())
+        is_image = (ext in IMAGE_EXTENSIONS) or (file_mime and "image" in file_mime.lower())
+
         target_category = CATEGORY_UNCLASSIFIED
         detected_details = ""
         orig_size = p.stat().st_size
@@ -974,7 +1054,7 @@ def _process_one_file_internal(
         # =====================================================================
         # 1. إذا كان الملف صورة (Image Routing)
         # =====================================================================
-        if ext in IMAGE_EXTENSIONS:
+        if is_image and not is_video:
             # أولوية 1: صور الاختبارات والمقررات بالاسم أو الرؤية أو OCR
             try:
                 if is_likely_exam_paper(str(p)):
@@ -1009,7 +1089,7 @@ def _process_one_file_internal(
         # =====================================================================
         # 2. إذا كان الملف مقطع فيديو (Video Routing)
         # =====================================================================
-        elif ext in VIDEO_EXTENSIONS:
+        elif is_video:
             try:
                 v_cat = video_classifier.classify_video(str(p), api_key=api_key)
                 target_category = v_cat

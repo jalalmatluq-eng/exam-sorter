@@ -44,6 +44,7 @@ def test_arabic_helper() -> None:
 
 def test_file_manager() -> None:
     print("--- 2. فحص وحدة إدارة الملفات ---")
+    file_manager.save_sorter_preferences({"target_storage": "internal"})
     test_dir = Path("test_data")
     test_dir.mkdir(exist_ok=True)
     sample_img = test_dir / "sample_exam.jpg"
@@ -1040,6 +1041,285 @@ def test_architectural_saf_unification() -> None:
     print("✓ نجحت جميع فحوصات التوحيد المعماري الشامل لـ TargetLocation و SAF بنسبة 100%!\n")
 
 
+def test_saf_reading_dedup_and_recoverable_security() -> None:
+    """
+    اختبار الجناح 14:
+    1. فحص الوسائط: فيديو بدون امتداد مع MIME video/mp4، صورة بدون امتداد مع MIME image/jpeg، و MIME فارغ مع امتداد mp4.
+    2. هرمية إزالة التكرار الصارمة (4 مستويات):
+       - اختلاف mtime بين MediaStore و SAF لنفس الملف يتم إزالته لتطابق (volume + relative_path + name).
+       - تشابه الاسم والحجم لملفين مختلفين (في مجلدين مختلفين أو mtime مختلف) يتم الاحتفاظ بكليهما وعدم إسقاط أي منهما.
+    3. قراءة وعرض مجلدات بطاقة الذاكرة الخارجية SAF بعد إعادة تشغيل التطبيق عبر list_subjects و get_subjects و get_subject_images دون لمس المسار المحلي أو get_media_sorter_base_path.
+    4. فحص وحذف المكررات في بطاقة SD عبر storage_utils.find_duplicate_files و remove_duplicate_files.
+    5. فتح مجلد SAF عبر Intent ومنع معاملة SAF URI كمسار Linux.
+    6. دورة RecoverableSecurityException الكاملة: تخزين العملية المعلقة، موافقة المستخدم وتحديث السجل والكاش إلى Move، والرفض مع إبقائها كنسخ آمن Copy.
+    7. تحسين تصنيف أسباب الفشل عند فشل عمليات SAF لـ "انتهاء SAF permission" أو "فصل بطاقة SD".
+    """
+    print("\n--- [اختبار 14] فحص قراءة وعرض SAF وإزالة التكرار و RecoverableSecurityException ---")
+    import tempfile
+    test_root = Path(tempfile.mkdtemp(prefix="cosmosort_suite14_"))
+    try:
+        # 1. فحص MIME والامتدادات
+        v_item = storage_backend.MediaItem(
+            id="item_vid_noext",
+            source_type="content_uri",
+            display_name="lecture_clip",
+            mime_type="video/mp4",
+            size_bytes=4096,
+        )
+        assert v_item.suffix == ".mp4"
+        assert v_item.is_video is True
+        assert v_item.is_image is False
+        assert storage_backend.resolve_media_mime_type("lecture_clip", "video/mp4") == "video/mp4"
+
+        i_item = storage_backend.MediaItem(
+            id="item_img_noext",
+            source_type="content_uri",
+            display_name="exam_sheet",
+            mime_type="image/jpeg",
+            size_bytes=2048,
+        )
+        assert i_item.suffix == ".jpg"
+        assert i_item.is_image is True
+        assert i_item.is_video is False
+        assert storage_backend.resolve_media_mime_type("exam_sheet", "image/jpeg") == "image/jpeg"
+
+        v_ext_item = storage_backend.MediaItem(
+            id="item_vid_with_ext",
+            source_type="path",
+            path="/storage/emulated/0/DCIM/clip.mp4",
+            display_name="clip.mp4",
+            mime_type="",
+            size_bytes=8192,
+        )
+        assert v_ext_item.suffix == ".mp4"
+        assert v_ext_item.is_video is True
+        assert storage_backend.resolve_media_mime_type("clip.mp4", "") == "video/mp4"
+        print("  [1/6] ✓ التعرف على MIME والامتدادات: (فيديو بدون امتداد، صورة بدون امتداد، MIME فارغ مع امتداد).")
+
+        # 2. فحص هرمية إزالة التكرار المتقدمة (Deduplication Hierarchy)
+        import media_scanner
+
+        # أ) ملف بنفس المجلد والاسم والـ volume لكن mtime مختلف قليلاً بين MediaStore و SAF:
+        # يجب دمجها وعدم تكرارها بفضل المستوى 3 (volume + relative_path + name)
+        ms_item = storage_backend.MediaItem(
+            id="content://media/external/images/media/501",
+            source_type="content_uri",
+            display_name="family.jpg",
+            path="/storage/emulated/0/DCIM/Camera/family.jpg",
+            size_bytes=50000,
+            date_modified=1700000000.0,
+            storage_id="internal",
+            relative_path="DCIM/Camera",
+        )
+        saf_dup_item = storage_backend.MediaItem(
+            id="mock_doc:///storage/emulated/0/DCIM/Camera/family.jpg",
+            source_type="saf_document",
+            display_name="family.jpg",
+            path="/storage/emulated/0/DCIM/Camera/family.jpg",
+            size_bytes=50000,
+            date_modified=1700000010.0,  # mtime مختلف
+            storage_id="internal",
+            relative_path="DCIM/Camera",
+        )
+
+        test_list = [ms_item, saf_dup_item]
+        added = []
+        seen_uris = set()
+        seen_paths = set()
+        seen_rel = set()
+        seen_fallback = set()
+        for cand in test_list:
+            k = media_scanner._extract_media_dedup_keys(cand)
+            u, p, v, r, n, s, m = k["uri"], k["path"], k["volume"], k["relative_path"], k["name"], k["size"], k["mtime"]
+            if u and u.lower() in seen_uris:
+                continue
+            if p and p.lower() in seen_paths:
+                continue
+            if r and (v, r, n) in seen_rel:
+                continue
+            if s > 0 and m > 0 and (n, s, m, v) in seen_fallback:
+                continue
+            if u: seen_uris.add(u.lower())
+            if p: seen_paths.add(p.lower())
+            if r: seen_rel.add((v, r, n))
+            if s > 0 and m > 0: seen_fallback.add((n, s, m, v))
+            added.append(cand)
+
+        assert len(added) == 1, "يجب دمج الملفين وإزالة التكرار رغم اختلاف mtime بفضل المستوى 3!"
+
+        # ب) ملفان لهما نفس الاسم والحجم تماماً ولكن في مجلدين مختلفين أو mtime مختلف:
+        file1 = storage_backend.MediaItem(
+            id="/storage/emulated/0/DCIM/Camera/IMG_01.jpg",
+            source_type="path",
+            path="/storage/emulated/0/DCIM/Camera/IMG_01.jpg",
+            display_name="IMG_01.jpg",
+            size_bytes=3000,
+            date_modified=1600000000.0,
+            storage_id="internal",
+            relative_path="DCIM/Camera",
+        )
+        file2 = storage_backend.MediaItem(
+            id="/storage/emulated/0/Download/IMG_01.jpg",
+            source_type="path",
+            path="/storage/emulated/0/Download/IMG_01.jpg",
+            display_name="IMG_01.jpg",
+            size_bytes=3000,
+            date_modified=1700000000.0,
+            storage_id="internal",
+            relative_path="Download",
+        )
+
+        added_two = []
+        seen_uris.clear()
+        seen_paths.clear()
+        seen_rel.clear()
+        seen_fallback.clear()
+        for cand in [file1, file2]:
+            k = media_scanner._extract_media_dedup_keys(cand)
+            u, p, v, r, n, s, m = k["uri"], k["path"], k["volume"], k["relative_path"], k["name"], k["size"], k["mtime"]
+            if u and u.lower() in seen_uris:
+                continue
+            if p and p.lower() in seen_paths:
+                continue
+            if r and (v, r, n) in seen_rel:
+                continue
+            if s > 0 and m > 0 and (n, s, m, v) in seen_fallback:
+                continue
+            if u: seen_uris.add(u.lower())
+            if p: seen_paths.add(p.lower())
+            if r: seen_rel.add((v, r, n))
+            if s > 0 and m > 0: seen_fallback.add((n, s, m, v))
+            added_two.append(cand)
+
+        assert len(added_two) == 2, "يجب الحفاظ على الملفين وعدم اعتبارهما مكررين لاختلاف المجلد والوقت!"
+        print("  [2/6] ✓ إزالة التكرار الصارمة (4 مستويات): دمج mtime المختلف للمجلد المتطابق، والحفاظ التام على ملفين لهما نفس الاسم والحجم.")
+
+        # 3. فحص قراءة وعرض مجلدات بطاقة الذاكرة الخارجية SAF بعد إعادة تشغيل التطبيق
+        sd_root = test_root / "sdcard_display_test"
+        org_dir = sd_root / storage_backend.ORGANIZED_FOLDER_NAME
+        exams_dir = org_dir / "صور الاختبارات"
+        math_dir = exams_dir / "رياضيات متقدمة"
+        physics_dir = exams_dir / "فيزياء نووية"
+        math_dir.mkdir(parents=True, exist_ok=True)
+        physics_dir.mkdir(parents=True, exist_ok=True)
+
+        (math_dir / "exam1.jpg").write_bytes(b"jpg1" * 100)
+        (math_dir / "exam2.jpg").write_bytes(b"jpg2" * 100)
+        (physics_dir / "physics1.png").write_bytes(b"png1" * 100)
+
+        saf_tree_uri = f"mock_saf://{sd_root}"
+        storage_backend.save_saf_persisted_uri(saf_tree_uri)
+        file_manager.save_sorter_preferences({"target_storage": "sdcard", "saf_sdcard_uri": saf_tree_uri})
+
+        target_loc = storage_backend.get_active_target_location("sdcard")
+        assert target_loc.is_saf is True
+        subjects = file_manager.list_subjects(target_location=target_loc)
+        assert len(subjects) >= 2
+        subj_names = [s["name"] for s in subjects]
+        assert "رياضيات متقدمة" in subj_names
+        assert "فيزياء نووية" in subj_names
+
+        math_info = next(s for s in subjects if s["name"] == "رياضيات متقدمة")
+        assert math_info["count"] == 2
+        assert math_info.get("is_saf") is True
+
+        math_imgs = file_manager.get_subject_images("رياضيات متقدمة", target_location=target_loc)
+        assert len(math_imgs) == 2
+        assert any("exam1.jpg" in img for img in math_imgs)
+        print("  [3/6] ✓ قراءة وعرض مجلدات SD عبر SAF: list_subjects و get_subject_images تعمل بسلاسة دون مسار لينكس.")
+
+        # 4. كشف وحذف المكررات على بطاقة SD عبر storage_utils
+        import storage_utils
+        (math_dir / "exam1_duplicate.jpg").write_bytes(b"jpg1" * 100)
+        dupes = storage_utils.find_duplicate_files(target_location=target_loc)
+        assert len(dupes) >= 1
+        assert len(dupes[0]) == 2
+
+        del_count, freed = storage_utils.remove_duplicate_files(dupes, target_location=target_loc)
+        assert del_count == 1
+        assert freed == 400
+        assert (math_dir / "exam1.jpg").exists() or (math_dir / "exam1_duplicate.jpg").exists()
+        print("  [4/6] ✓ فحص وحذف المكررات في SAF: storage_utils يدعم URIs والحذف الآمن مع بقاء الأصل.")
+
+        # 5. فتح المجلد عبر Intent دون تحويل SAF URI لمسار لينكس
+        opened = storage_backend.open_saf_folder_in_file_manager(saf_tree_uri)
+        assert opened is True
+
+        # 6. دورة RecoverableSecurityException الكاملة (Request Code 4202)
+        test_file_src = test_root / "test_sec_source.jpg"
+        test_file_src.write_bytes(b"secure_image_content" * 20)
+
+        rec_id = file_manager._log_transfer_record(
+            src_path=str(test_file_src),
+            dest_path=str(test_root / "dest_copy.jpg"),
+            category="صوري",
+            file_size=test_file_src.stat().st_size,
+            is_copy=True,
+        )
+
+        storage_backend.set_pending_recoverable_deletion(
+            item_uri=str(test_file_src),
+            record_id=rec_id,
+            src_path=str(test_file_src),
+            dest_path=str(test_root / "dest_copy.jpg"),
+            file_size=test_file_src.stat().st_size,
+            category="صوري",
+            target_storage="internal",
+        )
+        assert storage_backend.get_pending_recoverable_deletion() is not None
+
+        # محاكاة رفض المستخدم (result_ok=False)
+        storage_backend.handle_recoverable_deletion_result(False)
+        assert storage_backend.get_pending_recoverable_deletion() is None
+        history = file_manager.get_transfer_history()
+        target_rec = next((r for r in history if r.get("id") == rec_id), None)
+        assert target_rec is not None
+        assert target_rec.get("is_copy") is True
+
+        # محاكاة موافقة المستخدم (result_ok=True)
+        storage_backend.set_pending_recoverable_deletion(
+            item_uri=str(test_file_src),
+            record_id=rec_id,
+            src_path=str(test_file_src),
+            dest_path=str(test_root / "dest_copy.jpg"),
+            file_size=test_file_src.stat().st_size,
+            category="صوري",
+            target_storage="internal",
+        )
+        approved = storage_backend.handle_recoverable_deletion_result(True)
+        assert approved is True
+        assert not test_file_src.exists()
+        history2 = file_manager.get_transfer_history()
+        target_rec2 = next((r for r in history2 if r.get("id") == rec_id), None)
+        assert target_rec2 is not None
+        assert target_rec2.get("is_copy") is False
+
+        # 7. تحسين تصنيف أسباب الفشل
+        valid_saf_target = storage_backend.TargetLocation(
+            storage_type="sdcard", is_saf=True, tree_uri=saf_tree_uri, is_valid=True
+        )
+        r_saf_perm = storage_backend.classify_failure_reason(
+            Exception("openOutputStream: Permission denied"), target_location=valid_saf_target
+        )
+        assert r_saf_perm == "انتهاء SAF permission"
+
+        invalid_saf_target = storage_backend.TargetLocation(
+            storage_type="sdcard", is_saf=True, tree_uri="content://invalid/tree/broken", is_valid=False
+        )
+        r_saf_unmount = storage_backend.classify_failure_reason(
+            Exception("openOutputStream: Operation not permitted"), target_location=invalid_saf_target
+        )
+        assert r_saf_unmount == "فصل بطاقة SD"
+
+        print("  [5/6] ✓ دورة RecoverableSecurityException: إدارة التعليق والتأكيد وتحويل السجل لـ Move عند الموافقة و Copy عند الرفض.")
+        print("  [6/6] ✓ تحسين تصنيف أسباب الفشل: التفريق الدقيق بين 'انتهاء SAF permission' و 'فصل بطاقة SD'.")
+
+    finally:
+        shutil.rmtree(test_root, ignore_errors=True)
+
+    print("✓ نجحت جميع فحوصات الجناح 14 لـ SAF وعرض المجلدات ودقة إزالة التكرار و RecoverableSecurityException بنسبة 100%!\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -1054,8 +1334,9 @@ if __name__ == "__main__":
     test_saf_and_target_location_simulations()
     test_advanced_saf_and_edge_cases()
     test_architectural_saf_unification()
+    test_saf_reading_dedup_and_recoverable_security()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات (13 جناح) تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (14 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
 
 

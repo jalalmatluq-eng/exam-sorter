@@ -419,6 +419,20 @@ class CosmoSortApp(MDApp):
             except Exception as e:
                 logger.error("خطأ أثناء معالجة إذن SAF: %s", e, exc_info=True)
 
+        elif request_code == 4202:
+            try:
+                from jnius import autoclass
+                Activity = autoclass("android.app.Activity")
+                import storage_backend
+                is_ok = (result_code == Activity.RESULT_OK)
+                logger.info(
+                    "on_activity_result 4202: تم استلام استجابة المستخدم لطلب تأكيد الحذف (موافقة: %s)",
+                    is_ok,
+                )
+                storage_backend.handle_recoverable_deletion_result(is_ok)
+            except Exception as e:
+                logger.error("خطأ أثناء معالجة نتيجة RecoverableSecurityException: %s", e, exc_info=True)
+
     def on_hardware_back_key(
         self, _window: object, key: int, *_args: object
     ) -> bool:
