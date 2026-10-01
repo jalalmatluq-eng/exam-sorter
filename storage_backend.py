@@ -1871,7 +1871,13 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
                             user_action = sec_e.getUserAction()
                             intent_sender = user_action.getActionIntent().getIntentSender()
                             RECOVERABLE_REQUEST_CODE = 4202
-                            set_pending_recoverable_deletion(item_str)
+                            real_name = ""
+                            try:
+                                details = query_content_uri_details(item_str)
+                                real_name = details.get("display_name", "")
+                            except Exception:
+                                pass
+                            set_pending_recoverable_deletion(item_str, file_name=real_name)
                             mActivity.startIntentSenderForResult(
                                 intent_sender, RECOVERABLE_REQUEST_CODE, None, 0, 0, 0
                             )
@@ -1916,14 +1922,23 @@ def set_pending_recoverable_deletion(
     mtime: float = 0.0,
     category: str = "",
     target_storage: str = "",
+    file_name: str = "",
 ) -> None:
     """تخزين تفاصيل عملية الحذف المعلقة في الذاكرة وفي التخزين الخاص بالتطبيق لحين استلام نتيجة موافقة المستخدم"""
     global _pending_recoverable_deletion
+    if not file_name:
+        try:
+            details = query_content_uri_details(item_uri) if str(item_uri).startswith("content://") else {}
+            file_name = details.get("display_name") or Path(src_path or item_uri).name
+        except Exception:
+            file_name = Path(src_path or item_uri).name or "ملف وسائط"
+
     data = {
         "item_uri": item_uri,
         "record_id": record_id,
         "src_path": src_path or item_uri,
         "dest_path": dest_path,
+        "file_name": file_name,
         "file_size": file_size,
         "mtime": mtime,
         "category": category,
@@ -1938,7 +1953,7 @@ def set_pending_recoverable_deletion(
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         logger.warning("تعذر حفظ pending recoverable deletion في التخزين الخاص: %s", e)
-    logger.info("تم تسجيل عملية الحذف المعلقة لـ RecoverableSecurityException: %s", item_uri)
+    logger.info("تم تسجيل عملية الحذف المعلقة لـ RecoverableSecurityException: %s (الاسم: %s)", item_uri, file_name)
 
 
 def get_pending_recoverable_deletion() -> dict[str, Any] | None:
@@ -1971,6 +1986,35 @@ def clear_pending_recoverable_deletion() -> None:
         logger.debug("تعذر مسح ملف pending recoverable deletion: %s", e)
 
 
+def _finalize_successful_recoverable_deletion(pending: dict[str, Any]) -> None:
+    """تحديث السجل والكاش ومسح ملف العملية المعلقة بعد إتمام الحذف بنجاح لمنع التكرار"""
+    item_uri = pending.get("item_uri", "")
+    record_id = pending.get("record_id")
+    src_path = pending.get("src_path", "")
+
+    import file_manager
+    if record_id is not None:
+        file_manager.update_transfer_record_to_move(record_id)
+    elif src_path:
+        file_manager.update_transfer_record_by_src_to_move(src_path)
+
+    if src_path:
+        try:
+            import media_scanner
+            media_scanner.record_scanned_file_result(
+                file_path=src_path,
+                file_size=pending.get("file_size", 0),
+                mtime=pending.get("mtime", 0.0),
+                category=pending.get("category", ""),
+                operation_status="success",
+                target_storage=pending.get("target_storage", ""),
+            )
+        except Exception as e_cache:
+            logger.debug("تنبيه تحديث كاش الفحص بعد الحذف: %s", e_cache)
+
+    clear_pending_recoverable_deletion()
+
+
 def retry_pending_recoverable_deletion() -> bool:
     """إعادة إطلاق طلب حذف الملف المعلق عبر نظام أندرويد مع إظهار نافذة إذن النظام إذا لزم"""
     pending = get_pending_recoverable_deletion()
@@ -1978,16 +2022,21 @@ def retry_pending_recoverable_deletion() -> bool:
         return False
     item_uri = pending.get("item_uri", "")
     if not item_uri:
+        clear_pending_recoverable_deletion()
         return False
     logger.info("إعادة محاولة حذف الملف المعلق لـ RecoverableSecurityException: %s", item_uri)
-    return delete_media_item(item_uri)
+    del_ok = delete_media_item(item_uri)
+    if del_ok:
+        _finalize_successful_recoverable_deletion(pending)
+        return True
+    return False
 
 
 def handle_recoverable_deletion_result(result_ok: bool) -> bool:
     """
     معالجة نتيجة استجابة المستخدم لـ RecoverableSecurityException (Request Code 4202):
-    - إذا وافق المستخدم (result_ok=True): إعادة محاولة الحذف، وتحديث السجل إلى Move، وتحديث الكاش.
-    - إذا رفض المستخدم (result_ok=False): الإبقاء على العملية كـ Copy وإلغاء التعليق.
+    - إذا وافق المستخدم (result_ok=True): حذف المصدر فعلياً وتحديث السجل إلى Move وتحديث الكاش ومسح ملف pending.
+    - إذا رفض المستخدم (result_ok=False): الإبقاء على العملية كـ Copy وإلغاء التعليق فوراً لمنع التكرار.
     """
     pending = get_pending_recoverable_deletion()
     if not pending:
@@ -1999,34 +2048,10 @@ def handle_recoverable_deletion_result(result_ok: bool) -> bool:
         return False
 
     item_uri = pending.get("item_uri", "")
-    record_id = pending.get("record_id")
-    src_path = pending.get("src_path", "")
-
-    # إعادة محاولة الحذف بعد الحصول على إذن المستخدم الرسمي
     del_ok = delete_media_item(item_uri)
     if del_ok:
         logger.info("تم تأكيد حذف الملف من قبل المستخدم واكتمال النقل بنجاح: %s", item_uri)
-        import file_manager
-        if record_id is not None:
-            file_manager.update_transfer_record_to_move(record_id)
-        elif src_path:
-            file_manager.update_transfer_record_by_src_to_move(src_path)
-
-        if src_path:
-            try:
-                import media_scanner
-                media_scanner.record_scanned_file_result(
-                    file_path=src_path,
-                    file_size=pending.get("file_size", 0),
-                    mtime=pending.get("mtime", 0.0),
-                    category=pending.get("category", ""),
-                    operation_status="success",
-                    target_storage=pending.get("target_storage", ""),
-                )
-            except Exception as e_cache:
-                logger.debug("تنبيه تحديث كاش الفحص بعد الحذف: %s", e_cache)
-
-        clear_pending_recoverable_deletion()
+        _finalize_successful_recoverable_deletion(pending)
         return True
 
     clear_pending_recoverable_deletion()

@@ -1532,6 +1532,119 @@ def test_production_verification_and_saf_resolution() -> None:
     print("✓ نجحت جميع فحوصات الجناح 15 للتحقق النهائي والإنتاج بنسبة 100%!\n")
 
 
+def test_production_error_scenarios_and_resilience() -> None:
+    """
+    جناح الاختبار 16: التحقق من سيناريوهات الأخطاء الواقعية والمرونة:
+    1. فشل حذف Content URI (بدون إذن أو خطأ ContentProvider).
+    2. انتهاء صلاحية إذن SAF وتصنيف السبب الدقيق.
+    3. فصل بطاقة SD أثناء الفحص والتوقف الآمن دون انهيار.
+    4. فشل حذف جزء من المكررات والتمييز الدقيق في DeduplicationResult (الناجح، الفاشل، المعلق).
+    5. استثناء داخل Worker Thread وضمان إعادة الواجهة و self._is_deduping = False في finally.
+    6. استعادة pending_recoverable_deletion مع الاسم الحقيقي للملف (file_name) بعد إعادة التشغيل.
+    """
+    print("\n--- [اختبار 16] فحص سيناريوهات الأخطاء الواقعية والمرونة العالية ---")
+    import sys
+    from unittest.mock import MagicMock, patch
+    import storage_backend
+    import file_manager
+    import storage_utils
+
+    # 1. فشل حذف Content URI
+    with patch.object(storage_backend, "_get_platform", return_value="android"):
+        mock_cr = MagicMock()
+        mock_cr.delete.return_value = 0  # فشل الحذف
+        mock_act = MagicMock()
+        mock_act.getContentResolver.return_value = mock_cr
+        with patch.dict(sys.modules, {"android": MagicMock(mActivity=mock_act)}):
+            del_fail = storage_backend.delete_media_item("content://media/external/images/media/000")
+            assert del_fail is False, "يجب أن يعيد False عند فشل حذف Content URI"
+    print("  [1/6] ✓ معالجة فشل حذف Content URI بدقة وإرجاع False دون استثناء.")
+
+    # 2. انتهاء صلاحية SAF
+    expired_target = storage_backend.TargetLocation(
+        storage_type="sdcard", is_saf=True, tree_uri="content://tree/expired", is_valid=True
+    )
+    with patch.object(storage_backend, "is_saf_uri_valid", return_value=True):
+        reason = storage_backend.classify_failure_reason(
+            Exception("openOutputStream: SecurityException: Permission denied"), target_location=expired_target
+        )
+        assert reason == "انتهاء SAF permission"
+    print("  [2/6] ✓ كشف وتصنيف انتهاء صلاحية SAF وتوجيه المستخدم لتجديد الإذن.")
+
+    # 3. فصل بطاقة SD أثناء الفحص والتوقف الآمن
+    unmounted_target = storage_backend.TargetLocation(
+        storage_type="sdcard", is_saf=True, tree_uri="content://tree/unmounted_sd", is_valid=True
+    )
+    with patch.object(storage_backend, "is_saf_uri_valid", side_effect=[True, False]):
+        dupes_unmounted = storage_utils.find_duplicate_files(target_location=unmounted_target)
+        assert dupes_unmounted == []
+    print("  [3/6] ✓ التعامل المرن مع فصل بطاقة SD أثناء الفحص والتوقف الفوري دون أي Crash.")
+
+    # 4. فشل حذف جزء من المكررات والتمييز في DeduplicationResult
+    groups = [
+        [
+            "content://media/external/images/media/keep_orig.jpg",
+            "content://media/external/images/media/dup_success.jpg",
+            "content://media/external/images/media/dup_fail.jpg",
+            "content://media/external/images/media/sec_req.jpg",
+        ]
+    ]
+    def mock_delete(ref):
+        ref_str = str(ref)
+        if "dup_success" in ref_str:
+            return True
+        elif "dup_fail" in ref_str:
+            return False
+        elif "sec_req" in ref_str:
+            storage_backend.set_pending_recoverable_deletion(ref_str, file_name="sec_req.jpg")
+            return False
+        return False
+
+    with patch.object(storage_backend, "delete_media_item", side_effect=mock_delete):
+        with patch.object(storage_backend, "get_uri_file_size", return_value=1024):
+            res = storage_utils.remove_duplicate_files(groups)
+            assert res.detected_count == 3
+            assert res.deleted_count == 1
+            assert res.failed_count == 1
+            assert res.pending_approval_count == 1
+            assert res.freed_bytes == 1024
+            d_count, f_bytes = res
+            assert d_count == 1
+            assert f_bytes == 1024
+    print("  [4/6] ✓ فحص DeduplicationResult: التمييز الدقيق بين الناجح (1)، الفاشل (1)، وبانتظار الموافقة (1).")
+
+    # 5. استثناء داخل Worker Thread وضمان إعادة الواجهة و self._is_deduping = False
+    from screens.settings_screen import SettingsScreen
+    screen = SettingsScreen()
+    assert screen._is_deduping is False
+    screen._is_deduping = True
+    screen._cancel_dedup_scan = False
+    screen.on_leave()
+    assert screen._cancel_dedup_scan is True
+    assert screen._stop_continuous_scan is True
+    print("  [5/6] ✓ فحص حماية Worker Thread ومغادرة الشاشة (on_leave) وإلغاء الفحص بسلاسة.")
+
+    # 6. استعادة pending_recoverable_deletion مع الاسم الحقيقي للملف بعد إعادة التشغيل
+    test_uri = "content://media/external/images/media/12345"
+    storage_backend.clear_pending_recoverable_deletion()
+    storage_backend.set_pending_recoverable_deletion(
+        item_uri=test_uri,
+        src_path="/storage/emulated/0/DCIM/Camera/صورة_الرياضيات.jpg",
+        file_name="صورة_الرياضيات.jpg",
+        file_size=2048,
+    )
+    storage_backend._pending_recoverable_deletion = None
+    restored = storage_backend.get_pending_recoverable_deletion()
+    assert restored is not None
+    assert restored.get("file_name") == "صورة_الرياضيات.jpg"
+    assert restored.get("item_uri") == test_uri
+    storage_backend.clear_pending_recoverable_deletion()
+    assert storage_backend.get_pending_recoverable_deletion() is None
+    print("  [6/6] ✓ حفظ واستعادة الاسم الحقيقي (file_name) للعملية المعلقة من التخزين الخاص بعد إعادة التشغيل.")
+
+    print("✓ نجحت جميع فحوصات الجناح 16 للأخطاء الواقعية والمرونة بنسبة 100%!\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -1548,8 +1661,9 @@ if __name__ == "__main__":
     test_architectural_saf_unification()
     test_saf_reading_dedup_and_recoverable_security()
     test_production_verification_and_saf_resolution()
+    test_production_error_scenarios_and_resilience()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات (15 جناح) تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (16 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
 
 

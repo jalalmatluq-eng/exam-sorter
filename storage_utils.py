@@ -1,17 +1,35 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import hashlib
+import logging
 import sqlite3
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Callable, TypedDict
 
 import file_manager
 import storage_backend
+
+logger = logging.getLogger(__name__)
 
 MEDIA_EXTS = {
     ".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".heic", ".heif",
     ".mp4", ".mkv", ".3gp", ".mov", ".avi", ".webm", ".m4v", ".flv"
 }
+
+
+@dataclass
+class DeduplicationResult:
+    """نتيجة تفصيلية لعملية كشف وإزالة الملفات المكررة تميز بين النجاح والفشل والانتظار"""
+    detected_count: int = 0
+    deleted_count: int = 0
+    failed_count: int = 0
+    pending_approval_count: int = 0
+    freed_bytes: int = 0
+
+    def __iter__(self):
+        # التوافق الكامل مع الكود القديم الذي يعتمد على استخراج (del_count, freed)
+        return iter((self.deleted_count, self.freed_bytes))
 
 
 class CategoryInfo(TypedDict):
@@ -158,14 +176,19 @@ def get_storage_stats(
 def find_duplicate_files(
     base_path: Path | None = None,
     target_location: Any | None = None,
+    progress_callback: Callable[[int, int, str], None] | None = None,
+    stop_check: Callable[[], bool] | None = None,
 ) -> list[list[str]]:
     """
-    كشف الملفات المكررة في مجلدات التخزين:
+    كشف الملفات المكررة في مجلدات التخزين مع دعم شريط التقدم والإلغاء الآمن:
     - يدعم المسار الفيزيائي للذاكرة الداخلية.
     - يدعم بطاقة الذاكرة الخارجية عبر SAF Tree URI دون تحويله لمسار Linux.
-    - يستخدم URI كمفتاح للعناصر الخارجية.
-    - يحسب الاسم والحجم والتاريخ ووحدة التخزين لمنع التعارض.
+    - تصفية سريعة بالأحجام لتجنب حساب SHA-256 للملفات ذات الأحجام الفريدة.
+    - يدعم stop_check لإيقاف الفحص عند مغادرة الشاشة أو فصل بطاقة SD دون انهيار.
     """
+    if stop_check and stop_check():
+        return []
+
     if target_location is None:
         if base_path is not None:
             target_location = storage_backend.TargetLocation(
@@ -182,6 +205,7 @@ def find_duplicate_files(
     if target_location and target_location.is_saf:
         tree_uri = target_location.tree_uri or target_location.saf_uri
         if not tree_uri or not storage_backend.is_saf_uri_valid(tree_uri):
+            logger.warning("فحص المكررات: بطاقة SD غير متصلة أو إذن SAF غير متاح")
             return []
 
         # المرحلة 1: تجميع سريع حسب الحجم دون فحص دفق المحتوى لاستبعاد الملفات الفريدة
@@ -189,6 +213,8 @@ def find_duplicate_files(
         try:
             saf_items = storage_backend.scan_saf_tree_recursively(tree_uri, include_organized=True)
             for item in saf_items:
+                if stop_check and stop_check():
+                    return []
                 uri = item.uri or item.id
                 sz = int(item.size_bytes)
                 if sz <= 0:
@@ -197,9 +223,26 @@ def find_duplicate_files(
 
             # المرحلة 2: فحص الهاش (SHA-256) للملفات التي لها نفس الحجم فقط
             candidates = {sz: uris for sz, uris in size_groups.items() if len(uris) > 1}
+            total_candidates = sum(len(uris) for uris in candidates.values())
+            processed_count = 0
+
             hash_map: dict[str, list[str]] = {}
             for sz, uris in candidates.items():
                 for uri in uris:
+                    if stop_check and stop_check():
+                        logger.info("تم إيقاف فحص SHA-256 للمكررات بناءً على طلب الإلغاء")
+                        return []
+                    if not storage_backend.is_saf_uri_valid(tree_uri):
+                        logger.warning("تم فصل بطاقة الذاكرة الخارجية أثناء فحص الهاش")
+                        return []
+
+                    processed_count += 1
+                    if progress_callback:
+                        try:
+                            progress_callback(processed_count, total_candidates, uri)
+                        except Exception:
+                            pass
+
                     content_hash = storage_backend.compute_content_uri_hash(uri)
                     if not content_hash:
                         logger.warning(
@@ -228,6 +271,8 @@ def find_duplicate_files(
     size_groups_local: dict[int, list[str]] = {}
     try:
         for f in base.rglob("*"):
+            if stop_check and stop_check():
+                return []
             if not f.is_file() or f.suffix.lower() not in MEDIA_EXTS:
                 continue
             try:
@@ -240,16 +285,30 @@ def find_duplicate_files(
 
         # المرحلة 2: حساب الهاش الفعلي على دفعات للعينات المشتركة في الحجم فقط
         candidates_local = {sz: paths for sz, paths in size_groups_local.items() if len(paths) > 1}
+        total_candidates_local = sum(len(paths) for paths in candidates_local.values())
+        processed_local = 0
+
         hash_map_local: dict[str, list[str]] = {}
         for sz, paths in candidates_local.items():
             for p_str in paths:
+                if stop_check and stop_check():
+                    logger.info("تم إيقاف فحص SHA-256 للمكررات محلياً")
+                    return []
+
+                processed_local += 1
+                if progress_callback:
+                    try:
+                        progress_callback(processed_local, total_candidates_local, p_str)
+                    except Exception:
+                        pass
+
                 content_hash = storage_backend.compute_content_uri_hash(p_str)
                 if not content_hash:
                     continue
                 key = f"{sz}_{content_hash}"
                 hash_map_local.setdefault(key, []).append(p_str)
-    except (OSError, PermissionError):
-        pass
+    except (OSError, PermissionError) as e_loc:
+        logger.warning("تنبيه فحص المكررات محلياً: %s", e_loc)
 
     return [v for v in hash_map_local.values() if len(v) > 1]
 
@@ -257,17 +316,17 @@ def find_duplicate_files(
 def remove_duplicate_files(
     duplicates: list[list[str]],
     target_location: Any | None = None,
-) -> tuple[int, int]:
+) -> DeduplicationResult:
     """
     حذف النسخ المكررة بأمان مع الحفاظ التام على النسخة الأصلية (الملف الأول) من كل مجموعة:
-    - في بطاقة الذاكرة الخارجية عبر SAF: لا تحذف إلا عبر delete_media_item وبعد التحقق من الصلاحية.
-    - تعيد زوجاً من: (عدد الملفات المحذوفة, إجمالي البايتات المحررة).
+    - يميز بين المحذوف بنجاح، والفاشل، وبانتظار موافقة أندرويد (RecoverableSecurityException).
+    - تعيد كائن DeduplicationResult متوافق مع الاستخراج الثنائي (del_count, freed).
     """
     if target_location is None:
         target_location = storage_backend.get_active_target_location()
 
-    deleted_count = 0
-    freed_bytes = 0
+    res = DeduplicationResult()
+    res.detected_count = sum(len(g) - 1 for g in duplicates if len(g) > 1)
 
     for group in duplicates:
         if len(group) <= 1:
@@ -286,13 +345,20 @@ def remove_duplicate_files(
                 if target_location and target_location.is_saf:
                     tree_uri = target_location.tree_uri or target_location.saf_uri
                     if not storage_backend.is_saf_uri_valid(tree_uri):
+                        res.failed_count += 1
                         continue
 
                 sz = storage_backend.get_uri_file_size(file_ref)
                 ok = storage_backend.delete_media_item(file_ref)
                 if ok:
-                    deleted_count += 1
-                    freed_bytes += sz
+                    res.deleted_count += 1
+                    res.freed_bytes += sz
+                else:
+                    pending = storage_backend.get_pending_recoverable_deletion()
+                    if pending and pending.get("item_uri") == str(file_ref):
+                        res.pending_approval_count += 1
+                    else:
+                        res.failed_count += 1
             else:
                 p = Path(file_ref)
                 try:
@@ -300,9 +366,13 @@ def remove_duplicate_files(
                         sz = p.stat().st_size
                         ok = storage_backend.delete_media_item(p)
                         if ok:
-                            deleted_count += 1
-                            freed_bytes += sz
+                            res.deleted_count += 1
+                            res.freed_bytes += sz
+                        else:
+                            res.failed_count += 1
+                    else:
+                        res.failed_count += 1
                 except OSError:
-                    continue
+                    res.failed_count += 1
 
-    return deleted_count, freed_bytes
+    return res

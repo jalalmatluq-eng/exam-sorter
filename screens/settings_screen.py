@@ -10,6 +10,7 @@
 - استعراض سجل عمليات النقل الأخيرة مع إمكانية التراجع الفوري عن أي نقل خاطئ.
 """
 
+import logging
 import threading
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,8 @@ from service import media_watcher_service
 from utils.arabic_helper import ar
 from utils.ui_helper import show_app_dialog, show_confirm_dialog
 
+logger = logging.getLogger(__name__)
+
 
 class SettingsScreen(Screen):
     def __init__(self, **kwargs: object) -> None:
@@ -38,6 +41,12 @@ class SettingsScreen(Screen):
         self.is_continuous_scanning: bool = False
         self._stop_continuous_scan: bool = False
         self._is_deduping: bool = False
+        self._cancel_dedup_scan: bool = False
+
+    def on_leave(self, *args: object) -> None:
+        """إيقاف أي فحص جاري فور مغادرة شاشة الإعدادات بأمان"""
+        self._cancel_dedup_scan = True
+        self._stop_continuous_scan = True
 
     def on_enter(self, *args: object) -> None:
         self.apply_arabic_texts()
@@ -853,14 +862,21 @@ class SettingsScreen(Screen):
         )
 
     def find_duplicates_action(self) -> None:
-        """كشف الملفات المكررة وحساب بصمة SHA-256 داخل Worker Thread لمنع تجميد واجهة Kivy"""
+        """كشف الملفات المكررة وحساب بصمة SHA-256 داخل Worker Thread مع شريط التقدم والإلغاء الآمن"""
         if getattr(self, "_is_deduping", False):
             return
         self._is_deduping = True
+        self._cancel_dedup_scan = False
 
         btn_text_orig = "تنظيف المكرر"
         if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
             self.ids.text_find_duplicates.text = ar("جارٍ الفحص...")
+
+        def _on_scan_progress(done: int, total: int, current_item: str) -> None:
+            def _update_scan_ui(_dt: float) -> None:
+                if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
+                    self.ids.text_find_duplicates.text = ar(f"فحص {done}/{total}")
+            Clock.schedule_once(_update_scan_ui, 0)
 
         def _worker() -> None:
             try:
@@ -868,12 +884,19 @@ class SettingsScreen(Screen):
                 import storage_utils
 
                 target_loc = storage_backend.get_active_target_location()
-                dupes = storage_utils.find_duplicate_files(target_location=target_loc)
+                dupes = storage_utils.find_duplicate_files(
+                    target_location=target_loc,
+                    progress_callback=_on_scan_progress,
+                    stop_check=lambda: getattr(self, "_cancel_dedup_scan", False),
+                )
 
                 def _on_finish(_dt: float) -> None:
                     self._is_deduping = False
                     if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
                         self.ids.text_find_duplicates.text = ar(btn_text_orig)
+
+                    if getattr(self, "_cancel_dedup_scan", False):
+                        return
 
                     if not dupes:
                         _ = show_app_dialog(
@@ -899,27 +922,64 @@ class SettingsScreen(Screen):
                     size_mb = round(total_bytes / 1048576, 2)
 
                     def _do_remove_dupes() -> None:
+                        self._is_deduping = True
                         if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
                             self.ids.text_find_duplicates.text = ar("جارٍ الحذف...")
 
                         def _remove_worker() -> None:
-                            del_count, freed = storage_utils.remove_duplicate_files(dupes, target_location=target_loc)
-                            freed_mb = round(freed / 1048576, 2)
+                            try:
+                                res = storage_utils.remove_duplicate_files(dupes, target_location=target_loc)
+                                freed_mb = round(res.freed_bytes / 1048576, 2)
 
-                            def _on_removed(_dt2: float) -> None:
-                                if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
-                                    self.ids.text_find_duplicates.text = ar(btn_text_orig)
-                                self.refresh_history()
-                                _ = show_app_dialog(
-                                    title="تم التنظيف بنجاح ✓",
-                                    text=(
-                                        f"تم حذف {del_count} ملف مكرر بأمان،"
-                                        f" وتم تحرير {freed_mb} MB من مساحة التخزين.\n"
-                                        "ملفاتك الأصلية الأولى بقيت بأمان تام دون أي مساس."
-                                    ),
-                                )
+                                def _on_removed(_dt2: float) -> None:
+                                    self.refresh_history()
 
-                            Clock.schedule_once(_on_removed, 0)
+                                    # صياغة دقيقة ومفصلة لنتيجة الحذف وفق متطلبات الإنتاج
+                                    if res.failed_count == 0 and res.pending_approval_count == 0 and res.deleted_count > 0:
+                                        title = "تم التنظيف بنجاح ✓"
+                                        text = (
+                                            f"تم اكتشاف {res.detected_count} ملف مكرر.\n"
+                                            f"تم حذف {res.deleted_count} ملف مكرر بنجاح وتحرير {freed_mb} MB من مساحة التخزين.\n"
+                                            "ملفاتك الأصلية الأولى بقيت بأمان تام دون أي مساس."
+                                        )
+                                    elif res.pending_approval_count > 0:
+                                        title = "تنبيه: بانتظار إذن أندرويد"
+                                        text = (
+                                            f"تم اكتشاف {res.detected_count} ملف مكرر.\n"
+                                            f"تم حذف {res.deleted_count} ملف بنجاح وتحرير {freed_mb} MB.\n\n"
+                                            f"يوجد {res.pending_approval_count} ملف يتطلب موافقتك عبر إذن نظام أندرويد لحذفه.\n"
+                                            + (f"الملفات المتعذرة: {res.failed_count}." if res.failed_count > 0 else "")
+                                        )
+                                    elif res.failed_count > 0:
+                                        title = "تنبيه: حذف جزئي"
+                                        text = (
+                                            f"تم اكتشاف {res.detected_count} ملف مكرر.\n"
+                                            f"تم حذف {res.deleted_count} ملف فقط وتحرير {freed_mb} MB.\n"
+                                            f"تعذر حذف {res.failed_count} ملف مكرر (يرجى التحقق من أذونات SAF وثبات الذاكرة)."
+                                        )
+                                    else:
+                                        title = "تعذر حذف المكررات"
+                                        text = f"تم العثور على {res.detected_count} ملف، ولكن تعذر إتمام حذف النسخ المكررة."
+
+                                    _ = show_app_dialog(title=title, text=text)
+
+                                Clock.schedule_once(_on_removed, 0)
+
+                            except Exception as e_del:
+                                logger.error("استثناء أثناء إزالة المكررات: %s", e_del, exc_info=True)
+                                def _on_del_err(_dt2: float) -> None:
+                                    _ = show_app_dialog(
+                                        title="خطأ أثناء الحذف",
+                                        text=f"حدث خطأ غير متوقع أثناء حذف المكررات:\n{e_del}"
+                                    )
+                                Clock.schedule_once(_on_del_err, 0)
+
+                            finally:
+                                def _reset_del_btn(_dt3: float) -> None:
+                                    self._is_deduping = False
+                                    if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
+                                        self.ids.text_find_duplicates.text = ar(btn_text_orig)
+                                Clock.schedule_once(_reset_del_btn, 0)
 
                         threading.Thread(target=_remove_worker, daemon=True).start()
 
@@ -942,6 +1002,7 @@ class SettingsScreen(Screen):
                 Clock.schedule_once(_on_finish, 0)
 
             except Exception as e:
+                logger.error("استثناء أثناء فحص المكررات: %s", e, exc_info=True)
                 def _on_err(_dt: float) -> None:
                     self._is_deduping = False
                     if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
