@@ -93,7 +93,9 @@ class SubjectDetailScreen(Screen):
         if not self.subject_name:
             return
 
-        images = file_manager.get_subject_images(self.subject_name)
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location()
+        images = file_manager.get_subject_images(self.subject_name, target_location=target_loc)
         count = len(images)
 
         self.ids.info_label.text = ar(f"إجمالي الأوراق: {count} ورقة")
@@ -317,7 +319,9 @@ class SubjectDetailScreen(Screen):
         )
 
     def _execute_delete_image(self, img_path: str):
-        success = file_manager.delete_image_file(img_path)
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location()
+        success = file_manager.delete_image_file(img_path, target_location=target_loc)
         if success:
             self.refresh_grid()
 
@@ -337,7 +341,9 @@ class SubjectDetailScreen(Screen):
         )
 
     def _execute_delete_subject(self):
-        file_manager.delete_subject_folder(self.subject_name)
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location()
+        file_manager.delete_subject_folder(self.subject_name, target_location=target_loc)
         self.go_back()
 
     def open_in_explorer(self):
@@ -348,7 +354,9 @@ class SubjectDetailScreen(Screen):
         target_loc = storage_backend.get_active_target_location()
         if target_loc.is_saf:
             tree_uri = target_loc.tree_uri or target_loc.saf_uri
-            success = storage_backend.open_saf_folder_in_file_manager(tree_uri)
+            subject_saf_uri = storage_backend.saf_find_directory(tree_uri, self.subject_name)
+            folder_to_open = subject_saf_uri or tree_uri
+            success = storage_backend.open_saf_folder_in_file_manager(folder_to_open)
             if not success:
                 show_app_dialog(
                     title="مجلد المادة (SD Card)",

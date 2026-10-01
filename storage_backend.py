@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import re
@@ -862,6 +863,106 @@ def saf_find_or_create_directory(tree_uri: str, category_name: str) -> str:
         return ""
 
 
+def saf_find_directory(tree_uri: str, category_name: str) -> str:
+    """
+    البحث عن مجلد داخل بطاقة الذاكرة الخارجية عبر SAF دون إنشائه.
+    يبحث عن المجلد تحت 'الملفات المنظمة' أولاً أو مباشرة.
+    العائد: Document URI للمجلد كـ string أو فارغ إذا لم يكن موجوداً.
+    """
+    if not tree_uri:
+        return ""
+
+    if tree_uri.startswith("mock_saf://"):
+        base_dir = Path(tree_uri.replace("mock_saf://", ""))
+        candidates = [
+            base_dir / ORGANIZED_FOLDER_NAME / category_name,
+            base_dir / category_name,
+        ]
+        for c in candidates:
+            if c.exists() and c.is_dir():
+                return f"mock_doc://{c}"
+        return ""
+
+    if _get_platform() != "android":
+        return ""
+
+    try:
+        from android import mActivity
+        from jnius import autoclass
+        Uri = autoclass("android.net.Uri")
+        cr = mActivity.getContentResolver()
+        parsed_tree = Uri.parse(tree_uri)
+
+        DocFileClass = _saf_get_document_file_class()
+        if DocFileClass is not None:
+            root_doc = DocFileClass.fromTreeUri(mActivity, parsed_tree)
+            if not root_doc:
+                return ""
+            target_org = root_doc.findFile(ORGANIZED_FOLDER_NAME)
+            sub_dir = target_org if target_org else root_doc
+            for part in category_name.replace("\\", "/").split("/"):
+                p_clean = part.strip()
+                if not p_clean:
+                    continue
+                next_d = sub_dir.findFile(p_clean)
+                if not next_d:
+                    return ""
+                sub_dir = next_d
+            return str(sub_dir.getUri().toString())
+
+        DocumentsContract = autoclass("android.provider.DocumentsContract")
+        tree_doc_id = DocumentsContract.getTreeDocumentId(parsed_tree)
+        root_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, tree_doc_id)
+
+        curr_uri = root_doc_uri
+        org_child = _contract_find_child_only(cr, parsed_tree, root_doc_uri, ORGANIZED_FOLDER_NAME)
+        if org_child:
+            curr_uri = org_child
+
+        for part in category_name.replace("\\", "/").split("/"):
+            p_clean = part.strip()
+            if not p_clean:
+                continue
+            child_uri = _contract_find_child_only(cr, parsed_tree, curr_uri, p_clean)
+            if not child_uri:
+                return ""
+            curr_uri = child_uri
+
+        return str(curr_uri.toString())
+    except Exception as e:
+        logger.debug("خطأ أثناء البحث عن مجلد SAF: %s", e)
+        return ""
+
+
+def _contract_find_child_only(cr: Any, tree_uri: Any, parent_doc_uri: Any, name: str) -> Any:
+    """البحث عن عنصر ابن بالاسم فقط في DocumentsContract دون إنشائه"""
+    from jnius import autoclass
+    DocumentsContract = autoclass("android.provider.DocumentsContract")
+    parent_doc_id = DocumentsContract.getDocumentId(parent_doc_uri)
+    children_uri = DocumentsContract.buildChildDocumentsUriUsingTree(tree_uri, parent_doc_id)
+    cursor = None
+    try:
+        cursor = cr.query(children_uri, None, None, None, None)
+        if cursor is not None:
+            name_idx = cursor.getColumnIndex("_display_name")
+            id_idx = cursor.getColumnIndex("document_id")
+            while cursor.moveToNext():
+                c_name = cursor.getString(name_idx) if name_idx >= 0 else ""
+                if c_name == name:
+                    c_id = cursor.getString(id_idx) if id_idx >= 0 else ""
+                    if c_id:
+                        return DocumentsContract.buildDocumentUriUsingTree(tree_uri, c_id)
+    except Exception:
+        pass
+    finally:
+        if cursor is not None:
+            try:
+                cursor.close()
+            except Exception:
+                pass
+    return None
+
+
 def _contract_find_or_create_child(cr: Any, tree_uri: Any, parent_doc_uri: Any, name: str, mime_type: str) -> Any:
     """مساعد DocumentsContract للبحث عن مجلد فرعي أو إنشائه"""
     from jnius import autoclass
@@ -1349,6 +1450,98 @@ def copy_uri_to_path(content_uri: str, dest_file: Path) -> bool:
         return False
 
 
+def compute_content_uri_hash(uri_or_path: str, chunk_size: int = 65536) -> str | None:
+    """
+    حساب بصمة التجزئة الفعلية (SHA-256) لمحتوى ملف محلي أو Content URI على دفعات:
+    - يدعم المسارات المحلية، مسارات mock_doc://، و Content URIs على أندرويد عبر openInputStream.
+    - يعيد None عند أي خطأ في القراءة أو تعذر فتح الدفق لتجنب اعتبار الملفات مكررة خطأً.
+    """
+    if not uri_or_path:
+        return None
+
+    import hashlib
+    hasher = hashlib.sha256()
+
+    # 1. إذا كان mock_doc://
+    if str(uri_or_path).startswith("mock_doc://"):
+        local_p = Path(str(uri_or_path).replace("mock_doc://", ""))
+        if not local_p.exists() or not local_p.is_file():
+            return None
+        try:
+            with open(local_p, "rb") as fp:
+                while True:
+                    data = fp.read(chunk_size)
+                    if not data:
+                        break
+                    hasher.update(data)
+            return hasher.hexdigest()
+        except OSError as e:
+            logger.warning("تعذر قراءة ملف mock_doc لحساب الهاش: %s (%s)", local_p, e)
+            return None
+
+    # 2. إذا كان Content URI على أندرويد
+    if str(uri_or_path).startswith("content://"):
+        if _get_platform() == "android":
+            try:
+                from android import mActivity
+                from jnius import autoclass
+                Uri = autoclass("android.net.Uri")
+                parsed_uri = Uri.parse(str(uri_or_path))
+                cr = mActivity.getContentResolver()
+                in_stream = cr.openInputStream(parsed_uri)
+                if in_stream is None:
+                    logger.warning("تعذر فتح دفق القراءة لحساب الهاش للـ URI: %s", uri_or_path)
+                    return None
+
+                buffer = bytearray(chunk_size)
+                try:
+                    while True:
+                        read_bytes = in_stream.read(buffer)
+                        if read_bytes == -1 or read_bytes == 0:
+                            break
+                        hasher.update(buffer[:read_bytes])
+                finally:
+                    try:
+                        in_stream.close()
+                    except Exception:
+                        pass
+
+                return hasher.hexdigest()
+            except Exception as e:
+                logger.warning("استثناء أثناء حساب هاش Content URI: %s (%s)", uri_or_path, e)
+                return None
+        else:
+            p = Path(str(uri_or_path))
+            if p.exists() and p.is_file():
+                try:
+                    with open(p, "rb") as fp:
+                        while True:
+                            data = fp.read(chunk_size)
+                            if not data:
+                                break
+                            hasher.update(data)
+                    return hasher.hexdigest()
+                except OSError:
+                    return None
+            return None
+
+    # 3. مسار محلي عادي
+    p = Path(str(uri_or_path))
+    if not p.exists() or not p.is_file():
+        return None
+    try:
+        with open(p, "rb") as fp:
+            while True:
+                data = fp.read(chunk_size)
+                if not data:
+                    break
+                hasher.update(data)
+        return hasher.hexdigest()
+    except OSError as e:
+        logger.warning("تعذر قراءة الملف المحلي لحساب الهاش: %s (%s)", p, e)
+        return None
+
+
 def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filename: str, mime_type: str = "") -> str:
     """
     نسخ ملف محلي إلى بطاقة SD عبر Storage Access Framework و DocumentFile/DocumentsContract.
@@ -1603,7 +1796,10 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
         # 2. إذا كان Path
         if isinstance(item, Path):
             if item.exists():
-                item.unlink()
+                if item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+                else:
+                    item.unlink()
                 return True
             return True
 
@@ -1615,7 +1811,10 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
         if item_str.startswith("mock_doc://"):
             mock_p = Path(item_str.replace("mock_doc://", ""))
             if mock_p.exists():
-                mock_p.unlink()
+                if mock_p.is_dir():
+                    shutil.rmtree(mock_p, ignore_errors=True)
+                else:
+                    mock_p.unlink()
             return True
 
         if item_str.startswith("content://"):
@@ -1678,6 +1877,11 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
 _pending_recoverable_deletion: dict[str, Any] | None = None
 
 
+def _get_pending_recoverable_file() -> Path:
+    from file_manager import get_app_private_storage_dir
+    return get_app_private_storage_dir() / "pending_recoverable_deletion.json"
+
+
 def set_pending_recoverable_deletion(
     item_uri: str,
     record_id: int | None = None,
@@ -1688,9 +1892,9 @@ def set_pending_recoverable_deletion(
     category: str = "",
     target_storage: str = "",
 ) -> None:
-    """تخزين تفاصيل عملية الحذف المعلقة لحين استلام نتيجة موافقة المستخدم من أندرويد"""
+    """تخزين تفاصيل عملية الحذف المعلقة في الذاكرة وفي التخزين الخاص بالتطبيق لحين استلام نتيجة موافقة المستخدم"""
     global _pending_recoverable_deletion
-    _pending_recoverable_deletion = {
+    data = {
         "item_uri": item_uri,
         "record_id": record_id,
         "src_path": src_path or item_uri,
@@ -1701,18 +1905,45 @@ def set_pending_recoverable_deletion(
         "target_storage": target_storage,
         "timestamp": time.time(),
     }
+    _pending_recoverable_deletion = data
+    try:
+        p = _get_pending_recoverable_file()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        logger.warning("تعذر حفظ pending recoverable deletion في التخزين الخاص: %s", e)
     logger.info("تم تسجيل عملية الحذف المعلقة لـ RecoverableSecurityException: %s", item_uri)
 
 
 def get_pending_recoverable_deletion() -> dict[str, Any] | None:
-    """استرجاع العملية المعلقة"""
-    return _pending_recoverable_deletion
+    """استرجاع العملية المعلقة من الذاكرة أو من التخزين الخاص بالتطبيق"""
+    global _pending_recoverable_deletion
+    if _pending_recoverable_deletion is not None:
+        return _pending_recoverable_deletion
+    try:
+        p = _get_pending_recoverable_file()
+        if p.exists():
+            with open(p, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    _pending_recoverable_deletion = data
+                    return data
+    except Exception as e:
+        logger.debug("تعذر قراءة pending recoverable deletion من التخزين الخاص: %s", e)
+    return None
 
 
 def clear_pending_recoverable_deletion() -> None:
-    """مسح العملية المعلقة بعد انتهاء المعالجة"""
+    """مسح العملية المعلقة من الذاكرة ومن التخزين الخاص بالتطبيق"""
     global _pending_recoverable_deletion
     _pending_recoverable_deletion = None
+    try:
+        p = _get_pending_recoverable_file()
+        if p.exists():
+            p.unlink()
+    except Exception as e:
+        logger.debug("تعذر مسح ملف pending recoverable deletion: %s", e)
 
 
 def handle_recoverable_deletion_result(result_ok: bool) -> bool:

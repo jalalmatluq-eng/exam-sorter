@@ -278,6 +278,17 @@ class CosmoSortApp(MDApp):
             # طلب الصلاحيات الأساسية بعد ظهور الواجهة
             Clock.schedule_once(lambda _dt: self.request_android_permissions(), 1.0)
 
+        # استرجاع أي عملية حذف معلقة لـ RecoverableSecurityException من التخزين الخاص بالتطبيق
+        try:
+            pending_rec = storage_backend.get_pending_recoverable_deletion()
+            if pending_rec:
+                logger.info(
+                    "توجد عملية حذف معلقة لـ RecoverableSecurityException محفوظة من جلسة سابقة (الملف: %s)",
+                    pending_rec.get("src_path"),
+                )
+        except Exception as e_p:
+            logger.debug("تنبيه فحص العملية المعلقة لـ RecoverableSecurityException: %s", e_p)
+
         # 3. تشغيل خدمة المراقبة بالخلفية فقط إذا كانت مفعلة برغبة المستخدم بعد تأخير آمن
         if media_watcher_service.is_service_desired_running():
             def _delayed_service_start(_dt: float) -> None:

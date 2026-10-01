@@ -190,30 +190,24 @@ def find_duplicate_files(
             for item in saf_items:
                 uri = item.uri or item.id
                 sz = int(item.size_bytes)
-                name = item.name.lower()
-                mtime = int(item.date_modified)
-                vol = getattr(item, "storage_id", "sdcard")
 
                 if sz <= 0:
                     continue
 
-                # حساب بصمة المحتوى عند الإمكان (mock أو فحص دفق أولي)
-                sample_h = ""
-                if uri.startswith("mock_doc://"):
-                    p = Path(uri.replace("mock_doc://", ""))
-                    if p.exists() and p.is_file():
-                        try:
-                            with open(p, "rb") as fp:
-                                sample_h = hashlib.md5(fp.read(65536)).hexdigest()
-                        except OSError:
-                            pass
+                # حساب بصمة المحتوى الفعلية عبر تدفق Content URI على دفعات
+                content_hash = storage_backend.compute_content_uri_hash(uri)
+                if not content_hash:
+                    # عند تعذر قراءة دفق Content URI، لا نعتبر الملف مكرراً بالاعتماد على الاسم والحجم لمنع الحذف الخاطئ
+                    logger.warning("تعذر قراءة دفق المحتوى لحساب الهاش للملف: %s. تم استبعاده من كشف المكررات لضمان سلامة البيانات.", uri)
+                    continue
 
-                # المفتاح: الحجم وبصمة المحتوى (أو الاسم عند تعذر قراءة البصمة)
-                key = f"{sz}_{sample_h}" if sample_h else f"{sz}_{name}"
+                # المفتاح الصارم: الحجم وبصمة المحتوى الحقيقية (SHA-256)
+                key = f"{sz}_{content_hash}"
                 if key not in hash_map:
                     hash_map[key] = []
                 hash_map[key].append(uri)
-        except Exception:
+        except Exception as e:
+            logger.error("خطأ أثناء فحص مكررات SAF: %s", e)
             return []
 
         return [v for v in hash_map.values() if len(v) > 1]
@@ -234,14 +228,12 @@ def find_duplicate_files(
                 continue
             try:
                 sz = f.stat().st_size
-                h = hashlib.md5()
-                chunk = min(65536, sz)
-                with open(f, "rb") as fp:
-                    h.update(fp.read(chunk))
-                    if sz > 131072:
-                        _ = fp.seek(-chunk, 2)
-                        h.update(fp.read(chunk))
-                key = f"{sz}_{h.hexdigest()}"
+                if sz <= 0:
+                    continue
+                content_hash = storage_backend.compute_content_uri_hash(str(f))
+                if not content_hash:
+                    continue
+                key = f"{sz}_{content_hash}"
                 if key not in hash_map:
                     hash_map[key] = []
                 hash_map[key].append(str(f))

@@ -420,12 +420,31 @@ def get_subject_images(
                         parts = rel.replace("\\", "/").strip("/").split("/")
                         if parts and parts[0] == storage_backend.ORGANIZED_FOLDER_NAME:
                             parts = parts[1:]
-                        if clean_name in parts:
+                        # تحليل الهيكل بدقة:
+                        # 1) صور الاختبارات / [اسم المادة] / الملف
+                        # 2) [اسم المادة] / الملف
+                        if len(parts) >= 3 and parts[0] in ("صور الاختبارات", "صور اختبارات"):
+                            item_subj = parts[1]
+                        elif len(parts) >= 2:
+                            item_subj = parts[0]
+                        else:
+                            item_subj = ""
+
+                        if item_subj and (
+                            sanitize_folder_name(item_subj).lower() == clean_name.lower()
+                            or item_subj.lower() == clean_name.lower()
+                        ):
                             matched = True
                     else:
                         raw_p = item.path or item.id
-                        if clean_name.lower() in raw_p.lower():
-                            matched = True
+                        parts = raw_p.replace("\\", "/").strip("/").split("/")
+                        if len(parts) >= 2:
+                            parent_dir = parts[-2]
+                            if (
+                                sanitize_folder_name(parent_dir).lower() == clean_name.lower()
+                                or parent_dir.lower() == clean_name.lower()
+                            ):
+                                matched = True
                     if matched:
                         file_uri = item.uri or item.path
                         matching.append((file_uri, float(item.date_modified)))
@@ -463,11 +482,14 @@ def get_subject_images(
     return images
 
 
-def delete_image_file(image_path: str) -> bool:
-    """حذف صورة أو فيديو معينة بأمان من مجلد المادة سواء كانت مساراً محلياً أو SAF Document URI"""
+def delete_image_file(image_path: str, target_location: Any | None = None) -> bool:
+    """حذف صورة أو فيديو معينة بأمان من مجلد المادة سواء كانت مساراً محلياً أو SAF Document URI وتحديث السجل"""
     import storage_backend
     try:
-        return storage_backend.delete_media_item(image_path)
+        ok = storage_backend.delete_media_item(image_path)
+        if ok:
+            remove_transfer_history_records_by_dest([image_path])
+        return ok
     except Exception as e:
         logger.warning("خطأ أثناء حذف الصورة/الملف %s: %s", image_path, e)
         return False
@@ -478,7 +500,7 @@ def delete_subject_folder(
     base_path: Path | None = None,
     target_location: Any | None = None,
 ) -> bool:
-    """حذف مجلد مادة بالكامل وجميع الصور بداخله بأمان عبر Path أو SAF"""
+    """حذف مجلد مادة بالكامل وجميع الصور بداخله بأمان عبر Path أو SAF وتحديث السجل"""
     import storage_backend
     if target_location is None:
         if base_path is not None:
@@ -494,20 +516,53 @@ def delete_subject_folder(
 
     clean_name = sanitize_folder_name(subject_name)
 
+    # 1. إذا كانت الوجهة SAF Tree URI لبطاقة الذاكرة
     if target_location and target_location.is_saf:
-        imgs = get_subject_images(clean_name, target_location=target_location)
-        for img in imgs:
-            delete_image_file(img)
-        return True
+        tree_uri = target_location.tree_uri or target_location.saf_uri
+        if not tree_uri or not storage_backend.is_saf_uri_valid(tree_uri):
+            logger.warning("تعذر حذف مجلد المادة: إذن SAF غير صالح أو البطاقة مفصولة")
+            return False
 
+        # أ) حذف جميع الملفات أولاً
+        imgs = get_subject_images(clean_name, target_location=target_location)
+        deleted_count = 0
+        for img in imgs:
+            if delete_image_file(img, target_location=target_location):
+                deleted_count += 1
+
+        # ب) البحث عن مجلد المادة في شجرة SAF وحذفه كـ Document
+        folder_uri = storage_backend.saf_find_directory(tree_uri, clean_name)
+        if not folder_uri:
+            folder_uri = storage_backend.saf_find_directory(tree_uri, f"صور الاختبارات/{clean_name}")
+
+        folder_deleted = False
+        if folder_uri:
+            folder_deleted = storage_backend.delete_media_item(folder_uri)
+
+        return folder_deleted or (deleted_count == len(imgs))
+
+    # 2. إذا كانت الوجهة مسار محلي فيزيائي
     base = target_location.path if (target_location and target_location.path) else (Path(base_path) if base_path else get_internal_media_sorter_base_path())
-    subject_folder = base / clean_name
-    try:
-        if subject_folder.exists() and subject_folder.is_dir():
-            shutil.rmtree(subject_folder)
+    candidates = [
+        base / "صور الاختبارات" / clean_name,
+        base / clean_name,
+    ]
+    target_dir = None
+    for c in candidates:
+        if c.exists() and c.is_dir():
+            target_dir = c
+            break
+
+    if target_dir:
+        files_to_delete = [str(f) for f in target_dir.rglob("*") if f.is_file()]
+        try:
+            shutil.rmtree(target_dir)
+            if files_to_delete:
+                remove_transfer_history_records_by_dest(files_to_delete)
             return True
-    except OSError as e:
-        logger.warning("خطأ أثناء حذف مجلد المادة: %s", e)
+        except OSError as e:
+            logger.warning("خطأ أثناء حذف مجلد المادة: %s", e)
+            return False
     return False
 
 
@@ -1186,6 +1241,36 @@ def update_transfer_record_by_src_to_move(src_path: str, base_path: Path | None 
     except Exception as e:
         logger.warning("خطأ أثناء تحديث سجل النقل بالمسار إلى Move: %s", e)
     return False
+
+
+def remove_transfer_history_records_by_dest(dest_paths: list[str], base_path: Path | None = None) -> int:
+    """حذف سجلات عمليات النقل من transfer_history.json بناءً على مسارات أو URIs ملفات الوجهة المحذوفة فعلياً"""
+    if not dest_paths:
+        return 0
+    log_file = get_transfer_log_path(base_path)
+    if not log_file.exists():
+        return 0
+    try:
+        with open(log_file, "r", encoding="utf-8") as f:
+            records = json.load(f)
+        if not isinstance(records, list):
+            return 0
+        norm_targets = {str(p).strip().lower() for p in dest_paths if p}
+        remaining = []
+        removed_count = 0
+        for rec in records:
+            dest = str(rec.get("destination", "")).strip().lower()
+            if dest in norm_targets:
+                removed_count += 1
+            else:
+                remaining.append(rec)
+        if removed_count > 0:
+            with open(log_file, "w", encoding="utf-8") as f:
+                json.dump(remaining, f, ensure_ascii=False, indent=2)
+        return removed_count
+    except Exception as e:
+        logger.warning("خطأ أثناء تنظيف سجلات النقل للملفات المحذوفة: %s", e)
+        return 0
 
 
 def get_transfer_history(

@@ -472,6 +472,7 @@ def _scan_android_mediastore(
                         size_bytes=size_val,
                         date_modified=date_val,
                         storage_id=storage_id,
+                        relative_path=rel_path or "",
                     )
                     found.append(item)
             finally:
@@ -562,6 +563,11 @@ def _extract_media_dedup_keys(item: Any) -> dict[str, Any]:
 
     vol_norm = "sdcard" if volume in ("sdcard", "external", "secondary") else "internal"
     norm_rel = rel_path.replace("\\", "/").strip("/").lower()
+    if norm_rel and name:
+        if norm_rel.endswith("/" + name):
+            norm_rel = norm_rel[: -len(name) - 1].strip("/")
+        elif norm_rel == name:
+            norm_rel = ""
     if not norm_rel and path:
         # استخراج المجلد النسبي القياسي
         parts = Path(path).parts

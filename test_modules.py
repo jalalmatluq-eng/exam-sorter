@@ -1228,7 +1228,7 @@ def test_saf_reading_dedup_and_recoverable_security() -> None:
         assert any("exam1.jpg" in img for img in math_imgs)
         print("  [3/6] ✓ قراءة وعرض مجلدات SD عبر SAF: list_subjects و get_subject_images تعمل بسلاسة دون مسار لينكس.")
 
-        # 4. كشف وحذف المكررات على بطاقة SD عبر storage_utils
+        # 4. كشف وحذف المكررات على بطاقة SD وحماية الملفات ذات المحتوى المختلف
         import storage_utils
         (math_dir / "exam1_duplicate.jpg").write_bytes(b"jpg1" * 100)
         dupes = storage_utils.find_duplicate_files(target_location=target_loc)
@@ -1239,13 +1239,42 @@ def test_saf_reading_dedup_and_recoverable_security() -> None:
         assert del_count == 1
         assert freed == 400
         assert (math_dir / "exam1.jpg").exists() or (math_dir / "exam1_duplicate.jpg").exists()
-        print("  [4/6] ✓ فحص وحذف المكررات في SAF: storage_utils يدعم URIs والحذف الآمن مع بقاء الأصل.")
 
-        # 5. فتح المجلد عبر Intent دون تحويل SAF URI لمسار لينكس
+        # فحص ملفين لهما نفس الاسم والحجم تماماً ولكن المحتوى مختلف داخل مجلدين مختلفين
+        diff_dir1 = test_root / "folder_alpha"
+        diff_dir2 = test_root / "folder_beta"
+        diff_dir1.mkdir(parents=True, exist_ok=True)
+        diff_dir2.mkdir(parents=True, exist_ok=True)
+        file_a = diff_dir1 / "quiz.jpg"
+        file_b = diff_dir2 / "quiz.jpg"
+        file_a.write_bytes(b"HELLO_WORLD_CONTENT_1" * 50)
+        file_b.write_bytes(b"HELLO_WORLD_CONTENT_2" * 50)
+        assert file_a.stat().st_size == file_b.stat().st_size
+        assert storage_backend.compute_content_uri_hash(str(file_a)) != storage_backend.compute_content_uri_hash(str(file_b))
+
+        loc_test = storage_backend.TargetLocation(
+            storage_type="custom", is_saf=False, path=test_root, is_valid=True
+        )
+        dupes_diff = storage_utils.find_duplicate_files(target_location=loc_test)
+        for group in dupes_diff:
+            assert not (str(file_a) in group and str(file_b) in group), "الملفان لهما محتوى مختلف ويجب عدم اعتبارهما مكررين!"
+        print("  [4/6] ✓ فحص وحذف المكررات في SAF وحماية الملفات مختلفة المحتوى ذات نفس الاسم والحجم.")
+
+        # 5. فتح المجلد عبر Intent وتدقيق فحص المادة وحذف المجلد
         opened = storage_backend.open_saf_folder_in_file_manager(saf_tree_uri)
         assert opened is True
 
-        # 6. دورة RecoverableSecurityException الكاملة (Request Code 4202)
+        # اختبار دقة get_subject_images: ملف باسم يحتوي على المادة ولكنه في مجلد مادة أخرى
+        (physics_dir / "رياضيات_notes.jpg").write_bytes(b"notes" * 20)
+        math_imgs_exact = file_manager.get_subject_images("رياضيات متقدمة", target_location=target_loc)
+        assert not any("رياضيات_notes.jpg" in img for img in math_imgs_exact), "يجب عدم تضمين ملفات المواد الأخرى حتى لو احتوى اسمها على اسم المادة!"
+
+        # اختبار حذف مجلد المادة بالكامل في SAF وتحديث السجل
+        del_subj_ok = file_manager.delete_subject_folder("رياضيات متقدمة", target_location=target_loc)
+        assert del_subj_ok is True
+        assert not (math_dir / "exam1.jpg").exists()
+
+        # 6. دورة RecoverableSecurityException الكاملة مع ثبات التخزين عبر إعادة التشغيل
         test_file_src = test_root / "test_sec_source.jpg"
         test_file_src.write_bytes(b"secure_image_content" * 20)
 
@@ -1266,17 +1295,23 @@ def test_saf_reading_dedup_and_recoverable_security() -> None:
             category="صوري",
             target_storage="internal",
         )
-        assert storage_backend.get_pending_recoverable_deletion() is not None
+        # محاكاة إغلاق التطبيق ومسح الذاكرة العشوائية: يجب استعادة العملية من التخزين الخاص
+        storage_backend._pending_recoverable_deletion = None
+        restored_pending = storage_backend.get_pending_recoverable_deletion()
+        assert restored_pending is not None
+        assert restored_pending.get("src_path") == str(test_file_src)
+        assert storage_backend._get_pending_recoverable_file().exists()
 
         # محاكاة رفض المستخدم (result_ok=False)
         storage_backend.handle_recoverable_deletion_result(False)
         assert storage_backend.get_pending_recoverable_deletion() is None
+        assert not storage_backend._get_pending_recoverable_file().exists()
         history = file_manager.get_transfer_history()
         target_rec = next((r for r in history if r.get("id") == rec_id), None)
         assert target_rec is not None
         assert target_rec.get("is_copy") is True
 
-        # محاكاة موافقة المستخدم (result_ok=True)
+        # محاكاة موافقة المستخدم بعد إعادة تشغيل التطبيق (result_ok=True)
         storage_backend.set_pending_recoverable_deletion(
             item_uri=str(test_file_src),
             record_id=rec_id,
@@ -1286,9 +1321,11 @@ def test_saf_reading_dedup_and_recoverable_security() -> None:
             category="صوري",
             target_storage="internal",
         )
+        storage_backend._pending_recoverable_deletion = None
         approved = storage_backend.handle_recoverable_deletion_result(True)
         assert approved is True
         assert not test_file_src.exists()
+        assert not storage_backend._get_pending_recoverable_file().exists()
         history2 = file_manager.get_transfer_history()
         target_rec2 = next((r for r in history2 if r.get("id") == rec_id), None)
         assert target_rec2 is not None
@@ -1311,7 +1348,7 @@ def test_saf_reading_dedup_and_recoverable_security() -> None:
         )
         assert r_saf_unmount == "فصل بطاقة SD"
 
-        print("  [5/6] ✓ دورة RecoverableSecurityException: إدارة التعليق والتأكيد وتحويل السجل لـ Move عند الموافقة و Copy عند الرفض.")
+        print("  [5/6] ✓ دورة RecoverableSecurityException: إدارة التعليق والتأكيد وتحويل السجل لـ Move عند الموافقة و Copy عند الرفض مع ثبات التخزين.")
         print("  [6/6] ✓ تحسين تصنيف أسباب الفشل: التفريق الدقيق بين 'انتهاء SAF permission' و 'فصل بطاقة SD'.")
 
     finally:
