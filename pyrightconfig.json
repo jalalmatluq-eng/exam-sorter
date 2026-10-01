@@ -13,11 +13,15 @@
     "test_data",
     "MediaSorter",
     "test_media_input",
+    ".buildozer",
+    "**/.buildozer/**",
     "امثلة*"
   ],
   "ignore": [
     ".venv",
     "**/.venv/**",
+    ".buildozer",
+    "**/.buildozer/**",
     "**/site-packages/**"
   ],
   "typeCheckingMode": "basic",

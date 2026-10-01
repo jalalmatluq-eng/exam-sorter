@@ -14,11 +14,6 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-try:
-    import cv2
-except Exception:
-    cv2 = None  # type: ignore
-
 import classifier
 import face_classifier
 import file_manager
@@ -27,6 +22,11 @@ import storage_backend
 import video_classifier
 from service import media_watcher_service
 from utils.arabic_helper import ar, get_arabic_font_path
+
+try:
+    import cv2
+except Exception:
+    cv2 = None  # type: ignore
 
 os.environ.setdefault("KIVY_NO_ARGS", "1")
 
