@@ -35,7 +35,7 @@ jobs:
           # opencv headless: same API as opencv-python, no system libGL needed on CI runners
           pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless kivy kivymd
 
-      - name: Run test_modules.py (11 suites including SAF & SD card simulation)
+      - name: Run test_modules.py (12 suites including SAF, app-private storage, & SD card simulation)
         run: |
           python test_modules.py
 
@@ -98,6 +98,6 @@ jobs:
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: cosmosort-2.0.0-debug
+          name: rateb-2.0.1-debug
           path: bin/*.apk
           retention-days: 30
