@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-
 import shutil
 import time
 from dataclasses import dataclass
@@ -89,7 +88,6 @@ MIME_TYPE_MAP: dict[str, str] = {
     "video/x-m4v": ".m4v",
     "video/x-flv": ".flv",
 }
-
 
 
 def resolve_media_mime_type(filename_or_path: str, explicit_mime: str = "") -> str:
@@ -203,7 +201,6 @@ def classify_failure_reason(
 
     # 2. فحص مخصص إذا كانت الوجهة تعتمد على SAF
     is_saf_target = bool(target_location and getattr(target_location, "is_saf", False))
-    tree_uri = getattr(target_location, "tree_uri", "") or getattr(target_location, "saf_uri", "") if target_location else ""
     is_target_valid = getattr(target_location, "is_valid", True) if target_location else True
 
     is_perm_issue = any(k in err_str for k in ("permission denied", "operation not permitted", "securityexception", "eacces", "uri permission", "permission", "صلاحية", "إذن"))
@@ -266,7 +263,6 @@ def _get_platform() -> str:
         return str(platform)
     except Exception:
         return "win" if os.name == "nt" else "linux"
-
 
 
 @dataclass
@@ -367,18 +363,14 @@ class MediaItem:
         ext = Path(self.name).suffix.lower()
         if ext in VIDEO_EXTENSIONS:
             return True
-        if self.mime_type and "video" in self.mime_type.lower():
-            return True
-        return False
+        return bool(self.mime_type and "video" in self.mime_type.lower())
 
     @property
     def is_image(self) -> bool:
         ext = Path(self.name).suffix.lower()
         if ext in IMAGE_EXTENSIONS:
             return True
-        if self.mime_type and "image" in self.mime_type.lower():
-            return True
-        return False
+        return bool(self.mime_type and "image" in self.mime_type.lower())
 
     def exists(self) -> bool:
         if self.path:
@@ -466,7 +458,7 @@ def save_saf_persisted_uri(uri_str: str) -> None:
     """حفظ URI الممنوح لبطاقة SD عبر SAF"""
     try:
         from file_manager import save_sorter_preferences
-        save_sorter_preferences({"saf_sdcard_uri": str(uri_str)})
+        save_sorter_preferences({"saf_sdcard_uri": uri_str})
     except Exception as e:
         logger.warning("تعذر حفظ URI البطاقة: %s", e)
 
@@ -920,8 +912,8 @@ def saf_find_or_create_directory(tree_uri: str, category_name: str) -> str:
 
         return str(cat_uri.toString())
 
-    except Exception as e:
-        logger.error("فشل إنشاء مجلد التصنيف في SAF: %s", e, exc_info=True)
+    except Exception:
+        logger.exception("فشل إنشاء مجلد التصنيف في SAF")
         return ""
 
 
@@ -1007,8 +999,8 @@ def saf_create_target_document(
             return (new_file_uri, str(new_file_uri.toString()))
 
         return (None, "")
-    except Exception as e:
-        logger.error("فشل إنشاء ملف الوجهة في SAF (%s): %s", filename, e, exc_info=True)
+    except Exception:
+        logger.exception("فشل إنشاء ملف الوجهة في SAF (%s)", filename)
         return (None, "")
 
 
@@ -1803,8 +1795,8 @@ def compute_content_uri_hash(uri_or_path: str, chunk_size: int = 65536) -> str |
     hasher = hashlib.sha256()
 
     # 1. إذا كان mock_doc://
-    if str(uri_or_path).startswith("mock_doc://"):
-        local_p = Path(str(uri_or_path).replace("mock_doc://", ""))
+    if uri_or_path.startswith("mock_doc://"):
+        local_p = Path(uri_or_path.replace("mock_doc://", ""))
         if not local_p.exists() or not local_p.is_file():
             return None
         try:
@@ -1820,13 +1812,13 @@ def compute_content_uri_hash(uri_or_path: str, chunk_size: int = 65536) -> str |
             return None
 
     # 2. إذا كان Content URI على أندرويد
-    if str(uri_or_path).startswith("content://"):
+    if uri_or_path.startswith("content://"):
         if _get_platform() == "android":
             try:
                 from android import mActivity
                 from jnius import autoclass
                 Uri = autoclass("android.net.Uri")
-                parsed_uri = Uri.parse(str(uri_or_path))
+                parsed_uri = Uri.parse(uri_or_path)
                 cr = mActivity.getContentResolver()
                 in_stream = cr.openInputStream(parsed_uri)
                 if in_stream is None:
@@ -1851,7 +1843,7 @@ def compute_content_uri_hash(uri_or_path: str, chunk_size: int = 65536) -> str |
                 logger.warning("استثناء أثناء حساب هاش Content URI: %s (%s)", uri_or_path, e)
                 return None
         else:
-            p = Path(str(uri_or_path))
+            p = Path(uri_or_path)
             if p.exists() and p.is_file():
                 try:
                     with open(p, "rb") as fp:
@@ -1866,7 +1858,7 @@ def compute_content_uri_hash(uri_or_path: str, chunk_size: int = 65536) -> str |
             return None
 
     # 3. مسار محلي عادي
-    p = Path(str(uri_or_path))
+    p = Path(uri_or_path)
     if not p.exists() or not p.is_file():
         return None
     try:
@@ -1910,16 +1902,12 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filen
 
     try:
         from android import mActivity
-        from jnius import autoclass
-        Uri = autoclass("android.net.Uri")
         cr = mActivity.getContentResolver()
 
         cat_doc_uri_str = saf_find_or_create_directory(saf_tree_uri, category)
         if not cat_doc_uri_str:
             logger.error("تعذر تهيئة مجلد التصنيف في SAF للوجهة!")
             return ""
-
-        parsed_cat_uri = Uri.parse(cat_doc_uri_str)
 
         target_name = filename or src_file.name
         # تحديد نوع الوسائط بدقة مع منع جعل الفيديو صورة JPG
@@ -1962,8 +1950,8 @@ def copy_path_to_saf_uri(src_file: Path, saf_tree_uri: str, category: str, filen
         is_success = True
         return created_uri_str
 
-    except Exception as e:
-        logger.error("فشل نسخ الملف إلى بطاقة SD عبر SAF (%s): %s", filename or src_file.name, e, exc_info=True)
+    except Exception:
+        logger.exception("فشل نسخ الملف إلى بطاقة SD عبر SAF (%s)", filename or src_file.name)
         raise
     finally:
         if out_stream is not None:
@@ -2053,8 +2041,8 @@ def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, 
         is_success = True
         return created_uri_str
 
-    except Exception as e:
-        logger.error("فشل نسخ Content URI إلى SAF (%s): %s", filename, e, exc_info=True)
+    except Exception:
+        logger.exception("فشل نسخ Content URI إلى SAF (%s)", filename)
         raise
     finally:
         if in_stream is not None:
@@ -2207,7 +2195,7 @@ def set_pending_recoverable_deletion(
     global _pending_recoverable_deletion
     if not file_name:
         try:
-            details = query_content_uri_details(item_uri) if str(item_uri).startswith("content://") else {}
+            details = query_content_uri_details(item_uri) if item_uri.startswith("content://") else {}
             file_name = details.get("display_name") or Path(src_path or item_uri).name
         except Exception:
             file_name = Path(src_path or item_uri).name or "ملف وسائط"
@@ -2267,7 +2255,6 @@ def clear_pending_recoverable_deletion() -> None:
 
 def _finalize_successful_recoverable_deletion(pending: dict[str, Any]) -> None:
     """تحديث السجل والكاش ومسح ملف العملية المعلقة بعد إتمام الحذف بنجاح لمنع التكرار"""
-    item_uri = pending.get("item_uri", "")
     record_id = pending.get("record_id")
     src_path = pending.get("src_path", "")
 
@@ -2417,7 +2404,9 @@ def get_displayable_image_path(uri_or_path: str) -> str:
     if uri_or_path.startswith("content://"):
         try:
             import hashlib
+
             from file_manager import get_app_private_storage_dir
+
             cache_dir = get_app_private_storage_dir() / "thumb_cache"
             cache_dir.mkdir(parents=True, exist_ok=True)
             h = hashlib.md5(uri_or_path.encode("utf-8")).hexdigest()
@@ -2441,16 +2430,16 @@ def open_media_file_native(uri_or_path: str) -> bool:
         return False
 
     # 1. إذا كان Content URI على أندرويد
-    if str(uri_or_path).startswith("content://"):
+    if uri_or_path.startswith("content://"):
         if _get_platform() == "android":
             try:
                 from android import mActivity
                 from jnius import autoclass
                 Intent = autoclass("android.content.Intent")
                 Uri = autoclass("android.net.Uri")
-                parsed_uri = Uri.parse(str(uri_or_path))
-                details = query_content_uri_details(str(uri_or_path))
-                display_name = details.get("display_name", "") or Path(str(uri_or_path)).name
+                parsed_uri = Uri.parse(uri_or_path)
+                details = query_content_uri_details(uri_or_path)
+                display_name = details.get("display_name", "") or Path(uri_or_path).name
                 raw_mime = details.get("mime_type", "")
                 mime = resolve_media_mime_type(display_name, raw_mime)
 
@@ -2468,7 +2457,7 @@ def open_media_file_native(uri_or_path: str) -> bool:
         return True
 
     # 2. إذا كان mock_doc:// أو مسار محلي
-    clean_p = str(uri_or_path).replace("mock_doc://", "")
+    clean_p = uri_or_path.replace("mock_doc://", "")
     p = Path(clean_p)
     if not p.exists():
         return False
@@ -2488,5 +2477,3 @@ def open_media_file_native(uri_or_path: str) -> bool:
     except Exception as e:
         logger.debug("تعذر تشغيل الملف في مشغل النظام: %s", e)
         return False
-
-

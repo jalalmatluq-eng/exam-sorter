@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 """
 generate_branding_assets.py
 ---------------------------
@@ -12,7 +11,8 @@ generate_branding_assets.py
 
 import math
 from pathlib import Path
-from PIL import Image, ImageDraw, ImageFont, ImageFilter
+
+from PIL import Image, ImageDraw, ImageFilter
 
 ASSETS_DIR = Path("assets")
 BRANDING_DIR = ASSETS_DIR / "branding"
@@ -52,7 +52,6 @@ def draw_linear_gradient(draw: ImageDraw.ImageDraw, bbox: tuple[int, int, int, i
 def draw_modern_logo_mark(size: int = 1024) -> Image.Image:
     """رسم رمز اللوجو المودرن مع بطاقات الوسائط المصنفة وورقة الاختبار"""
     img = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
 
     scale = size / 1024.0
     cx = size // 2

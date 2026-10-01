@@ -29,11 +29,7 @@ except Exception:
     MDListItem = MDListItemHeadlineText = MDListItemLeadingIcon = MDListItemSupportingText = MDListItemTrailingIcon = None  # type: ignore
 
 from utils.arabic_helper import ar
-from utils.category_helper import (
-    ColorTuple,
-    get_category_icon_and_unit,
-    get_category_ui_details,
-)
+from utils.category_helper import get_category_icon_and_unit
 
 
 def create_subject_list_item(
@@ -327,7 +323,7 @@ def show_rich_results_dialog(
         lines.append(f"• يحتاج إعادة اختيار مجلد بطاقة SD (SAF): {stats_dict['saf_reselect_count']} ملف")
 
     if failed_cnt > 0 and success_cnt == 0 and len(failures_by_reason) == 1:
-        single_reason = list(failures_by_reason.keys())[0]
+        single_reason = next(iter(failures_by_reason.keys()))
         lines.append(f"\nالسبب الموحد للفشل:\n  ← {single_reason}")
     elif failures_by_reason:
         lines.append("\nأسباب الفشل المشخصة:")

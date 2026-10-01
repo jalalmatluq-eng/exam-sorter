@@ -357,7 +357,7 @@ def test_poison_files_and_pending_scan() -> None:
 
 def test_export_logs() -> None:
     print("--- 9. فحص تصدير سجل التشخيص (Export Diagnostic Logs) ---")
-    from utils.export_logs import get_private_log_file, export_diagnostic_log
+    from utils.export_logs import export_diagnostic_log, get_private_log_file
     log_p = get_private_log_file()
     assert log_p.exists(), "ملف السجل الداخلي يجب أن يكون موجوداً أو تم إنشاؤه!"
     ok, msg = export_diagnostic_log()
@@ -450,8 +450,8 @@ def test_saf_and_target_location_simulations() -> None:
     8. نمط Move مع فشل حذف المصدر (التحويل لنسخ آمن وحماية الأصل)
     """
     print("--- 11. فحص محاكاة مسارات SAF والذاكرة الخارجية وسيناريوهات الأمان الثمانية ---")
-    import storage_backend
     import file_manager
+    import storage_backend
 
     sim_root = Path("test_sim_saf_env").resolve()
     shutil.rmtree(sim_root, ignore_errors=True)
@@ -557,7 +557,7 @@ def test_saf_and_target_location_simulations() -> None:
     print("  [6/8] ✓ فقدان URI permission: تم كشف غياب الإذن بدقة ومطالبة المستخدم به.")
 
     # 7. اختبار Undo لوجهة content:// / SAF URI
-    history_before = file_manager.get_transfer_history(base_path=internal_dest_dir)
+    _ = file_manager.get_transfer_history(base_path=internal_dest_dir)
     # نسجل عملية نسخ إلى SAF
     f_undo_src = internal_src_dir / "undo_test.jpg"
     f_undo_src.write_bytes(b"TEST UNDO CONTENT")
@@ -1015,7 +1015,7 @@ def test_architectural_saf_unification() -> None:
         r_mkdir = storage_backend.classify_failure_reason(RuntimeError("Failed to create SAF directory"))
         assert r_mkdir == "فشل إنشاء المجلد"
 
-        r_read = storage_backend.classify_failure_reason(IOError("Broken pipe or read failed"))
+        r_read = storage_backend.classify_failure_reason(OSError("Broken pipe or read failed"))
         assert r_read == "فشل القراءة"
         print("  [6/7] ✓ تصنيف أسباب الفشل: تغطية شاملة لـ (فصل بطاقة SD، انتهاء الإذن، امتلاء المساحة، فشل المجلد، فشل القراءة).")
 
@@ -1033,7 +1033,7 @@ def test_architectural_saf_unification() -> None:
         assert ("بطاقة الذاكرة" in active_loc_after_restart.name or "SAF" in active_loc_after_restart.name)
 
         # التأكد من أن العمليات بعد إعادة التشغيل تتم مباشرة على SAF دون لمس الذاكرة الداخلية
-        dest_cat_uri = storage_backend.saf_find_or_create_directory(active_loc_after_restart.saf_uri, "اختبارات")
+        _ = storage_backend.saf_find_or_create_directory(active_loc_after_restart.saf_uri, "اختبارات")
         assert (mock_restart_sd / storage_backend.ORGANIZED_FOLDER_NAME / "اختبارات").exists()
         print("  [7/7] ✓ ثبات إذن ومسار SAF بعد إعادة تشغيل التطبيق: استعادة فورية للإذن وبدء العمليات دون الرجوع للتخزين الداخلي.")
 
@@ -1141,10 +1141,14 @@ def test_saf_reading_dedup_and_recoverable_security() -> None:
                 continue
             if s > 0 and m > 0 and (n, s, m, v) in seen_fallback:
                 continue
-            if u: seen_uris.add(u.lower())
-            if p: seen_paths.add(p.lower())
-            if r: seen_rel.add((v, r, n))
-            if s > 0 and m > 0: seen_fallback.add((n, s, m, v))
+            if u:
+                seen_uris.add(u.lower())
+            if p:
+                seen_paths.add(p.lower())
+            if r:
+                seen_rel.add((v, r, n))
+            if s > 0 and m > 0:
+                seen_fallback.add((n, s, m, v))
             added.append(cand)
 
         assert len(added) == 1, "يجب دمج الملفين وإزالة التكرار رغم اختلاف mtime بفضل المستوى 3!"
@@ -1187,10 +1191,14 @@ def test_saf_reading_dedup_and_recoverable_security() -> None:
                 continue
             if s > 0 and m > 0 and (n, s, m, v) in seen_fallback:
                 continue
-            if u: seen_uris.add(u.lower())
-            if p: seen_paths.add(p.lower())
-            if r: seen_rel.add((v, r, n))
-            if s > 0 and m > 0: seen_fallback.add((n, s, m, v))
+            if u:
+                seen_uris.add(u.lower())
+            if p:
+                seen_paths.add(p.lower())
+            if r:
+                seen_rel.add((v, r, n))
+            if s > 0 and m > 0:
+                seen_fallback.add((n, s, m, v))
             added_two.append(cand)
 
         assert len(added_two) == 2, "يجب الحفاظ على الملفين وعدم اعتبارهما مكررين لاختلاف المجلد والوقت!"
@@ -1374,9 +1382,9 @@ def test_production_verification_and_saf_resolution() -> None:
     print("\n--- [اختبار 15] فحص التحقق النهائي للإنتاج وحل شجرة SAF وتشغيل الفيديو ---")
     import sys
     from unittest.mock import MagicMock, patch
-    import storage_backend
+
     import file_manager
-    import storage_utils
+    import storage_backend
 
     # 1. اختبار saf_find_directory على DocumentFile
     class MockDocFile:
@@ -1410,26 +1418,28 @@ def test_production_verification_and_saf_resolution() -> None:
     mock_uri_cls.parse.return_value = mock_parsed_uri
     mock_jnius.autoclass.side_effect = lambda cls_name: mock_uri_cls if cls_name == "android.net.Uri" else MagicMock()
 
-    with patch.dict(sys.modules, {"android": mock_android, "jnius": mock_jnius}):
-        with patch.object(storage_backend, "_get_platform", return_value="android"):
-            with patch.object(storage_backend, "_saf_get_document_file_class", return_value=MockDocumentFileClass):
-                # أ) المسار الكامل
-                found_uri_full = storage_backend.saf_find_directory(
-                    "content://tree/SD_ROOT", "الملفات المنظمة / صور الاختبارات / اسم المادة"
-                )
-                assert found_uri_full == math_doc.uri_str, f"DocumentFile full path failed: {found_uri_full}"
+    with (
+        patch.dict(sys.modules, {"android": mock_android, "jnius": mock_jnius}),
+        patch.object(storage_backend, "_get_platform", return_value="android"),
+        patch.object(storage_backend, "_saf_get_document_file_class", return_value=MockDocumentFileClass),
+    ):
+        # أ) المسار الكامل
+        found_uri_full = storage_backend.saf_find_directory(
+            "content://tree/SD_ROOT", "الملفات المنظمة / صور الاختبارات / اسم المادة"
+        )
+        assert found_uri_full == math_doc.uri_str, f"DocumentFile full path failed: {found_uri_full}"
 
-                # ب) مسار صور الاختبارات
-                found_uri_sub = storage_backend.saf_find_directory(
-                    "content://tree/SD_ROOT", "صور الاختبارات / اسم المادة"
-                )
-                assert found_uri_sub == math_doc.uri_str, f"DocumentFile sub path failed: {found_uri_sub}"
+        # ب) مسار صور الاختبارات
+        found_uri_sub = storage_backend.saf_find_directory(
+            "content://tree/SD_ROOT", "صور الاختبارات / اسم المادة"
+        )
+        assert found_uri_sub == math_doc.uri_str, f"DocumentFile sub path failed: {found_uri_sub}"
 
-                # ج) اسم المادة فقط
-                found_uri_short = storage_backend.saf_find_directory(
-                    "content://tree/SD_ROOT", "اسم المادة"
-                )
-                assert found_uri_short == math_doc.uri_str, f"DocumentFile short path failed: {found_uri_short}"
+        # ج) اسم المادة فقط
+        found_uri_short = storage_backend.saf_find_directory(
+            "content://tree/SD_ROOT", "اسم المادة"
+        )
+        assert found_uri_short == math_doc.uri_str, f"DocumentFile short path failed: {found_uri_short}"
     print("  [1/5] ✓ فحص saf_find_directory على DocumentFile عبر أندرويد لجميع صيغ المسارات بنجاح تام.")
 
     # 2. اختبار saf_find_directory على DocumentsContract (Fallback)
@@ -1462,14 +1472,16 @@ def test_production_verification_and_saf_resolution() -> None:
     mock_jnius_contract = MagicMock()
     mock_jnius_contract.autoclass.side_effect = mock_autoclass_contract
 
-    with patch.dict(sys.modules, {"android": mock_android, "jnius": mock_jnius_contract}):
-        with patch.object(storage_backend, "_get_platform", return_value="android"):
-            with patch.object(storage_backend, "_saf_get_document_file_class", return_value=None):
-                with patch.object(storage_backend, "_contract_find_child_only", side_effect=mock_contract_find):
-                    contract_res = storage_backend.saf_find_directory(
-                        "content://tree/SD_ROOT", "الملفات المنظمة / صور الاختبارات / اسم المادة"
-                    )
-                    assert contract_res == "content://contract/math_uri", f"DocumentsContract resolution failed: {contract_res}"
+    with (
+        patch.dict(sys.modules, {"android": mock_android, "jnius": mock_jnius_contract}),
+        patch.object(storage_backend, "_get_platform", return_value="android"),
+        patch.object(storage_backend, "_saf_get_document_file_class", return_value=None),
+        patch.object(storage_backend, "_contract_find_child_only", side_effect=mock_contract_find),
+    ):
+        contract_res = storage_backend.saf_find_directory(
+            "content://tree/SD_ROOT", "الملفات المنظمة / صور الاختبارات / اسم المادة"
+        )
+        assert contract_res == "content://contract/math_uri", f"DocumentsContract resolution failed: {contract_res}"
     print("  [2/5] ✓ فحص saf_find_directory على DocumentsContract كمسار بديل لـ DocumentFile بنجاح تام.")
 
     # 3. اختبار تشغيل MP4 و MKV و 3GP و Content URI
@@ -1491,13 +1503,19 @@ def test_production_verification_and_saf_resolution() -> None:
         mock_intent_cls if cls_name == "android.content.Intent" else mock_uri_cls
     )
 
-    with patch.dict(sys.modules, {"android": mock_android, "jnius": mock_jnius_player}):
-        with patch.object(storage_backend, "_get_platform", return_value="android"):
-            with patch.object(storage_backend, "query_content_uri_details", return_value={"display_name": "sd_video.mp4", "mime_type": "video/mp4"}):
-                played = storage_backend.open_media_file_native("content://media/external/video/media/888")
-                assert played is True
-                mock_intent_inst.setDataAndType.assert_called_with(mock_parsed_uri, "video/mp4")
-                mock_android.mActivity.startActivity.assert_called_with(mock_intent_inst)
+    with (
+        patch.dict(sys.modules, {"android": mock_android, "jnius": mock_jnius_player}),
+        patch.object(storage_backend, "_get_platform", return_value="android"),
+        patch.object(
+            storage_backend,
+            "query_content_uri_details",
+            return_value={"display_name": "sd_video.mp4", "mime_type": "video/mp4"},
+        ),
+    ):
+        played = storage_backend.open_media_file_native("content://media/external/video/media/888")
+        assert played is True
+        mock_intent_inst.setDataAndType.assert_called_with(mock_parsed_uri, "video/mp4")
+        mock_android.mActivity.startActivity.assert_called_with(mock_intent_inst)
     print("  [3/5] ✓ فحص تحديد MIME وتشغيل MP4, MKV, 3GP و Content URI عبر مشغل نظام أندرويد بنجاح.")
 
     # 4. فحص DeleteFolderResult والتمييز بين حذف الملفات وحذف المجلد
@@ -1524,11 +1542,13 @@ def test_production_verification_and_saf_resolution() -> None:
         "file_name": "exam_sheet.jpg",
         "src_path": "/storage/emulated/0/DCIM/exam_sheet.jpg",
     }
-    with patch.object(storage_backend, "get_pending_recoverable_deletion", return_value=mock_pending):
-        with patch.object(storage_backend, "delete_media_item", return_value=True) as mock_del:
-            retried = storage_backend.retry_pending_recoverable_deletion()
-            assert retried is True
-            mock_del.assert_called_with("content://media/external/images/media/999")
+    with (
+        patch.object(storage_backend, "get_pending_recoverable_deletion", return_value=mock_pending),
+        patch.object(storage_backend, "delete_media_item", return_value=True) as mock_del,
+    ):
+        retried = storage_backend.retry_pending_recoverable_deletion()
+        assert retried is True
+        mock_del.assert_called_with("content://media/external/images/media/999")
     print("  [5/5] ✓ فحص retry_pending_recoverable_deletion لإعادة إطلاق طلب حذف الملف المعلق بأمان.")
 
     print("✓ نجحت جميع فحوصات الجناح 15 للتحقق النهائي والإنتاج بنسبة 100%!\n")
@@ -1547,8 +1567,8 @@ def test_production_error_scenarios_and_resilience() -> None:
     print("\n--- [اختبار 16] فحص سيناريوهات الأخطاء الواقعية والمرونة العالية ---")
     import sys
     from unittest.mock import MagicMock, patch
+
     import storage_backend
-    import file_manager
     import storage_utils
 
     # 1. فشل حذف Content URI
@@ -1591,6 +1611,7 @@ def test_production_error_scenarios_and_resilience() -> None:
             "content://media/external/images/media/sec_req.jpg",
         ]
     ]
+
     def mock_delete(ref):
         ref_str = str(ref)
         if "dup_success" in ref_str:
@@ -1602,17 +1623,19 @@ def test_production_error_scenarios_and_resilience() -> None:
             return False
         return False
 
-    with patch.object(storage_backend, "delete_media_item", side_effect=mock_delete):
-        with patch.object(storage_backend, "get_uri_file_size", return_value=1024):
-            res = storage_utils.remove_duplicate_files(groups)
-            assert res.detected_count == 3
-            assert res.deleted_count == 1
-            assert res.failed_count == 1
-            assert res.pending_approval_count == 1
-            assert res.freed_bytes == 1024
-            d_count, f_bytes = res
-            assert d_count == 1
-            assert f_bytes == 1024
+    with (
+        patch.object(storage_backend, "delete_media_item", side_effect=mock_delete),
+        patch.object(storage_backend, "get_uri_file_size", return_value=1024),
+    ):
+        res = storage_utils.remove_duplicate_files(groups)
+        assert res.detected_count == 3
+        assert res.deleted_count == 1
+        assert res.failed_count == 1
+        assert res.pending_approval_count == 1
+        assert res.freed_bytes == 1024
+        d_count, f_bytes = res
+        assert d_count == 1
+        assert f_bytes == 1024
     print("  [4/6] ✓ فحص DeduplicationResult: التمييز الدقيق بين الناجح (1)، الفاشل (1)، وبانتظار الموافقة (1).")
 
     # 5. استثناء داخل Worker Thread وضمان إعادة الواجهة و _is_deduping = False عبر try/finally
@@ -1630,6 +1653,7 @@ def test_production_error_scenarios_and_resilience() -> None:
     assert found_try_finally is True, "_remove_worker يجب أن يحتوي على try/finally كاملة لحماية الواجهة"
 
     ui_state = {"is_deduping": True, "btn_text": "جارٍ الحذف...", "error_shown": False}
+
     def simulated_worker():
         try:
             raise RuntimeError("خطأ غير متوقع أثناء الحذف")
@@ -1682,7 +1706,7 @@ def test_category_ui_details_and_layout_resilience() -> None:
         assert "شخصية" in d["unit"]
         assert "لا توجد صور شخصية" in d["empty_title"]
         assert "شخصية" in d["empty_action_text"]
-        icon, color, unit = get_category_icon_and_unit(name)
+        icon, _color, unit = get_category_icon_and_unit(name)
         assert icon == d["icon"] and unit == d["unit"]
     print("  [1/6] ✓ فحص مجلدات الصور الشخصية وبصمة الوجه ومطابقة النصوص المخصصة.")
 
@@ -1718,7 +1742,7 @@ def test_category_ui_details_and_layout_resilience() -> None:
         assert "امتحان" not in d_gen["unit"]
         assert "لا توجد ملفات في هذا المجلد بعد" in d_gen["empty_title"]
         assert "ملف" in d_gen["unit"]
-        icon, color, unit = get_category_icon_and_unit(g_name)
+        icon, _color, unit = get_category_icon_and_unit(g_name)
         assert unit == d_gen["unit"]
     print("  [4/6] ✓ حماية المجلدات العامة (جديد، Android، Download، إلخ) ومنع وسمها كأوراق اختبار نهائياً.")
 
@@ -1761,9 +1785,10 @@ def test_comprehensive_real_android_fixes() -> None:
     """
     print("--- [اختبار 18] فحص الإصلاح الشامل للملفات والصلاحيات (Rateb / CosmoSort) ---")
     import tempfile
+
+    import android_permissions
     import storage_backend
     import video_classifier
-    import android_permissions
 
     test_root = Path(tempfile.mkdtemp(prefix="cosmosort_suite18_"))
     try:
@@ -1784,7 +1809,7 @@ def test_comprehensive_real_android_fixes() -> None:
         assert r_src_perm == "رفض صلاحية قراءة الملف", f"المتوقع 'رفض صلاحية قراءة الملف' لكن الناتج: {r_src_perm}"
 
         r_src_read = storage_backend.classify_failure_reason(
-            IOError("Broken pipe"),
+            OSError("Broken pipe"),
             stage="source_read",
         )
         assert r_src_read == "فشل القراءة"
@@ -1822,7 +1847,7 @@ def test_comprehensive_real_android_fixes() -> None:
         orig_saf_granted = android_permissions.is_saf_sdcard_granted
         try:
             android_permissions.is_saf_sdcard_granted = lambda: False
-            can_go, code, msg, act = android_permissions.preflight_scan_access("internal", "sdcard")
+            can_go, _code, _msg, act = android_permissions.preflight_scan_access("internal", "sdcard")
             assert not can_go, "يجب منع بدء الفحص إذا كانت وجهة SD card تفتقد إذن SAF"
             assert act == "request_saf_sdcard"
         finally:
@@ -1891,5 +1916,3 @@ if __name__ == "__main__":
     print("==================================================")
     print("  جميع الفحوصات الآلية للوحدات (18 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
-
-

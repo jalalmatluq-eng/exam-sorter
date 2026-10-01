@@ -263,6 +263,7 @@ def _android_read_frame(
     retriever = None
     try:
         from io import BytesIO
+
         from jnius import autoclass  # type: ignore
         from PIL import Image
 
