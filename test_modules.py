@@ -154,6 +154,7 @@ def test_face_classifier() -> None:
     profile_path = sandbox / "test_face_profile.json"
 
     # 1. فحص استخراج تضمين الوجه من مصفوفة وجه اصطناعية
+    assert cv2 is not None, "cv2 is required for face embedding test"
     mock_face = np.full((120, 120), 128, dtype=np.uint8)
     _ = cv2.circle(mock_face, (40, 40), 10, (50, 50, 50), -1)  # عين يسرى
     _ = cv2.circle(mock_face, (80, 40), 10, (50, 50, 50), -1)  # عين يمنى
@@ -566,7 +567,7 @@ def test_saf_and_target_location_simulations() -> None:
     assert undo_file_path.exists()
     latest_history = file_manager.get_transfer_history(base_path=internal_dest_dir)
     assert len(latest_history) > 0
-    record_id = int(latest_history[0]["id"])
+    record_id = int(str(latest_history[0]["id"]))
     undo_ok = file_manager.undo_transfer(record_id, base_path=internal_dest_dir)
     assert undo_ok is True
     assert not undo_file_path.exists(), "يجب حذف الملف من SAF الوجهة عند التراجع!"

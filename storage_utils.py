@@ -1,11 +1,9 @@
-from __future__ import annotations
-
-from dataclasses import dataclass
-import hashlib
 import logging
 import sqlite3
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, TypedDict
+from typing import Any, TypedDict
 
 import file_manager
 import storage_backend
@@ -94,7 +92,7 @@ def get_storage_stats(
                     if cat_name not in stats["categories"]:
                         stats["categories"][cat_name] = {"count": 0, "size_mb": 0.0}
                     stats["categories"][cat_name]["count"] += 1
-                    sz = int(item.size_bytes)
+                    sz = item.size_bytes
                     total_bytes += sz
                     cur_mb = stats["categories"][cat_name]["size_mb"]
                     stats["categories"][cat_name]["size_mb"] = round(cur_mb + (sz / 1048576), 2)
@@ -102,7 +100,7 @@ def get_storage_stats(
                 stats["total_files"] = sum(c["count"] for c in stats["categories"].values())
                 stats["total_size_mb"] = round(total_bytes / 1048576, 2)
             except Exception as e:
-                pass
+                logger.debug("خطأ في احتساب إحصائيات التخزين: %s", e)
 
         # استعلام وقت آخر فحص من كاش التطبيق الخاص
         try:
@@ -216,7 +214,7 @@ def find_duplicate_files(
                 if stop_check and stop_check():
                     return []
                 uri = item.uri or item.id
-                sz = int(item.size_bytes)
+                sz = item.size_bytes
                 if sz <= 0:
                     continue
                 size_groups.setdefault(sz, []).append(uri)
@@ -269,6 +267,7 @@ def find_duplicate_files(
 
     # المرحلة 1: تجميع محلي سريع حسب الحجم
     size_groups_local: dict[int, list[str]] = {}
+    hash_map_local: dict[str, list[str]] = {}
     try:
         for f in base.rglob("*"):
             if stop_check and stop_check():
@@ -288,7 +287,6 @@ def find_duplicate_files(
         total_candidates_local = sum(len(paths) for paths in candidates_local.values())
         processed_local = 0
 
-        hash_map_local: dict[str, list[str]] = {}
         for sz, paths in candidates_local.items():
             for p_str in paths:
                 if stop_check and stop_check():
@@ -335,8 +333,7 @@ def remove_duplicate_files(
         # الإبقاء على الملف الأول، وحذف النسخ الإضافية المكررة
         for file_ref in group[1:]:
             is_saf_or_uri = (
-                str(file_ref).startswith("content://")
-                or str(file_ref).startswith("mock_doc://")
+                file_ref.startswith(("content://", "mock_doc://"))
                 or (target_location and target_location.is_saf)
             )
 
@@ -355,7 +352,7 @@ def remove_duplicate_files(
                     res.freed_bytes += sz
                 else:
                     pending = storage_backend.get_pending_recoverable_deletion()
-                    if pending and pending.get("item_uri") == str(file_ref):
+                    if pending and pending.get("item_uri") == file_ref:
                         res.pending_approval_count += 1
                     else:
                         res.failed_count += 1

@@ -80,7 +80,6 @@ class HomeScreen(Screen):
 
     def start_cosmic_animation(self) -> None:
         """تم تعطيل الحركة الكونية المستمرة لحماية الأجهزة ذات GPU Adreno القديمة من SIGSEGV"""
-        pass
 
     def on_leave(self, *args: object) -> None:
         """إيقاف الحركة الكونية عند مغادرة الشاشة لتوفير طاقة المعالج والبطارية"""
@@ -704,6 +703,7 @@ class HomeScreen(Screen):
     ) -> None:
         """بدء الفحص والفرز الشامل التلقائي وفق المصدر والوجهة المحددين مع فحص استباقي للصلاحيات"""
         import threading
+
         import android_permissions
         import media_scanner
         from utils.ui_helper import show_rich_results_dialog
@@ -712,7 +712,7 @@ class HomeScreen(Screen):
             return
 
         # 1. الفحص الاستباقي للصلاحيات لمنع التشغيل الكاذب والإخفاقات المتكررة
-        can_proceed, issue_code, issue_msg, action_req = android_permissions.preflight_scan_access(
+        can_proceed, _issue_code, issue_msg, action_req = android_permissions.preflight_scan_access(
             source_choice, target_choice
         )
         if not can_proceed:
@@ -832,8 +832,10 @@ class HomeScreen(Screen):
                 # زر تصدير تقرير التشخيص (JSON + TXT دون تسريب أي مفاتيح)
                 def _export_report():
                     try:
-                        import file_manager
                         import json
+                        import time
+
+                        import file_manager
                         base_rep_dir = file_manager.get_app_private_storage_dir()
                         rep_txt = base_rep_dir / "diagnostic_report.txt"
                         rep_json = base_rep_dir / "diagnostic_report.json"
@@ -873,8 +875,7 @@ class HomeScreen(Screen):
                             rf.write(f"مرفوض بسبب إذن Android: {report_data['permission_rejected_count']}\n")
                             rf.write(f"يحتاج إعادة اختيار SAF: {report_data['saf_reselect_count']}\n\n")
                             rf.write("تفصيل الإخفاقات المشخصة:\n")
-                            for r_k, r_v in failures_by_reason.items():
-                                rf.write(f"  - {r_k}: {r_v} ملف\n")
+                            rf.writelines(f"  - {r_k}: {r_v} ملف\n" for r_k, r_v in failures_by_reason.items())
 
                         show_modern_notification("تقرير التشخيص", f"تم حفظ التقرير في:\n{rep_txt.name}", notif_type="info")
                     except Exception as ex_rep:

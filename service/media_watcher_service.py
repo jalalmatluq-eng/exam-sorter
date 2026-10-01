@@ -6,7 +6,6 @@
 """
 
 import json
-import os
 import sys
 import time
 from pathlib import Path
@@ -175,19 +174,16 @@ _RESTRICTED_PATHS_CACHE: dict[str, float] = {}
 
 def _is_path_temporarily_restricted(path_str: str) -> bool:
     """التحقق مما إذا كان المسار محظوراً بالصلاحيات ومحفوظاً في كاش التبريد"""
-    global _RESTRICTED_PATHS_CACHE
     now = time.time()
     exp = _RESTRICTED_PATHS_CACHE.get(path_str, 0.0)
     if now < exp:
         return True
-    if path_str in _RESTRICTED_PATHS_CACHE:
-        del _RESTRICTED_PATHS_CACHE[path_str]
+    _RESTRICTED_PATHS_CACHE.pop(path_str, None)
     return False
 
 
 def _mark_path_restricted(path_str: str, cooldown: float = 120.0) -> None:
     """تسجيل مسار في كاش الحظر المؤقت لتفادي تكرار طلبه كل 5 ثوان"""
-    global _RESTRICTED_PATHS_CACHE
     _RESTRICTED_PATHS_CACHE[path_str] = time.time() + cooldown
 
 

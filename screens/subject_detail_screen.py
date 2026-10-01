@@ -8,7 +8,6 @@
 """
 
 from pathlib import Path
-from typing import Any
 
 from kivy.core.window import Window
 from kivy.metrics import dp

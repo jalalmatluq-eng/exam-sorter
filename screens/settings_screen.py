@@ -29,7 +29,11 @@ import file_manager
 import media_scanner
 from service import media_watcher_service
 from utils.arabic_helper import ar
-from utils.ui_helper import show_app_dialog, show_confirm_dialog
+from utils.ui_helper import (
+    show_app_dialog,
+    show_confirm_dialog,
+    show_modern_notification,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -991,11 +995,12 @@ class SettingsScreen(Screen):
                                 Clock.schedule_once(_on_removed, 0)
 
                             except Exception as e_del:
-                                logger.error("استثناء أثناء إزالة المكررات: %s", e_del, exc_info=True)
+                                err_del_msg = str(e_del)
+                                logger.exception("استثناء أثناء إزالة المكررات: %s", err_del_msg)
                                 def _on_del_err(_dt2: float) -> None:
                                     _ = show_app_dialog(
                                         title="خطأ أثناء الحذف",
-                                        text=f"حدث خطأ غير متوقع أثناء حذف المكررات:\n{e_del}"
+                                        text=f"حدث خطأ غير متوقع أثناء حذف المكررات:\n{err_del_msg}"
                                     )
                                 Clock.schedule_once(_on_del_err, 0)
 
@@ -1027,12 +1032,13 @@ class SettingsScreen(Screen):
                 Clock.schedule_once(_on_finish, 0)
 
             except Exception as e:
-                logger.error("استثناء أثناء فحص المكررات: %s", e, exc_info=True)
+                err_msg = str(e)
+                logger.exception("استثناء أثناء فحص المكررات: %s", err_msg)
                 def _on_err(_dt: float) -> None:
                     self._is_deduping = False
                     if hasattr(self, "ids") and "text_find_duplicates" in self.ids:
                         self.ids.text_find_duplicates.text = ar(btn_text_orig)
-                    _ = show_app_dialog(title="خطأ", text=f"تعذر فحص المكررات: {e}")
+                    _ = show_app_dialog(title="خطأ", text=f"تعذر فحص المكررات: {err_msg}")
 
                 Clock.schedule_once(_on_err, 0)
 

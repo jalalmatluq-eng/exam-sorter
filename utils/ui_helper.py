@@ -29,7 +29,15 @@ except Exception:
     MDListItem = MDListItemHeadlineText = MDListItemLeadingIcon = MDListItemSupportingText = MDListItemTrailingIcon = None  # type: ignore
 
 from utils.arabic_helper import ar
-from utils.category_helper import get_category_icon_and_unit
+from utils.category_helper import get_category_icon_and_unit, get_category_ui_details
+
+__all__ = [
+    "ar",
+    "create_subject_list_item",
+    "get_category_icon_and_unit",
+    "get_category_ui_details",
+    "show_app_dialog",
+]
 
 
 def create_subject_list_item(
