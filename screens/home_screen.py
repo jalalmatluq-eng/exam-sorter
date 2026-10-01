@@ -797,8 +797,8 @@ class HomeScreen(Screen):
                 if hasattr(self, "ids") and "btn_quick_scan_text" in self.ids:
                     self.ids.btn_quick_scan_text.text = ar("فحص فوري")
                 self.refresh_subjects()
-                success_count: int = int(res.get("total_processed", 0) or 0)
-                failed_count: int = int(res.get("failed_count", 0) or 0)
+                success_count: int = int(str(res.get("total_processed") or 0))
+                failed_count: int = int(str(res.get("failed_count") or 0))
                 raw_failures = res.get("failures_by_reason", {})
                 failures_by_reason: dict[str, int] = (
                     {str(k): int(v) for k, v in raw_failures.items()}

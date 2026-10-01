@@ -43,18 +43,41 @@ except Exception:
         def dismiss(self) -> None:
             pass
 
-    class MDButton(_DummyUI): pass  # type: ignore
-    class MDButtonIcon(_DummyUI): pass  # type: ignore
-    class MDButtonText(_DummyUI): pass  # type: ignore
-    class MDDialog(_DummyUI): pass  # type: ignore
-    class MDDialogButtonContainer(_DummyUI): pass  # type: ignore
-    class MDDialogHeadlineText(_DummyUI): pass  # type: ignore
-    class MDDialogSupportingText(_DummyUI): pass  # type: ignore
-    class MDListItem(_DummyUI): pass  # type: ignore
-    class MDListItemHeadlineText(_DummyUI): pass  # type: ignore
-    class MDListItemLeadingIcon(_DummyUI): pass  # type: ignore
-    class MDListItemSupportingText(_DummyUI): pass  # type: ignore
-    class MDListItemTrailingIcon(_DummyUI): pass  # type: ignore
+    class MDButton(_DummyUI):
+        pass  # type: ignore
+
+    class MDButtonIcon(_DummyUI):
+        pass  # type: ignore
+
+    class MDButtonText(_DummyUI):
+        pass  # type: ignore
+
+    class MDDialog(_DummyUI):
+        pass  # type: ignore
+
+    class MDDialogButtonContainer(_DummyUI):
+        pass  # type: ignore
+
+    class MDDialogHeadlineText(_DummyUI):
+        pass  # type: ignore
+
+    class MDDialogSupportingText(_DummyUI):
+        pass  # type: ignore
+
+    class MDListItem(_DummyUI):
+        pass  # type: ignore
+
+    class MDListItemHeadlineText(_DummyUI):
+        pass  # type: ignore
+
+    class MDListItemLeadingIcon(_DummyUI):
+        pass  # type: ignore
+
+    class MDListItemSupportingText(_DummyUI):
+        pass  # type: ignore
+
+    class MDListItemTrailingIcon(_DummyUI):
+        pass  # type: ignore
 
 from utils.arabic_helper import ar
 from utils.category_helper import get_category_icon_and_unit, get_category_ui_details

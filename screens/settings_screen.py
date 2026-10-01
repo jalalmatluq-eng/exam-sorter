@@ -1011,7 +1011,7 @@ class SettingsScreen(Screen):
                     total_bytes = 0
                     for g in dupes:
                         for f in g[1:]:
-                            f_str = str(f)
+                            f_str = f
                             if f_str.startswith(("content://", "mock_doc://")):
                                 total_bytes += storage_backend.get_uri_file_size(f_str)
                             else:
@@ -1068,6 +1068,7 @@ class SettingsScreen(Screen):
                             except Exception as e_del:
                                 err_del_msg = str(e_del)
                                 logger.exception("استثناء أثناء إزالة المكررات: %s", err_del_msg)
+
                                 def _on_del_err(_dt2: float) -> None:
                                     _ = show_app_dialog(
                                         title="خطأ أثناء الحذف",
@@ -1086,7 +1087,7 @@ class SettingsScreen(Screen):
 
                     sample_items = []
                     for g in dupes[:3]:
-                        first_f = str(g[0])
+                        first_f = g[0]
                         d_name = storage_backend.query_content_uri_details(first_f).get("display_name") or Path(first_f).name
                         sample_items.append(f"• {d_name}")
                     sample_text = "\n".join(sample_items)
@@ -1107,6 +1108,7 @@ class SettingsScreen(Screen):
             except Exception as e:
                 err_msg = str(e)
                 logger.exception("استثناء أثناء فحص المكررات: %s", err_msg)
+
                 def _on_err(_dt: float) -> None:
                     self._is_deduping = False
                     if hasattr(self, "ids") and "text_find_duplicates" in self.ids:

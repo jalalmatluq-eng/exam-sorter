@@ -905,7 +905,6 @@ def get_pending_scan() -> tuple[bool, str, str]:
     return get_pending_scan_info()
 
 
-
 def get_stored_api_key() -> str:
     """استرجاع مفتاح API المحفوظ في مسار التخزين المشترك لتتمكن الخدمة والتطبيق من قراءته"""
     try:
