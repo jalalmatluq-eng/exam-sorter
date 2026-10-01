@@ -1549,7 +1549,7 @@ def find_content_uri_for_path(path_str: str) -> str:
                 base_table,
                 ["_id"],
                 "_data = ?",
-                [str(path_str)],
+                [path_str],
                 None,
             )
             if cursor is not None:
@@ -2091,7 +2091,7 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
             return True
 
         # 3. إذا كان نصاً (مسار أو Content URI)
-        item_str = str(item).strip()
+        item_str = item.strip()
         if not item_str:
             return False
 
