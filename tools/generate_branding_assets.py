@@ -36,7 +36,7 @@ def draw_linear_gradient(draw: ImageDraw.ImageDraw, bbox: tuple[int, int, int, i
     rad = math.radians(angle)
     cos_a = math.cos(rad)
     sin_a = math.sin(rad)
-    max_len = math.sqrt(w*w + h*h)
+    max_len = math.sqrt(w * w + h * h)
 
     # رسم خطوط ناعمة
     for y in range(y0, y1, 2):
@@ -46,7 +46,7 @@ def draw_linear_gradient(draw: ImageDraw.ImageDraw, bbox: tuple[int, int, int, i
             r = int(col_a[0] + proj * (col_b[0] - col_a[0]))
             g = int(col_a[1] + proj * (col_b[1] - col_a[1]))
             b = int(col_a[2] + proj * (col_b[2] - col_a[2]))
-            draw.rectangle([x, y, x+1, y+1], fill=(r, g, b, 255))
+            draw.rectangle([x, y, x + 1, y + 1], fill=(r, g, b, 255))
 
 
 def draw_modern_logo_mark(size: int = 1024) -> Image.Image:
@@ -156,8 +156,11 @@ def draw_modern_logo_mark(size: int = 1024) -> Image.Image:
     ], fill=(224, 242, 254, 180))
 
     # نجوم الذكاء الاصطناعي (Sparkles)
-    for sx, sy, sr in [(int(100*scale), int(120*scale), int(22*scale)), (card3_w - int(110*scale), int(140*scale), int(28*scale))]:
-        c3_draw.ellipse([sx-sr, sy-sr, sx+sr, sy+sr], fill=(255, 255, 255, 230))
+    for sx, sy, sr in [
+        (int(100 * scale), int(120 * scale), int(22 * scale)),
+        (card3_w - int(110 * scale), int(140 * scale), int(28 * scale)),
+    ]:
+        c3_draw.ellipse([sx - sr, sy - sr, sx + sr, sy + sr], fill=(255, 255, 255, 230))
 
     img.paste(c3_img, (cx - card3_w // 2, cy - card3_h // 2 + int(40 * scale)), c3_img)
 
