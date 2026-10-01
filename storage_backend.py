@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-import re
+
 import shutil
 import time
 from dataclasses import dataclass
@@ -210,43 +210,50 @@ def classify_failure_reason(
     is_io_target_issue = any(k in err_str for k in ("openoutputstream", "createdocument", "saf", "document", "كتابة"))
 
     if is_saf_target and (is_perm_issue or is_io_target_issue or not is_target_valid):
-        if not is_target_valid or (tree_uri and not is_saf_uri_valid(tree_uri)):
-            return "انتهاء إذن مجلد بطاقة SD (SAF)"
-        if is_perm_issue:
-            return "انتهاء إذن مجلد بطاقة SD (SAF)"
-        return "فصل بطاقة SD"
+        # بطاقة SD مركبة والـ SAF صالح: خطأ صلاحية = انتهاء إذن SAF
+        if is_target_valid and is_perm_issue:
+            return "انتهاء SAF permission"
+        # بطاقة SD مفصولة أو URI غير صالح
+        if not is_target_valid:
+            return "فصل بطاقة SD"
+        return "انتهاء SAF permission"
 
     if "enospc" in err_str or "no space" in err_str or "امتلاء" in err_str or "disk full" in err_str:
         return "امتلاء المساحة"
 
+    # الفشل بسبب صلاحية SAF — سواء كانت الوجهة SAF أم ظهرت كلمة saf في رسالة الخطأ
+    is_saf_in_err = "saf" in err_str or "tree permission" in err_str
     if (
         "securityexception" in err_str
-        or ("saf" in err_str and ("permission" in err_str or "إذن" in err_str or "صلاحية" in err_str))
+        or (is_saf_in_err and ("permission" in err_str or "إذن" in err_str or "صلاحية" in err_str))
         or "uri permission" in err_str
     ):
-        return "انتهاء إذن مجلد بطاقة SD (SAF)" if is_saf_target else "رفض الصلاحية"
+        if is_saf_target or is_saf_in_err:
+            return "انتهاء SAF permission"
+        return "رفض الصلاحية"
 
     if target_location and getattr(target_location, "storage_type", "") == "sdcard" and not getattr(target_location, "is_valid", True):
         msg = getattr(target_location, "error_message", "").lower()
         if "saf" in msg or "إذن" in msg:
-            return "انتهاء إذن مجلد بطاقة SD (SAF)"
+            return "انتهاء SAF permission"
         return "فصل بطاقة SD"
 
     if (
         "sdcard" in err_str or "sd card" in err_str or "enodev" in err_str
         or "بطاقة" in err_str or "غير مركبة" in err_str or "disconnected" in err_str
+        or ("unmounted" in err_str and "sd" in err_str) or "missing" in err_str
     ):
         return "فصل بطاقة SD"
 
     if "مجلد" in err_str or "mkdir" in err_str or "createdirectory" in err_str or "directory" in err_str:
         return "فشل إنشاء المجلد"
 
-    if "قراءة" in err_str or "دفق" in err_str or "stream" in err_str or "read" in err_str:
+    if "قراءة" in err_str or "دفق" in err_str or "stream" in err_str or "read" in err_str or "pipe" in err_str:
         return "فشل القراءة"
 
     if "permission" in err_str or "eacces" in err_str or "صلاحية" in err_str:
         if is_saf_target or stage_lower in ("target_write", "target_mkdir"):
-            return "انتهاء إذن مجلد بطاقة SD (SAF)"
+            return "انتهاء SAF permission"
         return "رفض الصلاحية"
 
     return f"فشل: {error}"
@@ -1231,6 +1238,7 @@ def scan_saf_tree_recursively(
         if not base_dir.exists() or not base_dir.is_dir():
             return found_items
         for root, dirs, files in os.walk(str(base_dir)):
+            rel = Path(".")  # تأكيد التهيئة قبل الاستخدام
             try:
                 rel = Path(root).relative_to(base_dir)
                 if len(rel.parts) > max_depth:
@@ -2083,8 +2091,13 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
                     if "RecoverableSecurityException" in err_name or "RecoverableSecurityException" in str(sec_e):
                         logger.info("حذف MediaStore يتطلب إذن المستخدم عبر RecoverableSecurityException: %s", sec_e)
                         try:
-                            # طلب تأكيد أندرويد لحذف الملف
-                            user_action = sec_e.getUserAction()
+                            # طلب تأكيد أندرويد لحذف الملف عبر jnius لأن الكائن Java
+                            from jnius import autoclass
+                            RecoverableSecurityException = autoclass(
+                                "android.app.RecoverableSecurityException"
+                            )
+                            java_exc = RecoverableSecurityException._cast(sec_e)
+                            user_action = java_exc.getUserAction()
                             intent_sender = user_action.getActionIntent().getIntentSender()
                             RECOVERABLE_REQUEST_CODE = 4202
                             real_name = ""
