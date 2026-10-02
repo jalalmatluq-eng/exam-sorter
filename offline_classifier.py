@@ -20,10 +20,11 @@ from typing import Any
 logger = logging.getLogger("OfflineClassifier")
 
 # تصنيفات الاختبارات والمقررات الدراسية
-CATEGORY_EXAMS_ROOT = "اختبارات"
-CATEGORY_EXAMS_GENERAL = "اختبارات/اختبارات عامة"
-CATEGORY_MY_PHOTOS = "صوري الشخصية"
-CATEGORY_FRIENDS_PHOTOS = "صور الأصدقاء والعائلة"
+# ملاحظة: يجب أن تتطابق مع الأسماء في storage_backend.py لمنع المجلدات المكررة
+CATEGORY_EXAMS_ROOT = "صور الاختبارات"
+CATEGORY_EXAMS_GENERAL = "صور الاختبارات/اختبارات عامة"
+CATEGORY_MY_PHOTOS = "صوري"
+CATEGORY_FRIENDS_PHOTOS = "صور اخوتي وزملائي"
 CATEGORY_UNCLASSIFIED = "خارج التصنيف"
 
 # تصنيفات الفيديو

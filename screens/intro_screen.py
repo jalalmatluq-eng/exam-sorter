@@ -67,6 +67,7 @@ class IntroScreen(Screen):
                 size=(dp(58), dp(58)),
                 radius=[dp(29), dp(29), dp(29), dp(29)],
                 elevation=0,
+                opacity=0,
                 theme_bg_color="Custom",
                 md_bg_color=(1.0, 1.0, 1.0, 0.95),
             )
@@ -98,7 +99,7 @@ class IntroScreen(Screen):
             self._orbit_widgets.append(card)
 
     def _update_orbit_positions(self, _dt: float = 0.0) -> None:
-        """تحديث مواقع الوسائط في المدار — تُستدعى بمؤقت ثابت 30 مرة/ثانية بدلاً من bind فوري"""
+        """تحديث مواقع الوسائط في المدار — تُستدعى بمؤقت ثابت 15 مرة/ثانية بدلاً من bind فوري"""
         if self._completed or not self._orbit_widgets:
             return
         container = self.ids.get("orbit_container")
@@ -106,23 +107,30 @@ class IntroScreen(Screen):
             return
 
         cx, cy = container.center_x, container.center_y
+        if cx <= 1.0 or cy <= 1.0:
+            return
+
         r = self.orbit_radius
         base_deg = self.orbit_angle
         alpha = self.orbit_alpha
         count = len(self._orbit_widgets)
 
-        for i, widget in enumerate(self._orbit_widgets):
-            deg = base_deg + (i * 360.0 / count)
-            rad = math.radians(deg)
-            widget.center_x = cx + r * math.cos(rad)
-            widget.center_y = cy + r * math.sin(rad)
-            widget.opacity = alpha
+        try:
+            for i, widget in enumerate(self._orbit_widgets):
+                deg = base_deg + (i * 360.0 / count)
+                rad = math.radians(deg)
+                widget.center_x = cx + r * math.cos(rad)
+                widget.center_y = cy + r * math.sin(rad)
+                widget.opacity = alpha
+        except Exception:
+            pass
 
     def _start_orbit_clock(self) -> None:
-        """بدء مؤقت تحديث المدار بمعدل 30 إطار/ثانية — أخف بكثير من bind الفوري"""
+        """بدء مؤقت تحديث المدار بمعدل 15 إطار/ثانية — آمن لأجهزة Adreno"""
         self._stop_orbit_clock()
+        # 15fps بدلاً من 30fps لتقليل ضغط GPU وتفادي SIGSEGV
         self._orbit_clock_event = Clock.schedule_interval(
-            self._update_orbit_positions, 1.0 / 30.0
+            self._update_orbit_positions, 1.0 / 15.0
         )
 
     def _stop_orbit_clock(self) -> None:

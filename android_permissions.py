@@ -922,8 +922,8 @@ def request_media_permissions(
 ) -> None:
     """
     طلب الصلاحيات المخصصة للنظام وفق إصدار أندرويد الفعلي:
-    - SDK <= 32: طلب READ_EXTERNAL_STORAGE و WRITE_EXTERNAL_STORAGE فقط (بدون READ_MEDIA_* وبدون POST_NOTIFICATIONS).
-    - SDK >= 33: طلب صلاحيات الوسائط الحديثة READ_MEDIA_IMAGES و READ_MEDIA_VIDEO.
+    - SDK <= 32: طلب READ_EXTERNAL_STORAGE و WRITE_EXTERNAL_STORAGE و CAMERA.
+    - SDK >= 33: طلب صلاحيات الوسائط الحديثة READ_MEDIA_IMAGES و READ_MEDIA_VIDEO و CAMERA و POST_NOTIFICATIONS.
     - SDK >= 34: دعم READ_MEDIA_VISUAL_USER_SELECTED إن لزم.
     """
     try:
@@ -944,9 +944,16 @@ def request_media_permissions(
                     perms.append(getattr(Permission, p_name))
             if sdk >= 34 and hasattr(Permission, "READ_MEDIA_VISUAL_USER_SELECTED"):
                 perms.append(Permission.READ_MEDIA_VISUAL_USER_SELECTED)
+            # Android 13+ يتطلب POST_NOTIFICATIONS لإظهار إشعارات Foreground Service
+            if hasattr(Permission, "POST_NOTIFICATIONS"):
+                perms.append(Permission.POST_NOTIFICATIONS)
         else:
             perms.append(Permission.READ_EXTERNAL_STORAGE)
             perms.append(Permission.WRITE_EXTERNAL_STORAGE)
+
+        # طلب صلاحية الكاميرا على جميع الإصدارات (مطلوبة لالتقاط الصور)
+        if hasattr(Permission, "CAMERA"):
+            perms.append(Permission.CAMERA)
 
         def _internal_cb(permissions: list[str], grant_results: list[bool]) -> None:
             logger.info("نتيجة طلب الصلاحيات: %s -> %s", permissions, grant_results)

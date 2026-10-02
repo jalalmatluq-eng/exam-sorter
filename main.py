@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import atexit
 import faulthandler
 import logging
 import os
@@ -72,10 +73,19 @@ if DEBUG_LOG_FILE is not None:
             DEBUG_LOG_FILE, "a", encoding="utf-8", buffering=1
         )
         faulthandler.enable(file=_fh_stream, all_threads=True)
+
+        def _cleanup_faulthandler() -> None:
+            try:
+                faulthandler.disable()
+                _fh_stream.close()
+            except Exception:
+                pass
+
+        atexit.register(_cleanup_faulthandler)
     except Exception:
         pass
 
-# إعداد السجل الرئيسي FileHandler لتسجيل كل ما يحدث في التطبيق
+# إعداد السجل الرئيسي RotatingFileHandler لتسجيل الأحداث مع تدوير تلقائي (حد أقصى 1MB)
 logging.basicConfig(
     level=logging.INFO,
     format="[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s",
@@ -83,8 +93,12 @@ logging.basicConfig(
 )
 if DEBUG_LOG_FILE is not None:
     try:
-        _file_handler = logging.FileHandler(
-            str(DEBUG_LOG_FILE), encoding="utf-8"
+        from logging.handlers import RotatingFileHandler
+        _file_handler = RotatingFileHandler(
+            str(DEBUG_LOG_FILE),
+            encoding="utf-8",
+            maxBytes=1_048_576,  # 1 MB
+            backupCount=1,
         )
         _file_handler.setFormatter(
             logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s")
@@ -213,13 +227,41 @@ def resume_pending_scan_if_preflight_passed(root: Any = None) -> bool:
                     )
             return True
         else:
-            logger.warning(
-                "تعذر استئناف الفحص المعلق لمصدر %s ووجهة %s بسبب عدم استيفاء شروط التخزين: %s (كود: %s)",
-                p_src,
-                p_tgt,
-                preflight.error_message,
-                preflight.error_code,
-            )
+            # إصلاح: مسح الفحص المعلق تلقائياً عند فشل بيئي دائم
+            # (مثل عدم وجود SD Card في بيئة سطح المكتب أو انتهاء SAF)
+            # لمنع التحذير المتكرر في كل إقلاع دون فائدة
+            permanent_failures = ("missing_source_saf", "sdcard_disconnected", "sdcard_invalid")
+            if preflight.error_code in permanent_failures:
+                # التحقق من عدد المحاولات السابقة لمنح فرصة معقولة
+                prefs = file_manager.get_sorter_preferences()
+                retry_count = int(str(prefs.get("pending_scan_retries", 0)))
+                if retry_count >= 3:
+                    # بعد 3 محاولات فاشلة، مسح الفحص المعلق نهائياً
+                    file_manager.clear_pending_scan()
+                    file_manager.save_sorter_preferences({"pending_scan_retries": 0})
+                    logger.info(
+                        "تم مسح الفحص المعلق نهائياً بعد %d محاولات فاشلة (الخطأ: %s)",
+                        retry_count,
+                        preflight.error_code,
+                    )
+                else:
+                    file_manager.save_sorter_preferences({"pending_scan_retries": retry_count + 1})
+                    logger.warning(
+                        "تعذر استئناف الفحص المعلق (محاولة %d/3) لمصدر %s ووجهة %s: %s (كود: %s)",
+                        retry_count + 1,
+                        p_src,
+                        p_tgt,
+                        preflight.error_message,
+                        preflight.error_code,
+                    )
+            else:
+                logger.warning(
+                    "تعذر استئناف الفحص المعلق لمصدر %s ووجهة %s: %s (كود: %s)",
+                    p_src,
+                    p_tgt,
+                    preflight.error_message,
+                    preflight.error_code,
+                )
             return False
     except Exception as e:
         logger.debug("تنبيه أثناء فحص الفحص المعلق في on_resume: %s", e)

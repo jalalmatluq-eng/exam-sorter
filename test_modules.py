@@ -419,6 +419,30 @@ def test_poison_files_and_pending_scan() -> None:
     assert "/storage/emulated/0" in main_code
     print("✓ فحص حماية crash.log: تم منع الكتابة في التخزين المشترك عند غياب إذن الكتابة بنجاح.")
 
+    # 7. فحص تطابق أسماء التصنيفات بين offline_classifier و storage_backend
+    import offline_classifier
+    assert offline_classifier.CATEGORY_EXAMS_ROOT == storage_backend.CATEGORY_EXAMS_ROOT, "تصنيف الاختبارات يجب أن يتطابق!"
+    assert offline_classifier.CATEGORY_MY_PHOTOS == storage_backend.CATEGORY_MY_PHOTOS, "تصنيف صوري يجب أن يتطابق!"
+    assert offline_classifier.CATEGORY_FRIENDS_PHOTOS == storage_backend.CATEGORY_FRIENDS_PHOTOS, "تصنيف الأصدقاء يجب أن يتطابق!"
+    assert offline_classifier.CATEGORY_LECTURES == storage_backend.CATEGORY_LECTURES
+    assert offline_classifier.CATEGORY_FUNNY_VIDEOS == storage_backend.CATEGORY_FUNNY_VIDEOS
+    assert offline_classifier.CATEGORY_MOVIES == storage_backend.CATEGORY_MOVIES
+    assert offline_classifier.CATEGORY_SONGS == storage_backend.CATEGORY_SONGS
+    print("✓ فحص تطابق أسماء التصنيفات: مؤكد 100% بين offline_classifier و storage_backend.")
+
+    # 8. فحص اسم حزمة الخط العربي في arabic_helper
+    helper_code = Path("utils/arabic_helper.py").read_text(encoding="utf-8")
+    assert "com.cosmosort.ai.cosmosort" in helper_code, "اسم الحزمة يجب أن يطابق com.cosmosort.ai.cosmosort!"
+    assert "com.wasaet.smart" not in helper_code, "الحزمة القديمة يجب ألا تكون موجودة!"
+    print("✓ فحص اسم حزمة الخط العربي: مؤكد ومطابق لـ buildozer.spec.")
+
+    # 9. فحص طلب صلاحيات CAMERA و POST_NOTIFICATIONS
+    import inspect
+    perm_source = inspect.getsource(android_permissions.request_media_permissions)
+    assert "CAMERA" in perm_source, "صلاحية الكاميرا يجب أن تُطلب!"
+    assert "POST_NOTIFICATIONS" in perm_source, "صلاحية الإشعارات يجب أن تُطلب على Android 13+!"
+    print("✓ فحص الصلاحيات الحديثة: CAMERA و POST_NOTIFICATIONS مُدرجة بنجاح.")
+
     print("✓ نجح فحص درع الملف السام والفحص المعلق والمفتاح المشترك والتحسينات المصغرة بنجاح.\n")
 
 

@@ -190,8 +190,7 @@ class PeopleSetupScreen(Screen):
             )
             img = Image(
                 source=path,
-                allow_stretch=True,
-                keep_ratio=True,
+                fit_mode="contain",
             )
             card.add_widget(img)
             self.ids.samples_grid.add_widget(card)

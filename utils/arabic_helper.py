@@ -74,14 +74,21 @@ def get_arabic_font_path() -> str:
     استرجاع مسار الخط العربي المتوفر في مجلد assets/fonts/ لربطه بـ Kivy.
     """
     base_dir = Path(__file__).resolve().parent.parent
-    pkg = "com.wasaet.smart.wasaetdhakiyah"
+    pkg = "com.cosmosort.ai.cosmosort"
     android_app_dir = Path(f"/data/user/0/{pkg}/files")
     candidates = [
         base_dir / "assets" / "fonts" / "Amiri-Regular.ttf",
         Path("assets/fonts/Amiri-Regular.ttf").resolve(),
         Path(os.getcwd()) / "assets" / "fonts" / "Amiri-Regular.ttf",
         android_app_dir / "app" / "assets" / "fonts" / "Amiri-Regular.ttf",
+        Path(f"/data/data/{pkg}/files/app/assets/fonts/Amiri-Regular.ttf"),
     ]
+    app_path = os.environ.get("ANDROID_APP_PATH")
+    if app_path:
+        candidates.append(Path(app_path) / "assets" / "fonts" / "Amiri-Regular.ttf")
+    android_private = os.environ.get("ANDROID_PRIVATE")
+    if android_private:
+        candidates.append(Path(android_private) / "app" / "assets" / "fonts" / "Amiri-Regular.ttf")
     for font_path in candidates:
         if font_path.exists():
             return str(font_path)

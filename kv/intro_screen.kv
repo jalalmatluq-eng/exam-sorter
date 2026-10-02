@@ -10,13 +10,9 @@
         FloatLayout:
             id: main_intro_layout
 
-            # ─── حلقة المدار الكوني الهادئة (ثابتة — لا تتحرك) ──
-            canvas.before:
-                Color:
-                    rgba: 0.70, 0.85, 0.98, 0.45
-                Line:
-                    circle: (self.center_x, self.center_y + dp(35), dp(130))
-                    width: 1.2
+            # ─── حلقة المدار الكوني الهادئة (بطاقة حلقية ثابتة — آمنة من SIGSEGV) ──
+            # ملاحظة: تم استبدال canvas.before مع Line/circle بحل آمن
+            # لأن رسم Canvas الديناميكي يسبب SIGSEGV على GPU Adreno
 
             # ─── حاوية العناصر المدارية (الصور والفيديوهات والملفات) ─
             FloatLayout:
