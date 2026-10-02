@@ -1,7 +1,7 @@
 import urllib.request
 from pathlib import Path
 
-BASE_DIR = Path(__file__).resolve().parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 OCR_DIR = BASE_DIR / "assets" / "models" / "ocr"
 FACE_DIR = BASE_DIR / "assets" / "models" / "face"
 VIDEO_DIR = BASE_DIR / "assets" / "models" / "video"
@@ -36,11 +36,12 @@ MODELS = [
     )
 ]
 
+
 def download_file(dest_path: Path, url: str) -> bool:
     if dest_path.exists() and dest_path.stat().st_size > 1000:
         print(f"ALREADY EXISTS: {dest_path.name} ({dest_path.stat().st_size} bytes)")
         return True
-    
+
     print(f"DOWNLOADING: {dest_path.name} from {url}...")
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
@@ -55,6 +56,7 @@ def download_file(dest_path: Path, url: str) -> bool:
         if dest_path.exists():
             dest_path.unlink()
         return False
+
 
 if __name__ == "__main__":
     success = True

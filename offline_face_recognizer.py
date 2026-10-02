@@ -104,7 +104,7 @@ def is_offline_face_model_available() -> bool:
         return False
 
     model_p = MODEL_DIR / "mobilefacenet.onnx"
-    return bool(model_p.exists() and model_p.stat().st_size >= 1000000)
+    return model_p.exists() and model_p.stat().st_size >= 1000000
 
 
 def detect_faces(image: np.ndarray) -> list[tuple[int, int, int, int]]:
@@ -377,4 +377,3 @@ classify_face_offline = classify_image_faces
 delete_user_face_profile = clear_face_profile
 compute_cosine_similarity = calculate_cosine_similarity
 detect_faces_fast = detect_faces
-

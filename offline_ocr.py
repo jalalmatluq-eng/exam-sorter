@@ -125,39 +125,69 @@ def get_tessdata_path() -> Path | None:
 
 _ocr_net_cache: Any = None
 _ocr_dict_cache: list[str] | None = None
+_ocr_backend: str | None = None
 
 
 def get_ocr_onnx_net() -> tuple[Any, list[str] | None]:
-    """تحميل وحفظ شبكة OCR العصبية وقاموس الحروف في الذاكرة"""
-    global _ocr_net_cache, _ocr_dict_cache
+    """تحميل وحفظ شبكة OCR العصبية وقاموس الحروف في الذاكرة عبر onnxruntime أو cv2.dnn"""
+    global _ocr_net_cache, _ocr_dict_cache, _ocr_backend
     if _ocr_net_cache is None:
         model_p = Path(__file__).resolve().parent / "assets" / "models" / "ocr" / "arabic_rec.onnx"
         dict_p = Path(__file__).resolve().parent / "assets" / "models" / "ocr" / "arabic_dict.txt"
-        if model_p.exists() and dict_p.exists() and cv2 is not None and hasattr(cv2, "dnn"):
+        if model_p.exists() and dict_p.exists():
+            # المحرك الأول: onnxruntime
             try:
-                _ocr_net_cache = cv2.dnn.readNetFromONNX(str(model_p))
-                with open(dict_p, "r", encoding="utf-8") as f:
-                    _ocr_dict_cache = ["blank"] + [line.strip() for line in f]
+                import onnxruntime as ort
+                _ocr_net_cache = ort.InferenceSession(str(model_p))
+                _ocr_backend = "ort"
             except Exception as exc:
-                logger.error("فشل تحميل نموذج Arabic OCR ONNX: %s", exc)
+                logger.debug("onnxruntime غير متاح لـ OCR: %s", exc)
                 _ocr_net_cache = None
-                _ocr_dict_cache = None
+
+            # المحرك الثاني البديل: cv2.dnn
+            if _ocr_net_cache is None and cv2 is not None and hasattr(cv2, "dnn"):
+                try:
+                    _ocr_net_cache = cv2.dnn.readNetFromONNX(str(model_p))
+                    _ocr_backend = "cv2"
+                except Exception as exc:
+                    logger.debug("cv2.dnn غير قادر على تشغيل arabic_rec.onnx: %s", exc)
+                    _ocr_net_cache = None
+
+            if _ocr_net_cache is not None:
+                try:
+                    with open(dict_p, "r", encoding="utf-8") as f:
+                        _ocr_dict_cache = ["blank"] + [line.strip() for line in f]
+                except Exception as exc:
+                    logger.error("تعذر قراءة قاموس OCR: %s", exc)
+                    _ocr_dict_cache = None
+
     return _ocr_net_cache, _ocr_dict_cache
 
 
 def recognize_text_onnx(img_bgr: np.ndarray) -> str:
     """استخراج النصوص العربية باستخدام نموذج الشبكة العصبية arabic_rec.onnx مع فك ترميز CTC"""
     net, chars = get_ocr_onnx_net()
-    if net is None or chars is None or img_bgr is None or img_bgr.size == 0 or cv2 is None:
+    if net is None or chars is None or img_bgr is None or img_bgr.size == 0:
         return ""
     try:
         h, w = img_bgr.shape[:2]
         target_w = int(w * (48.0 / max(1, h)))
         target_w = max(32, min(640, target_w))
-        resized = cv2.resize(img_bgr, (target_w, 48), interpolation=cv2.INTER_AREA)
-        blob = cv2.dnn.blobFromImage(resized, 1.0 / 127.5, (target_w, 48), (127.5, 127.5, 127.5), swapRB=True)
-        net.setInput(blob)
-        preds = net.forward()
+        resized = cv2.resize(img_bgr, (target_w, 48), interpolation=cv2.INTER_AREA) if cv2 is not None else None
+        if resized is None:
+            return ""
+
+        blob = ((resized.astype(np.float32) / 127.5) - 1.0).transpose(2, 0, 1)
+        blob = np.expand_dims(blob, axis=0)
+
+        if _ocr_backend == "ort":
+            preds = net.run(None, {"x": blob})[0]
+        elif _ocr_backend == "cv2":
+            net.setInput(blob)
+            preds = net.forward()
+        else:
+            return ""
+
         pred_indices = np.argmax(preds[0], axis=-1)
         text_chars = []
         prev = 0
@@ -174,14 +204,21 @@ def recognize_text_onnx(img_bgr: np.ndarray) -> str:
 def is_offline_ocr_available() -> bool:
     """
     التحقق الصارم والواقعي من إمكانية تنفيذ OCR محلي:
-    1. توفر نموذج arabic_rec.onnx وملف القاموس ومحرك cv2.dnn.
+    1. توفر نموذج arabic_rec.onnx وملف القاموس ومحرك onnxruntime أو cv2.dnn.
     2. أو توفر نموذج اللغة العربية ara.traineddata مع محرك tesseract الفعلي.
     """
     # 1. نموذج ONNX العصبي المضمن
     model_p = Path(__file__).resolve().parent / "assets" / "models" / "ocr" / "arabic_rec.onnx"
     dict_p = Path(__file__).resolve().parent / "assets" / "models" / "ocr" / "arabic_dict.txt"
-    if model_p.exists() and dict_p.exists() and cv2 is not None and hasattr(cv2, "dnn"):
-        return True
+    if model_p.exists() and model_p.stat().st_size >= 1000000 and dict_p.exists():
+        import importlib.util
+        has_runtime = importlib.util.find_spec("onnxruntime") is not None
+
+        if not has_runtime and cv2 is not None and hasattr(cv2, "dnn"):
+            has_runtime = True
+
+        if has_runtime:
+            return True
 
     # 2. فحص Tesseract
     tess_path = get_tessdata_path()
@@ -336,7 +373,7 @@ def extract_arabic_text_offline(image_path: str) -> OCRResult:
     conf_scores: list[float] = []
 
     # 3. الاستدعاء الفعلي للمحرك (نموذج ONNX العصبي أولاً ثم Tesseract)
-    onnx_text = recognize_text_onnx(processed_img)
+    onnx_text = recognize_text_onnx(processed_img) if processed_img is not None else ""
     if onnx_text:
         raw_text = onnx_text
         conf_scores.append(88.0)
@@ -379,7 +416,6 @@ def extract_arabic_text_offline(image_path: str) -> OCRResult:
     # 4. تحليل المادة الأكاديمية
     normalized_text = normalize_arabic_text(raw_text)
     detected_subject = extract_subject_from_text(raw_text)
-
 
     # فحص مؤشرات ورقة الاختبار
     has_exam_word = any(

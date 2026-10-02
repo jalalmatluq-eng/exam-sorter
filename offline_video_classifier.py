@@ -163,7 +163,7 @@ def is_offline_video_model_available() -> bool:
         return False
 
     model_p = MODEL_DIR / "mobilenetv2_video.onnx"
-    return bool(model_p.exists() and model_p.stat().st_size >= 1000000)
+    return model_p.exists() and model_p.stat().st_size >= 1000000
 
 
 def classify_frame_visual(frame: np.ndarray) -> dict[str, float]:

@@ -1767,7 +1767,6 @@ def test_category_ui_details_and_layout_resilience() -> None:
     assert "height: dp(142)" in settings_kv, "بطاقة سجل التشخيص يجب أن تكون بارتفاع كافٍ (dp(142))"
     assert "height: dp(42)" in settings_kv, "شريط سجل العمليات يجب أن يكون بارتفاع كافٍ (dp(42))"
 
-
     with open("kv/subject_detail_screen.kv", "r", encoding="utf-8") as f:
         subj_kv = f.read()
     assert "shorten: True" in subj_kv, "عنوان شريط المادة يجب أن يدعم التقصير الآمن لمنع التداخل"
@@ -2012,7 +2011,6 @@ def test_offline_ai_capabilities() -> None:
         assert media_res["category"] == offline_classifier.CATEGORY_LECTURES
         print("    ✓ تصنيف المحاضرة بالوسم الأوفلاين: نجح التوجيه إلى 'محاضرات ودروس'.")
 
-
         source_doc = test_dir / "my_source_doc.jpg"
         Image.new("RGB", (100, 100), color=(200, 200, 200)).save(source_doc)
         assert source_doc.exists()
@@ -2050,4 +2048,3 @@ if __name__ == "__main__":
     print("==================================================")
     print("  جميع الفحوصات الآلية للوحدات (19 جناح) تمت بنجاح 100%!  ")
     print("==================================================")
-
