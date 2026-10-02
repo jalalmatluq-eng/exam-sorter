@@ -35,6 +35,10 @@ jobs:
           # opencv headless: same API as opencv-python, no system libGL needed on CI runners
           pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless kivy kivymd onnxruntime
 
+      - name: Download AI model binaries (required by offline test suites)
+        run: |
+          python tools/download_ai_models.py
+
       - name: Run test_modules.py (21 suites including SAF, UI category details, & SD card simulation)
         env:
           KIVY_NO_ARGS: "1"
