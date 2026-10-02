@@ -2,4 +2,8 @@
 max-line-length = 120
 extend-ignore = E203, E501, W503, E402, E226
 ignore = E203, E501, W503, E402, E226
+per-file-ignores =
+    test_modules.py: E402
+    tools/download_ai_models.py: F401, E302, E305, W293
+    offline_video_classifier.py: F821
 exclude = .git,__pycache__,.venv,venv,build,dist,.buildozer
