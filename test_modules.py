@@ -1938,7 +1938,7 @@ def test_offline_ai_capabilities() -> None:
         from PIL import ImageDraw, ImageFont
 
         test_img = Image.new("RGB", (450, 70), color=(255, 255, 255))
-        draw = ImageDraw.Draw(test_img)
+        draw: Any = ImageDraw.Draw(test_img)
         font_path = Path("assets/fonts/Amiri-Regular.ttf")
         font = ImageFont.truetype(str(font_path), 36)
         arabic_text_rendered = str(get_display(arabic_reshaper.reshape("اختبار رياضيات")))
@@ -2016,11 +2016,12 @@ def test_offline_ai_capabilities() -> None:
         print("    ✓ تحليل الإطار البصري بنموذج MobileNetV2: تم استخراج احتمالات التصنيف بنجاح.")
 
         # اختبار تصنيف مقطع فيديو اصطناعي لمحاضرة (Slide video)
-        if cv2 is not None:
+        cv2_any: Any = cv2
+        if cv2_any is not None:
             lec_vid_p = test_dir / "lecture_clip.mp4"
-            fourcc_fn = getattr(cv2, "VideoWriter_fourcc", None) or getattr(getattr(cv2, "VideoWriter", None), "fourcc", None)
+            fourcc_fn = getattr(cv2_any, "VideoWriter_fourcc", None) or getattr(getattr(cv2_any, "VideoWriter", None), "fourcc", None)
             fourcc = fourcc_fn(*"mp4v") if callable(fourcc_fn) else 0
-            writer_cls = getattr(cv2, "VideoWriter", None)
+            writer_cls = getattr(cv2_any, "VideoWriter", None)
             writer = writer_cls(str(lec_vid_p), fourcc, 5.0, (320, 240)) if writer_cls else None
             if writer:
                 for _ in range(15):

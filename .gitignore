@@ -55,6 +55,7 @@ scanned_media_cache.db
 transfer_history.json
 service_control.json
 sorter_prefs.json
+*video_classification_cache.json
 test_data/
 test_storage/
 test_media_input/
