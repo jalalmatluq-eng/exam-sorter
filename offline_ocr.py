@@ -99,6 +99,158 @@ EXAM_INDICATORS = [
 ]
 
 
+def normalize_arabic_text(text: str) -> str:
+    """
+    تطبيع النص العربي لتسهيل المقارنة والمطابقة الدقيقة:
+    - إزالة التشكيل (الحركات، الشدة، التنوين).
+    - توحيد الهمزات (أ، إ، آ -> ا).
+    - توحيد الياء والتاء المربوطة.
+    - إزالة الكشيدة (المد).
+    """
+    if not text:
+        return ""
+
+    # إزالة التشكيل وحروف التنسيق
+    tashkeel = re.compile(r"[\u0617-\u061A\u064B-\u0652\u06D6-\u06ED]")
+    text = tashkeel.sub("", text)
+    text = text.replace("\u0640", "")  # إزالة الكشيدة _
+
+    # توحيد الألفات والهمزات
+    text = re.sub(r"[إأآا]", "ا", text)
+    text = re.sub(r"ة", "ه", text)
+    text = re.sub(r"ى", "ي", text)
+
+    # تنظيف الفراغات المتكررة
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def generate_and_rank_arabic_candidates(raw_text: str) -> tuple[str, str, float]:
+    """
+    توليد وترتيب مرشحات فك ترميز النصوص العربية لضمان القراءة السليمة:
+    1. تجربة النص كما خرج من النموذج مباشرة.
+    2. تجربة النص المعكوس بالكامل (RTL reversal).
+    3. تجربة عكس ترتيب الكلمات، وعكس حروف كل كلمة على حدة.
+    4. تطبيق مكتبات bidi و arabic_reshaper إن كانت متاحة.
+    5. فصل الكلمات الملتصقة تلقائياً عند كشف كلمات المواد وعلامات الاختبار.
+    6. ترشيح واختيار البديل الفائز بالاعتماد على قاموس المواد الأكاديمية ومؤشرات الامتحانات.
+    """
+    if not raw_text or not raw_text.strip():
+        return "", "", 0.0
+
+    t = raw_text.strip()
+    candidates: set[str] = set()
+    candidates.add(t)
+    candidates.add(t[::-1])
+
+    words = t.split()
+    if len(words) > 1:
+        candidates.add(" ".join(words[::-1]))
+        candidates.add(" ".join(w[::-1] for w in words))
+        candidates.add(" ".join(w[::-1] for w in words[::-1]))
+
+    rev_words = t[::-1].split()
+    if len(rev_words) > 1:
+        candidates.add(" ".join(rev_words[::-1]))
+        candidates.add(" ".join(w[::-1] for w in rev_words))
+
+    # معالجة bidi و arabic_reshaper عند التوفر
+    try:
+        from bidi.algorithm import get_display  # type: ignore
+        candidates.add(str(get_display(t)))
+        candidates.add(str(get_display(t[::-1])))
+    except Exception:
+        pass
+
+    try:
+        import arabic_reshaper  # type: ignore
+        candidates.add(str(arabic_reshaper.reshape(t)))
+        candidates.add(str(arabic_reshaper.reshape(t[::-1])))
+    except Exception:
+        pass
+
+    # فصل الكلمات الملتصقة استناداً إلى قواميس المواد وعلامات الاختبار
+    expanded_cands = set(candidates)
+    for c in list(candidates):
+        norm_c = normalize_arabic_text(c)
+        for kws in ACADEMIC_SUBJECT_KEYWORDS.values():
+            for kw in kws:
+                n_kw = normalize_arabic_text(kw)
+                if n_kw and n_kw in norm_c and n_kw != norm_c:
+                    idx = norm_c.find(n_kw)
+                    spaced = c[:idx] + " " + c[idx:idx + len(n_kw)] + " " + c[idx + len(n_kw):]
+                    expanded_cands.add(re.sub(r"\s+", " ", spaced).strip())
+        for ind in EXAM_INDICATORS:
+            n_ind = normalize_arabic_text(ind)
+            if n_ind and n_ind in norm_c and n_ind != norm_c:
+                idx = norm_c.find(n_ind)
+                spaced = c[:idx] + " " + c[idx:idx + len(n_ind)] + " " + c[idx + len(n_ind):]
+                expanded_cands.add(re.sub(r"\s+", " ", spaced).strip())
+    candidates = expanded_cands
+
+    best_cand = t
+    best_subj = ""
+    best_score = -1.0
+
+    for cand in candidates:
+        norm = normalize_arabic_text(cand)
+        score = 0.0
+        cand_subj = ""
+        subj_kw_found = ""
+
+        # فحص المواد الأكاديمية
+        for subj, kws in ACADEMIC_SUBJECT_KEYWORDS.items():
+            for kw in kws:
+                n_kw = normalize_arabic_text(kw)
+                if not n_kw:
+                    continue
+                if re.search(r"\b" + re.escape(n_kw) + r"\b", norm):
+                    score += 150.0
+                    cand_subj = subj
+                    subj_kw_found = n_kw
+                    break
+                elif n_kw in norm:
+                    score += 100.0
+                    cand_subj = subj
+                    subj_kw_found = n_kw
+                    break
+            if cand_subj:
+                break
+
+        # فحص علامات الاختبار
+        ind_found = ""
+        for ind in EXAM_INDICATORS:
+            n_ind = normalize_arabic_text(ind)
+            if not n_ind:
+                continue
+            if re.search(r"\b" + re.escape(n_ind) + r"\b", norm):
+                score += 50.0
+                ind_found = n_ind
+                break
+            elif n_ind in norm:
+                score += 30.0
+                ind_found = n_ind
+                break
+
+        # ترجيح التباعد الطبيعي بين الكلمات
+        if " " in cand:
+            score += 10.0
+
+        # ترجيح الترتيب الطبيعي (ظهور كلمة الاختبار قبل اسم المادة)
+        if ind_found and subj_kw_found:
+            i_pos = norm.find(ind_found)
+            s_pos = norm.find(subj_kw_found)
+            if i_pos != -1 and s_pos != -1 and i_pos < s_pos:
+                score += 25.0
+
+        if score > best_score:
+            best_score = score
+            best_cand = cand
+            best_subj = cand_subj
+
+    return best_cand, best_subj, best_score
+
+
 def get_tessdata_path() -> Path | None:
     """البحث عن مسار مجلد نماذج tessdata في النظام أو داخل حزمة التطبيق الخاصة"""
     candidates = [
@@ -156,7 +308,9 @@ def get_ocr_onnx_net() -> tuple[Any, list[str] | None]:
             if _ocr_net_cache is not None:
                 try:
                     with open(dict_p, "r", encoding="utf-8") as f:
-                        _ocr_dict_cache = ["blank"] + [line.strip() for line in f]
+                        _ocr_dict_cache = ["blank"] + [line.strip("\r\n") for line in f]
+                    if len(_ocr_dict_cache) == 162:
+                        _ocr_dict_cache.append(" ")
                 except Exception as exc:
                     logger.error("تعذر قراءة قاموس OCR: %s", exc)
                     _ocr_dict_cache = None
@@ -213,9 +367,13 @@ def _recognize_text_strip(strip_bgr: np.ndarray, net: Any, chars: list[str]) -> 
                 text_chars.append(chars[idx])
             prev = idx
 
-        # نموذج PaddleOCR يقرأ من اليسار لليمين، والعربية تُكتب من اليمين لليسار (RTL)
-        # لذلك نعكس ترتيب الحروف المستخرجة لتمثيل الكلمة العربية السليمة
-        return "".join(text_chars[::-1])
+        raw_str = "".join(text_chars).strip()
+        if not raw_str:
+            return ""
+
+        # اختيار المرشح الأفضل وتصحيح الترتيب بناءً على قاموس المواد ومؤشرات الاختبار
+        best_cand, _subj, _score = generate_and_rank_arabic_candidates(raw_str)
+        return best_cand or raw_str
     except Exception as exc:
         logger.debug("خطأ استدلال شريط OCR: %s", exc)
         return ""
@@ -315,32 +473,6 @@ def is_offline_ocr_available() -> bool:
     return has_tess_model and has_tess_runtime
 
 
-def normalize_arabic_text(text: str) -> str:
-    """
-    تطبيع النص العربي لتسهيل المقارنة والمطابقة الدقيقة:
-    - إزالة التشكيل (الحركات، الشدة، التنوين).
-    - توحيد الهمزات (أ، إ، آ -> ا).
-    - توحيد الياء والتاء المربوطة.
-    - إزالة الكشيدة (المد).
-    """
-    if not text:
-        return ""
-
-    # إزالة التشكيل وحروف التنسيق
-    tashkeel = re.compile(r"[\u0617-\u061A\u064B-\u0652\u06D6-\u06ED]")
-    text = tashkeel.sub("", text)
-    text = text.replace("\u0640", "")  # إزالة الكشيدة _
-
-    # توحيد الألفات والهمزات
-    text = re.sub(r"[إأآا]", "ا", text)
-    text = re.sub(r"ة", "ه", text)
-    text = re.sub(r"ى", "ي", text)
-
-    # تنظيف الفراغات المتكررة
-    text = re.sub(r"\s+", " ", text).strip()
-    return text
-
-
 def preprocess_image_for_ocr(image_path: str) -> Any | None:
     """
     تطبيق مرشحات المعالجة المسبقة لتحسين جودة قراءة النصوص العربية:
@@ -406,6 +538,9 @@ def preprocess_image_for_ocr(image_path: str) -> Any | None:
 
 def extract_subject_from_text(text: str) -> str:
     """استخراج اسم المادة الأكاديمية بدقة من النص العربي أو الإنجليزي المعالج"""
+    if not text:
+        return ""
+
     normalized_text = normalize_arabic_text(text).lower()
     detected_subject = ""
     subject_hits = 0
@@ -420,7 +555,12 @@ def extract_subject_from_text(text: str) -> str:
             subject_hits = hits
             detected_subject = subject
 
-    return detected_subject
+    if detected_subject:
+        return detected_subject
+
+    # فحص مرشحات فك الترميز البديلة (RTL / Reversals / Spaced)
+    _best_cand, subj_cand, _score = generate_and_rank_arabic_candidates(text)
+    return subj_cand
 
 
 def extract_arabic_text_offline(image_path: str) -> OCRResult:
@@ -505,9 +645,13 @@ def extract_arabic_text_offline(image_path: str) -> OCRResult:
             error="لم يتم العثور على أي نصوص في الصورة",
         )
 
-    # 4. تحليل المادة الأكاديمية
-    normalized_text = normalize_arabic_text(raw_text)
-    detected_subject = extract_subject_from_text(raw_text)
+    # 4. تحليل المادة الأكاديمية واختيار أفضل مرشح للنص
+    best_cand, detected_subject, _score = generate_and_rank_arabic_candidates(raw_text)
+    final_text = best_cand if best_cand else raw_text
+    if not detected_subject:
+        detected_subject = extract_subject_from_text(final_text)
+
+    normalized_text = normalize_arabic_text(final_text)
 
     # فحص مؤشرات ورقة الاختبار
     has_exam_word = any(
@@ -516,10 +660,10 @@ def extract_arabic_text_offline(image_path: str) -> OCRResult:
 
     avg_conf = (sum(conf_scores) / len(conf_scores) / 100.0) if conf_scores else 0.5
     if detected_subject and has_exam_word:
-        final_confidence = min(0.98, max(0.70, avg_conf + 0.20))
+        final_confidence = min(0.98, max(0.75, avg_conf + 0.20))
         needs_review = False
     elif detected_subject:
-        final_confidence = min(0.85, max(0.50, avg_conf + 0.10))
+        final_confidence = min(0.88, max(0.70, avg_conf + 0.10))
         needs_review = False
     else:
         final_confidence = max(0.20, avg_conf * 0.5)
@@ -527,7 +671,7 @@ def extract_arabic_text_offline(image_path: str) -> OCRResult:
 
     return OCRResult(
         available=True,
-        text=raw_text,
+        text=final_text,
         subject=detected_subject,
         confidence=final_confidence,
         language="ara",
