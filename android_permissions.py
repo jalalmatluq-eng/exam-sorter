@@ -419,8 +419,10 @@ def find_first_media_sample(source_storage: str = "internal", media_type: str = 
                                     return f"mock_doc://{Path(root) / f}"
 
             if source_storage in ("internal", "both"):
+                base_dir = Path(__file__).resolve().parent
                 cand_dirs = [
                     Path.cwd() / "scratch" / "emulator_test_media",
+                    base_dir / "assets",
                     Path.cwd() / "assets",
                     Path.cwd() / "test_data",
                     Path.cwd(),

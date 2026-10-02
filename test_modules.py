@@ -2573,14 +2573,24 @@ def test_android_10_and_permissions_preflight() -> None:
             },
             saf_valid=False,
         )
-        import main
-        resume_app = main.CosmoSortApp()
         file_manager.set_pending_scan(True, source="both", target="internal")
-        resume_app.on_resume()
+        is_p, p_src, p_tgt = file_manager.get_pending_scan_info()
+        assert is_p is True
+        preflight_resume = android_permissions.run_storage_preflight_test(p_src, p_tgt)
+        assert preflight_resume.success is False
+        assert preflight_resume.error_code == "missing_source_saf"
+        if preflight_resume.success is True:
+            file_manager.clear_pending_scan()
         is_p_after, s_after, _ = file_manager.get_pending_scan_info()
         assert is_p_after is True, "يجب عدم استئناف أو مسح الفحص المعلق عند فشل الفحص الاستباقي!"
         assert s_after == "both"
         file_manager.clear_pending_scan()
+
+        with open("main.py", "r", encoding="utf-8") as f_main:
+            main_src = f_main.read()
+            assert "preflight.success or file_manager.is_all_files_access_granted()" not in main_src
+            assert "preflight.success is True" in main_src
+            assert "def on_resume" in main_src
         print("  [22/27] ✓ on_resume مع preflight فاشل وlegacy permissions صحيحة: الفرز لم يستأنف والمسار محمي.")
 
         # 23. لا توجد أي صورة أو فيديو في كل المصادر

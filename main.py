@@ -19,7 +19,11 @@ from typing import Any, Literal
 from dotenv import load_dotenv
 from kivy.clock import Clock
 from kivy.core.text import LabelBase
-from kivy.core.window import Window
+
+try:
+    from kivy.core.window import Window
+except Exception:
+    Window = None
 from kivy.lang import Builder
 from kivy.uix.screenmanager import NoTransition, ScreenManager
 from kivy.utils import platform
@@ -180,6 +184,44 @@ try:
         rb.CommonRipple.lay_canvas_instructions = _no_op_ripple
 except Exception:
     pass
+
+
+def resume_pending_scan_if_preflight_passed(root: object = None) -> bool:
+    """
+    استئناف أي فحص كان معلقاً بانتظار موافقة المستخدم على الصلاحيات
+    حصراً عند نجاح الفحص الاستباقي preflight.success is True دون أي تجاوز.
+    يعيد True إذا تم استئناف الفرز بنجاح، أو False إذا لم يتم استئنافه.
+    """
+    try:
+        is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()
+        if not is_pending:
+            return False
+
+        import android_permissions
+        preflight = android_permissions.run_storage_preflight_test(p_src, p_tgt)
+        # لا يتم استئناف الفرز إلا إذا نجح الفحص الاستباقي بالكامل دون أي تجاوز
+        if preflight.success is True:
+            file_manager.clear_pending_scan()
+            if root and hasattr(root, "get_screen"):
+                home = root.get_screen("home_screen")
+                if home and hasattr(home, "start_scan_with_options"):
+                    Clock.schedule_once(
+                        lambda _dt: home.start_scan_with_options(p_src, p_tgt),
+                        0.5,
+                    )
+            return True
+        else:
+            logger.warning(
+                "تعذر استئناف الفحص المعلق لمصدر %s ووجهة %s بسبب عدم استيفاء شروط التخزين: %s (كود: %s)",
+                p_src,
+                p_tgt,
+                preflight.error_message,
+                preflight.error_code,
+            )
+            return False
+    except Exception as e:
+        logger.debug("تنبيه أثناء فحص الفحص المعلق في on_resume: %s", e)
+        return False
 
 
 class CosmoSortApp(MDApp):
@@ -515,32 +557,7 @@ class CosmoSortApp(MDApp):
 
     def on_resume(self) -> None:
         """استئناف التطبيق عند العودة من الخلفية والتحقق من الفحص المعلق عبر الفحص الاستباقي الصارم"""
-        # استئناف أي فحص كان معلقاً بانتظار موافقة المستخدم على الصلاحيات
-        try:
-            is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()
-            if is_pending:
-                import android_permissions
-                preflight = android_permissions.run_storage_preflight_test(p_src, p_tgt)
-                # لا يتم استئناف الفرز إلا إذا نجح الفحص الاستباقي بالكامل دون أي تجاوز
-                if preflight.success is True:
-                    file_manager.clear_pending_scan()
-                    if self.root and hasattr(self.root, "get_screen"):
-                        home = self.root.get_screen("home_screen")
-                        if home and hasattr(home, "start_scan_with_options"):
-                            Clock.schedule_once(
-                                lambda _dt: home.start_scan_with_options(p_src, p_tgt),
-                                0.5,
-                            )
-                else:
-                    logger.warning(
-                        "تعذر استئناف الفحص المعلق لمصدر %s ووجهة %s بسبب عدم استيفاء شروط التخزين: %s (كود: %s)",
-                        p_src,
-                        p_tgt,
-                        preflight.error_message,
-                        preflight.error_code,
-                    )
-        except Exception as e:
-            logger.debug("تنبيه أثناء فحص الفحص المعلق في on_resume: %s", e)
+        resume_pending_scan_if_preflight_passed(self.root)
 
     def request_android_permissions(self) -> None:
         """طلب صلاحيات الكاميرا والوسائط الأساسية عبر المدير الموحد (تغطي أندرويد 8 حتى 15)"""
