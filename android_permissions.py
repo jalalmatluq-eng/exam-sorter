@@ -553,7 +553,7 @@ def run_storage_preflight_test(
         target_storage=target_norm,
     )
 
-    # 1. فحص الذاكرة الداخلية كمصدر (عند اختيار internal أو both)
+    # ─── 1. فحص صلاحيات القراءة للذاكرة الداخلية ───
     if source_norm in ("internal", "both"):
         img_ok = is_images_permission_granted()
         vid_ok = is_videos_permission_granted()
@@ -588,7 +588,41 @@ def run_storage_preflight_test(
             res.action_required = "request_media"
             return res
 
-        # فحص عينات وسائط حقيقية في الذاكرة الداخلية
+    # ─── 2. فحص صلاحية الكتابة للوجهة قبل البحث عن العينات ───
+    # على Android 10 مع WRITE=False، لا فائدة من البحث عن عينات:
+    # الفرز مستحيل بدون إذن كتابة بغض النظر عن وجود ملفات.
+    if target_norm == "sdcard":
+        saf_target_ok = is_saf_sdcard_granted()
+        if not saf_target_ok:
+            res.success = False
+            res.error_code = "missing_target_saf"
+            res.error_message = "تم تحديد الحفظ في بطاقة SD الخارجية، لكن مجلد الحفظ غير محدد أو انتهت صلاحية إذن الوصول (SAF)."
+            res.action_required = "request_saf_sdcard"
+            return res
+
+        import storage_backend as _sb_target
+        target_loc_early = _sb_target.get_active_target_location("sdcard")
+        if not target_loc_early or not target_loc_early.is_valid:
+            res.success = False
+            res.error_code = "sdcard_invalid"
+            res.error_message = target_loc_early.error_message if target_loc_early else "بطاقة SD غير صالحة للكتابة."
+            res.action_required = "request_saf_sdcard"
+            return res
+    else:
+        # الوجهة هي الذاكرة الداخلية: تحقق من WRITE_EXTERNAL_STORAGE فوراً
+        write_ok = is_storage_write_permission_granted()
+        if not write_ok:
+            res.success = False
+            res.error_code = "missing_write_permission"
+            res.error_message = (
+                "Android 10 يتطلب صلاحية كتابة التخزين (WRITE_EXTERNAL_STORAGE) لإنشاء مجلد الملفات المنظمة.\n"
+                "يرجى فتح إعدادات التطبيق وتفعيل إذن التخزين."
+            )
+            res.action_required = "open_app_settings"
+            return res
+
+    # ─── 3. فحص عينات وسائط حقيقية في الذاكرة الداخلية ───
+    if source_norm in ("internal", "both"):
         img_sample = find_first_media_sample("internal", "image")
         if img_sample:
             res.source_image_found = True
@@ -638,7 +672,7 @@ def run_storage_preflight_test(
         except Exception:
             res.source_exists = True
 
-    # 2. فحص بطاقة الذاكرة الخارجية SD كمصدر (عند اختيار sdcard أو both)
+    # 3b. فحص بطاقة الذاكرة الخارجية SD كمصدر (عند اختيار sdcard أو both)
     if source_norm in ("sdcard", "both"):
         saf_ok = is_saf_sdcard_granted()
         res.source_sdcard_saf_valid = saf_ok
@@ -698,7 +732,7 @@ def run_storage_preflight_test(
             res.source_sdcard_readable = False
             res.source_sdcard_error = "لا توجد عينة للاختبار"
 
-    # 3. التحقق الشامل من توفر عينات الوسائط وصلاحيتها للاختبار
+    # 4. التحقق الشامل من توفر عينات الوسائط وصلاحيتها للاختبار
     has_any_image = res.source_image_found
     has_any_video = res.source_video_found
     has_any_sample = has_any_image or has_any_video or res.source_sdcard_sample_found
@@ -727,33 +761,18 @@ def run_storage_preflight_test(
         res.action_required = "none"
         return res
 
-    # 4. فحص الوجهة
+    # 5. اختبار الكتابة الفعلي على الوجهة (الملف التجريبي)
     if target_norm == "sdcard":
-        saf_ok = is_saf_sdcard_granted()
-        if not saf_ok:
-            res.success = False
-            res.error_code = "missing_target_saf"
-            res.error_message = "تم تحديد الحفظ في بطاقة SD الخارجية، لكن مجلد الحفظ غير محدد أو انتهت صلاحية إذن الوصول (SAF)."
-            res.action_required = "request_saf_sdcard"
-            return res
-
-        import storage_backend
-        target_loc = storage_backend.get_active_target_location("sdcard")
-        if not target_loc or not target_loc.is_valid:
-            res.success = False
-            res.error_code = "sdcard_invalid"
-            res.error_message = target_loc.error_message if target_loc else "بطاقة SD غير صالحة للكتابة."
-            res.action_required = "request_saf_sdcard"
-            return res
-
-        res.target_actual_path = target_loc.display_name or "بطاقة SD الخارجية (SAF)"
+        import storage_backend as _sb_write
+        target_loc_sd = _sb_write.get_active_target_location("sdcard")
+        res.target_actual_path = target_loc_sd.display_name or "بطاقة SD الخارجية (SAF)" if target_loc_sd else "بطاقة SD"
 
         # اختبار كتابة وقراءة وحذف حقيقي على بطاقة SD عبر SAF
         try:
             test_content = b"COSMOSORT_SD_PREFLIGHT_TEST_OK"
             test_filename = f".preflight_test_{int(time.time() * 1000)}.tmp"
-            new_file_uri, created_uri_str = storage_backend.saf_create_target_document(
-                target_loc.tree_uri,
+            new_file_uri, created_uri_str = _sb_write.saf_create_target_document(
+                target_loc_sd.tree_uri,
                 "خارج التصنيف",
                 test_filename,
                 "application/octet-stream",
@@ -761,10 +780,10 @@ def run_storage_preflight_test(
             if created_uri_str or new_file_uri is not None:
                 res.target_dir_creatable = True
                 res.target_writable = True
-                write_ok = storage_backend.saf_write_data_to_uri(created_uri_str, test_content)
-                if write_ok:
+                write_ok_sd = _sb_write.saf_write_data_to_uri(created_uri_str, test_content)
+                if write_ok_sd:
                     res.target_readable_after_write = True
-                del_ok = storage_backend.saf_delete_document(created_uri_str)
+                del_ok = _sb_write.saf_delete_document(created_uri_str)
                 if del_ok:
                     res.target_temp_deleted = True
             else:
@@ -783,21 +802,10 @@ def run_storage_preflight_test(
             return res
 
     else:
-        # الذاكرة الداخلية
-        write_ok = is_storage_write_permission_granted()
-        if not write_ok:
-            res.success = False
-            res.error_code = "missing_write_permission"
-            res.error_message = (
-                "Android 10 يتطلب صلاحية كتابة التخزين (WRITE_EXTERNAL_STORAGE) لإنشاء مجلد الملفات المنظمة.\n"
-                "يرجى فتح إعدادات التطبيق وتفعيل إذن التخزين."
-            )
-            res.action_required = "open_app_settings"
-            return res
-
-        import storage_backend
-        target_loc = storage_backend.get_active_target_location("internal")
-        target_path = Path(target_loc.path) if (target_loc and target_loc.path) else (Path("/storage/emulated/0") / "الملفات المنظمة")
+        # الوجهة الداخلية: اختبار كتابة حقيقي (الصلاحية تم فحصها في الخطوة 2.5)
+        import storage_backend as _sb_int
+        target_loc_int = _sb_int.get_active_target_location("internal")
+        target_path = Path(target_loc_int.path) if (target_loc_int and target_loc_int.path) else (Path("/storage/emulated/0") / "الملفات المنظمة")
         res.target_actual_path = str(target_path)
 
         # اختبار إنشاء المجلد والكتابة والقراءة والحذف
