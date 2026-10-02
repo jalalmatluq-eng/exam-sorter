@@ -956,18 +956,21 @@ def save_api_key_to_persistent_storage(new_key: str) -> None:
 
 
 def is_all_files_access_granted() -> bool:
-    """التحقق من صلاحية الوصول الشامل لكافة الملفات (أندرويد 11+)"""
+    """التحقق من صلاحية التخزين المكتملة وفق إصدار أندرويد الفعلي (كلاسيكي لـ Android 10 وشامل لـ Android 11+)"""
     try:
         from kivy.utils import platform  # type: ignore
         if platform != "android":
             return True
-        from jnius import autoclass  # type: ignore
-        Environment = autoclass("android.os.Environment")
-        BuildVersion = autoclass("android.os.Build$VERSION")
-        if int(BuildVersion.SDK_INT) >= 30:
-            return bool(Environment.isExternalStorageManager())
-        return True
-    except (ImportError, AttributeError, RuntimeError) as e:
+        import android_permissions
+        sdk = android_permissions.get_android_sdk_int()
+        if sdk <= 0:
+            return True
+        if sdk < 30:
+            # على Android 10 وما قبله: لا يوجد MANAGE_EXTERNAL_STORAGE، المعيار هو صلاحيات READ و WRITE الكلاسيكية
+            return android_permissions.is_legacy_storage_permission_granted()
+        res = android_permissions.is_all_files_access_granted()
+        return bool(res)
+    except Exception as e:
         print("تنبيه: تعذر فحص صلاحية إدارة كافة الملفات:", e)
         return True
 

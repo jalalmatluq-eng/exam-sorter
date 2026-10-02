@@ -13,6 +13,7 @@ android_permissions.py
 from __future__ import annotations
 
 import logging
+import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -27,6 +28,7 @@ _MOCK_ANDROID_RELEASE: str | None = None
 _MOCK_PERMISSIONS: dict[str, bool] | None = None
 _MOCK_ALL_FILES_ACCESS: bool | None = None
 _MOCK_SAF_VALID: bool | None = None
+_MOCK_SOURCE_SAMPLES: dict[str, Any] | None = None
 
 
 def set_mock_environment(
@@ -35,24 +37,27 @@ def set_mock_environment(
     permissions: dict[str, bool] | None = None,
     all_files_access: bool | None = None,
     saf_valid: bool | None = None,
+    source_samples: dict[str, Any] | None = None,
 ) -> None:
     """ضبط بيئة المحاكاة للاختبارات الآلية"""
-    global _MOCK_ANDROID_SDK_INT, _MOCK_ANDROID_RELEASE, _MOCK_PERMISSIONS, _MOCK_ALL_FILES_ACCESS, _MOCK_SAF_VALID
+    global _MOCK_ANDROID_SDK_INT, _MOCK_ANDROID_RELEASE, _MOCK_PERMISSIONS, _MOCK_ALL_FILES_ACCESS, _MOCK_SAF_VALID, _MOCK_SOURCE_SAMPLES
     _MOCK_ANDROID_SDK_INT = sdk_int
     _MOCK_ANDROID_RELEASE = release
     _MOCK_PERMISSIONS = permissions
     _MOCK_ALL_FILES_ACCESS = all_files_access
     _MOCK_SAF_VALID = saf_valid
+    _MOCK_SOURCE_SAMPLES = source_samples
 
 
 def reset_mock_environment() -> None:
     """إعادة تعيين بيئة المحاكاة إلى الوضع الطبيعي"""
-    global _MOCK_ANDROID_SDK_INT, _MOCK_ANDROID_RELEASE, _MOCK_PERMISSIONS, _MOCK_ALL_FILES_ACCESS, _MOCK_SAF_VALID
+    global _MOCK_ANDROID_SDK_INT, _MOCK_ANDROID_RELEASE, _MOCK_PERMISSIONS, _MOCK_ALL_FILES_ACCESS, _MOCK_SAF_VALID, _MOCK_SOURCE_SAMPLES
     _MOCK_ANDROID_SDK_INT = None
     _MOCK_ANDROID_RELEASE = None
     _MOCK_PERMISSIONS = None
     _MOCK_ALL_FILES_ACCESS = None
     _MOCK_SAF_VALID = None
+    _MOCK_SOURCE_SAMPLES = None
 
 
 def get_android_sdk_int() -> int:
@@ -319,6 +324,142 @@ def is_source_path_readable(path_or_uri: str) -> bool:
         return False
 
 
+def find_first_media_sample(source_storage: str = "internal", media_type: str = "image") -> str | None:
+    """
+    البحث عن أول عينة حقيقية لملف صورة أو فيديو للتحقق من إمكانية قراءتها الفعلية:
+    - يدعم المحاكاة عبر _MOCK_SOURCE_SAMPLES.
+    - يبحث في MediaStore على أندرويد.
+    - يبحث في المجلدات القياسية (DCIM, Pictures, Download, Movies).
+    """
+    if _MOCK_SOURCE_SAMPLES is not None:
+        key_specific = f"{source_storage}_{media_type}"
+        if key_specific in _MOCK_SOURCE_SAMPLES:
+            return _MOCK_SOURCE_SAMPLES[key_specific]
+        if media_type in _MOCK_SOURCE_SAMPLES:
+            return _MOCK_SOURCE_SAMPLES[media_type]
+
+    try:
+        from kivy.utils import platform
+        if platform == "android":
+            exts = (".jpg", ".jpeg", ".png", ".webp") if media_type == "image" else (".mp4", ".mkv", ".3gp", ".mov")
+
+            if source_storage in ("internal", "both"):
+                try:
+                    from android import mActivity
+                    from jnius import autoclass
+                    MediaStoreImages = autoclass("android.provider.MediaStore$Images$Media")
+                    MediaStoreVideo = autoclass("android.provider.MediaStore$Video$Media")
+                    ContentUris = autoclass("android.content.ContentUris")
+                    cr = mActivity.getContentResolver()
+
+                    base_uri = MediaStoreImages.EXTERNAL_CONTENT_URI if media_type == "image" else MediaStoreVideo.EXTERNAL_CONTENT_URI
+                    cursor = cr.query(base_uri, ["_id"], None, None, "date_modified DESC")
+                    if cursor is not None:
+                        try:
+                            if cursor.moveToFirst():
+                                item_id = cursor.getLong(0)
+                                if item_id > 0:
+                                    uri_obj = ContentUris.withAppendedId(base_uri, item_id)
+                                    return str(uri_obj.toString())
+                        finally:
+                            cursor.close()
+                except Exception as e_ms:
+                    logger.debug("تعذر جلب عينة من MediaStore: %s", e_ms)
+
+                int_root = Path("/storage/emulated/0")
+                check_subdirs = [
+                    int_root / "DCIM" / "Camera",
+                    int_root / "DCIM",
+                    int_root / "Pictures",
+                    int_root / "Download",
+                    int_root / "Movies",
+                ]
+                for s_dir in check_subdirs:
+                    if s_dir.exists() and s_dir.is_dir():
+                        try:
+                            for entry in s_dir.iterdir():
+                                if entry.is_file() and entry.suffix.lower() in exts and not entry.name.startswith("."):
+                                    return str(entry)
+                        except Exception as e:
+                            logger.debug("Failed scanning %s: %s", s_dir, e)
+                            continue
+
+            if source_storage in ("sdcard", "both"):
+                import storage_backend
+                tree_uri = storage_backend.get_saf_persisted_uri()
+                if tree_uri and tree_uri.startswith("mock_saf://"):
+                    base_p = Path(tree_uri.replace("mock_saf://", ""))
+                    if base_p.exists():
+                        for root, _, files in os.walk(base_p):
+                            for f in files:
+                                if Path(f).suffix.lower() in exts and not f.startswith("."):
+                                    return f"mock_doc://{Path(root) / f}"
+        else:
+            # بيئة سطح المكتب / بيئة الاختبارات
+            exts = (".jpg", ".jpeg", ".png", ".webp") if media_type == "image" else (".mp4", ".mkv", ".3gp", ".mov")
+            for cand_dir in [Path.cwd() / "test_data", Path.cwd()]:
+                if cand_dir.exists():
+                    for entry in cand_dir.iterdir():
+                        if entry.is_file() and entry.suffix.lower() in exts and not entry.name.startswith("."):
+                            return str(entry)
+    except Exception as e:
+        logger.debug("خطأ أثناء البحث عن عينة وسائط: %s", e)
+
+    return None
+
+
+def test_read_sample_bytes(sample_path_or_uri: str) -> tuple[bool, str]:
+    """
+    قراءة أول 4 بايت من عينة الوسائط للتحقق الفعلي من إمكانية القراءة دون حظر:
+    العائد: (نجحت_القراءة: bool, رسالة_الخطأ: str)
+    """
+    if not sample_path_or_uri:
+        return False, "لا توجد عينة للاختبار"
+
+    if sample_path_or_uri.startswith("mock_doc://"):
+        try:
+            local_p = Path(sample_path_or_uri.replace("mock_doc://", ""))
+            with open(local_p, "rb") as f:
+                data = f.read(4)
+                if len(data) > 0:
+                    return True, ""
+                return False, "الملف فارغ (0 بايت)"
+        except Exception as e:
+            return False, str(e)
+
+    if sample_path_or_uri.startswith("content://"):
+        try:
+            from kivy.utils import platform
+            if platform == "android":
+                from android import mActivity
+                from jnius import autoclass
+                Uri = autoclass("android.net.Uri")
+                cr = mActivity.getContentResolver()
+                in_s = cr.openInputStream(Uri.parse(sample_path_or_uri))
+                if in_s is not None:
+                    try:
+                        b = in_s.read()
+                        if b != -1:
+                            return True, ""
+                        return False, "الملف فارغ (0 بايت)"
+                    finally:
+                        in_s.close()
+                return False, "تعذر فتح دفق القراءة لـ Content URI"
+            else:
+                return True, ""
+        except Exception as e:
+            return False, str(e)
+
+    try:
+        with open(sample_path_or_uri, "rb") as f:
+            data = f.read(4)
+            if len(data) > 0:
+                return True, ""
+            return False, "الملف فارغ (0 بايت)"
+    except Exception as e:
+        return False, str(e)
+
+
 @dataclass
 class StorageAccessTest:
     """نتيجة اختبار الفحص الاستباقي والوصول الفعلي للتخزين قبل بدء الفرز"""
@@ -328,6 +469,23 @@ class StorageAccessTest:
     source_exists: bool = False
     source_readable_images: bool = False
     source_readable_videos: bool = False
+
+    # الفحص الحي لعينات الوسائط الحقيقية
+    source_image_found: bool = False
+    source_image_readable: bool = False
+    source_image_sample_path: str = ""
+    source_video_found: bool = False
+    source_video_readable: bool = False
+    source_video_sample_path: str = ""
+
+    # الفصل الدقيق بين مصادر التخزين
+    source_internal_readable: bool = False
+    source_internal_error: str = ""
+    source_sdcard_readable: bool = False
+    source_sdcard_saf_valid: bool = False
+    source_sdcard_error: str = ""
+
+    # فحص الوجهة
     target_dir_creatable: bool = False
     target_writable: bool = False
     target_readable_after_write: bool = False
@@ -345,10 +503,11 @@ def run_storage_preflight_test(
 ) -> StorageAccessTest:
     """
     اختبار عملي حقيقي لقابلية القراءة والكتابة في وحدات التخزين قبل بدء الفرز:
-    1. التحقق من وجود المصدر وقابلية قراءة الصور والفيديوهات منه.
-    2. التحقق من إنشاء مجلد الوجهة الفعلي (الملفات المنظمة).
-    3. كتابة ملف تجريبي مؤقت ثم قراءته ومطابقة الحجم ثم حذفه بأمان.
-    4. منع أي Fallback صامت وضمان أن الوجهة هي نفسها التي ستستخدم فعلياً.
+    1. التحقق من وجود المصدر وقابلية قراءة الصور والفيديوهات منه واختبار قراءة 4 بايت من عينات حقيقية.
+    2. في وضع both: فحص مستقل للداخلية ولـ SD Card، مع رفض البدء عند غياب إذن SAF أو تعذر القراءة ومنع أي Fallback صامت.
+    3. التحقق من إنشاء مجلد الوجهة الفعلي (الملفات المنظمة).
+    4. كتابة ملف تجريبي مؤقت ثم قراءته ومطابقة الحجم ثم حذفه بأمان.
+    5. منع أي Fallback صامت وضمان أن الوجهة هي نفسها التي ستستخدم فعلياً.
     """
     source_norm = (source_storage or "both").lower()
     target_norm = (target_storage or "internal").lower()
@@ -359,7 +518,7 @@ def run_storage_preflight_test(
         target_storage=target_norm,
     )
 
-    # 1. فحص المصدر
+    # 1. فحص الذاكرة الداخلية كمصدر (عند اختيار internal أو both)
     if source_norm in ("internal", "both"):
         img_ok = is_images_permission_granted()
         vid_ok = is_videos_permission_granted()
@@ -381,6 +540,8 @@ def run_storage_preflight_test(
         if not img_ok and not vid_ok:
             res.success = False
             res.error_code = "missing_media_permissions"
+            res.source_internal_readable = False
+            res.source_internal_error = "صلاحية قراءة وسائط الذاكرة الداخلية غير ممنوحة"
             if sdk == 29 or (0 < sdk < 30):
                 res.error_message = (
                     "Android 10 لا يسمح بقراءة التخزين حاليًا.\n"
@@ -391,6 +552,45 @@ def run_storage_preflight_test(
                 res.error_message = "صلاحية الوصول للصور والفيديوهات غير ممنوحة."
             res.action_required = "request_media"
             return res
+
+        # فحص عينات وسائط حقيقية في الذاكرة الداخلية
+        img_sample = find_first_media_sample("internal", "image")
+        if img_sample:
+            res.source_image_found = True
+            res.source_image_sample_path = img_sample
+            read_img_ok, err_img = test_read_sample_bytes(img_sample)
+            res.source_image_readable = read_img_ok
+            if not read_img_ok:
+                res.success = False
+                res.source_internal_readable = False
+                res.source_internal_error = f"تعذر قراءة عينة الصور: {err_img}"
+                res.error_code = "source_image_read_failed"
+                res.error_message = f"فشل اختبار قراءة أول صورة في الذاكرة الداخلية ({err_img}). يرجى التحقق من إذن التخزين."
+                res.action_required = "request_media"
+                return res
+        else:
+            res.source_image_found = False
+            res.source_image_readable = False
+
+        vid_sample = find_first_media_sample("internal", "video")
+        if vid_sample:
+            res.source_video_found = True
+            res.source_video_sample_path = vid_sample
+            read_vid_ok, err_vid = test_read_sample_bytes(vid_sample)
+            res.source_video_readable = read_vid_ok
+            if not read_vid_ok:
+                res.success = False
+                res.source_internal_readable = False
+                res.source_internal_error = f"تعذر قراءة عينة الفيديو: {err_vid}"
+                res.error_code = "source_video_read_failed"
+                res.error_message = f"فشل اختبار قراءة أول فيديو في الذاكرة الداخلية ({err_vid}). يرجى التحقق من إذن التخزين."
+                res.action_required = "request_media"
+                return res
+        else:
+            res.source_video_found = False
+            res.source_video_readable = False
+
+        res.source_internal_readable = True
 
         # فحص وجود مسار الذاكرة الداخلية
         try:
@@ -403,15 +603,48 @@ def run_storage_preflight_test(
         except Exception:
             res.source_exists = True
 
+    # 2. فحص بطاقة الذاكرة الخارجية SD كمصدر (عند اختيار sdcard أو both)
     if source_norm in ("sdcard", "both"):
-        if source_norm == "sdcard":
-            saf_ok = is_saf_sdcard_granted()
-            if not saf_ok:
+        saf_ok = is_saf_sdcard_granted()
+        res.source_sdcard_saf_valid = saf_ok
+        if not saf_ok:
+            res.source_sdcard_readable = False
+            res.source_sdcard_error = "مجلد بطاقة SD غير محدد أو انتهت صلاحية إذن الوصول (SAF)"
+            res.success = False
+            res.error_code = "missing_source_saf"
+            res.error_message = (
+                "تم اختيار بطاقة الذاكرة الخارجية كمصدر (أو ضمن الفحص المشترك)، "
+                "ولكن لم يتم تحديد مجلد البطاقة أو انتهت صلاحية إذن الوصول (SAF).\n"
+                "يرجى فتح الإعدادات وتحديد مجلد بطاقة SD لمنح الإذن الدائم."
+            )
+            res.action_required = "request_saf_sdcard"
+            return res
+
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location("sdcard")
+        if not target_loc or not target_loc.is_valid:
+            res.source_sdcard_readable = False
+            res.source_sdcard_error = target_loc.error_message if target_loc else "بطاقة SD غير متوفرة أو غير مركبة"
+            res.success = False
+            res.error_code = "sdcard_disconnected"
+            res.error_message = f"فشل الوصول لمصدر بطاقة الذاكرة الخارجية: {res.source_sdcard_error}"
+            res.action_required = "request_saf_sdcard"
+            return res
+
+        # فحص عينة وسائط في بطاقة SD إن وجدت
+        sd_sample = find_first_media_sample("sdcard", "image") or find_first_media_sample("sdcard", "video")
+        if sd_sample:
+            read_sd_ok, err_sd = test_read_sample_bytes(sd_sample)
+            if not read_sd_ok:
+                res.source_sdcard_readable = False
+                res.source_sdcard_error = f"فشل قراءة ملف في بطاقة SD: {err_sd}"
                 res.success = False
-                res.error_code = "missing_source_saf"
-                res.error_message = "تم اختيار بطاقة الذاكرة الخارجية كمصدر، ولكن لم يتم تحديد مجلد البطاقة أو انتهت صلاحيته."
+                res.error_code = "source_sdcard_read_failed"
+                res.error_message = f"تعذر قراءة ملفات بطاقة SD عبر إذن SAF: {err_sd}"
                 res.action_required = "request_saf_sdcard"
                 return res
+
+        res.source_sdcard_readable = True
 
     # 2. فحص الوجهة
     if target_norm == "sdcard":

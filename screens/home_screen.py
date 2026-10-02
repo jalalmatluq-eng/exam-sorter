@@ -597,8 +597,10 @@ class HomeScreen(Screen):
             except Exception as e_init:
                 logger.warning("تنبيه تهيئة مجلدات الوجهة: %s", e_init)
 
-            # فحص الصلاحية
-            if not file_manager.is_all_files_access_granted():
+            # فحص الصلاحية والاستباقية وفق إصدار أندرويد الفعلي
+            import android_permissions
+            sdk = android_permissions.get_android_sdk_int()
+            if sdk >= 30 and not file_manager.is_all_files_access_granted():
                 # حفظ حالة الفحص المعلق لبدء الفحص فور العودة مع الصلاحية
                 file_manager.set_pending_scan(
                     True, source=state["source"], target=state["target"]
@@ -725,15 +727,31 @@ class HomeScreen(Screen):
             issue_msg = preflight_test.error_message
             action_req = preflight_test.action_required
 
-            # بناء تقرير الفحص الاستباقي الحي
-            preflight_stats = {
-                "قراءة الصور": "ناجحة ✓" if preflight_test.source_readable_images else "فاشلة ✗",
-                "قراءة الفيديو": "ناجحة ✓" if preflight_test.source_readable_videos else "فاشلة ✗",
-                "إنشاء مجلد الوجهة": "ناجح ✓" if preflight_test.target_dir_creatable else "فاشل ✗",
-                "اختبار الكتابة": "ناجح ✓" if preflight_test.target_writable else "فاشل ✗",
-                "اختبار القراءة بعد الكتابة": "ناجح ✓" if preflight_test.target_readable_after_write else "فاشل ✗",
-                "الحذف الآمن للملف التجريبي": "ناجح ✓" if preflight_test.target_temp_deleted else "فاشل ✗",
-            }
+            # بناء تقرير الفحص الاستباقي الحي مع تفصيل المصدر والوجهة وعينات الوسائط
+            img_disp = "ناجحة ✓" if preflight_test.source_image_readable else (
+                "لا توجد عينة للاختبار" if not preflight_test.source_image_found else "فاشلة ✗"
+            )
+            vid_disp = "ناجح ✓" if preflight_test.source_video_readable else (
+                "لا توجد عينة للاختبار" if not preflight_test.source_video_found else "فاشل ✗"
+            )
+
+            preflight_stats: dict[str, Any] = {}
+            if source_choice == "both":
+                preflight_stats["قراءة الذاكرة الداخلية"] = "جاهزة ✓" if preflight_test.source_internal_readable else (f"فاشلة ✗ ({preflight_test.source_internal_error})" if preflight_test.source_internal_error else "فاشلة ✗")
+                preflight_stats["قراءة بطاقة SD"] = "جاهزة ✓" if preflight_test.source_sdcard_readable else (f"فاشلة ✗ ({preflight_test.source_sdcard_error})" if preflight_test.source_sdcard_error else "فاشلة ✗")
+                preflight_stats["صلاحية SAF للبطاقة"] = "صالحة ومفعلة ✓" if preflight_test.source_sdcard_saf_valid else "منتهية أو غير محددة ✗"
+            elif source_choice == "sdcard":
+                preflight_stats["قراءة بطاقة SD"] = "جاهزة ✓" if preflight_test.source_sdcard_readable else "فاشلة ✗"
+                preflight_stats["إذن SAF لبطاقة SD"] = "صالح ومفعل ✓" if preflight_test.source_sdcard_saf_valid else "منتهي أو غير محدد ✗"
+            else:
+                preflight_stats["قراءة الذاكرة الداخلية"] = "جاهزة ✓" if preflight_test.source_internal_readable else "فاشلة ✗"
+
+            preflight_stats["عينة الصور"] = img_disp
+            preflight_stats["عينة الفيديو"] = vid_disp
+            preflight_stats["إنشاء مجلد الوجهة"] = "ناجح ✓" if preflight_test.target_dir_creatable else "فاشل ✗"
+            preflight_stats["اختبار الكتابة"] = "ناجح ✓" if preflight_test.target_writable else "فاشل ✗"
+            preflight_stats["اختبار القراءة بعد الكتابة"] = "ناجح ✓" if preflight_test.target_readable_after_write else "فاشل ✗"
+            preflight_stats["الحذف الآمن للملف التجريبي"] = "ناجح ✓" if preflight_test.target_temp_deleted else "فاشل ✗"
 
             preflight_buttons = []
             if action_req == "request_media":

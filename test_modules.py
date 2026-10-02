@@ -2441,13 +2441,149 @@ def test_android_10_and_permissions_preflight() -> None:
         assert "صلاحية قراءة التخزين: ممنوحة ✓" in combined_text
         assert "صلاحية كتابة التخزين: ممنوحة ✓" in combined_text
         assert "غير منطبق" in combined_text
-        print("  [16/16] ✓ محاكاة تقرير Samsung Galaxy Note 9 (Android 10): خلو تام من أسطر Android 14 و READ_MEDIA_* وتأكيد الجاهزية.")
+        print("  [16/22] ✓ محاكاة تقرير Samsung Galaxy Note 9 (Android 10): خلو تام من أسطر Android 14 و READ_MEDIA_* وتأكيد الجاهزية.")
+
+        # 17. SDK 29 + source=both + SAF صالح
+        mock_sd_dir_both = sandbox / "mock_sdcard_both"
+        mock_saf_tree_both = f"mock_saf://{mock_sd_dir_both}"
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": True,
+                "WRITE_EXTERNAL_STORAGE": True,
+            },
+            saf_valid=True,
+        )
+        storage_backend.get_active_target_location = lambda choice=None: (
+            storage_backend.TargetLocation(
+                storage_type="sdcard",
+                is_saf=True,
+                tree_uri=mock_saf_tree_both,
+                display_name="بطاقة SD الخارجية (SAF)",
+                is_valid=True,
+            ) if (choice == "sdcard") else orig_target_loc(choice)
+        )
+        res17 = android_permissions.run_storage_preflight_test("both", "internal")
+        assert res17.success is True, f"فشل اختبار preflight في وضع both مع SAF صالح: {res17.error_message}"
+        assert res17.source_internal_readable is True
+        assert res17.source_sdcard_readable is True
+        assert res17.source_sdcard_saf_valid is True
+        print("  [17/22] ✓ SDK 29 + source=both + SAF صالح: فحص وقراءة كلا المصدرين (الداخلية و SD) بنجاح.")
+
+        # 18. SDK 29 + source=both + SAF غير صالح
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": True,
+                "WRITE_EXTERNAL_STORAGE": True,
+            },
+            saf_valid=False,
+        )
+        res18 = android_permissions.run_storage_preflight_test("both", "internal")
+        assert res18.success is False
+        assert res18.error_code == "missing_source_saf"
+        assert res18.source_sdcard_readable is False
+        assert res18.action_required == "request_saf_sdcard"
+        assert res18.source_storage == "both", "المصدر يجب أن يبقى both دون إسقاط SD Card بصمت"
+        print("  [18/22] ✓ SDK 29 + source=both + SAF غير صالح: كشف غياب SAF لـ SD ورفض البدء دون Fallback صامت للداخلية.")
+
+        # 19. source=both مع بطاقة SD مفصولة
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": True,
+                "WRITE_EXTERNAL_STORAGE": True,
+            },
+            saf_valid=True,
+        )
+        storage_backend.get_active_target_location = lambda choice=None: (
+            storage_backend.TargetLocation(
+                storage_type="sdcard",
+                is_saf=False,
+                is_valid=False,
+                error_message="بطاقة الذاكرة الخارجية (MicroSD) غير متوفرة أو تم فصلها.",
+            ) if (choice == "sdcard") else orig_target_loc(choice)
+        )
+        res19 = android_permissions.run_storage_preflight_test("both", "internal")
+        assert res19.success is False
+        assert res19.error_code == "sdcard_disconnected"
+        assert res19.source_sdcard_readable is False
+        assert "غير متوفرة أو تم فصلها" in res19.error_message
+        assert res19.source_storage == "both"
+        print("  [19/22] ✓ source=both مع بطاقة SD مفصولة: كشف فصل البطاقة ومنع تحويل الفرز للداخلية بصمت.")
+
+        # 20. فشل قراءة صورة المصدر
+        dummy_img = sandbox / "unreadable_image.jpg"
+        dummy_img.write_bytes(b"\xff\xd8\xff\xe0")
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": True,
+                "WRITE_EXTERNAL_STORAGE": True,
+            },
+            source_samples={"internal_image": str(dummy_img)},
+        )
+        with unittest.mock.patch("android_permissions.test_read_sample_bytes", return_value=(False, "Permission denied")):
+            res20 = android_permissions.run_storage_preflight_test("internal", "internal")
+            assert res20.success is False
+            assert res20.error_code == "source_image_read_failed"
+            assert res20.source_image_readable is False
+            assert "Permission denied" in res20.error_message
+        print("  [20/22] ✓ فشل قراءة صورة المصدر: اختبار عينة حقيقية والتقاط تعذر القراءة بدقة.")
+
+        # 21. فشل قراءة فيديو المصدر
+        dummy_vid = sandbox / "unreadable_video.mp4"
+        dummy_vid.write_bytes(b"\x00\x00\x00\x18ftypmp42")
+        dummy_img_ok = sandbox / "good_img.jpg"
+        dummy_img_ok.write_bytes(b"\xff\xd8\xff\xe0")
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": True,
+                "WRITE_EXTERNAL_STORAGE": True,
+            },
+            source_samples={
+                "internal_image": str(dummy_img_ok),
+                "internal_video": str(dummy_vid),
+            },
+        )
+
+        def _mock_read_sample(path_or_uri: str):
+            if "video" in str(path_or_uri) or str(path_or_uri).endswith(".mp4"):
+                return False, "I/O error broken pipe"
+            return True, ""
+
+        with unittest.mock.patch("android_permissions.test_read_sample_bytes", side_effect=_mock_read_sample):
+            res21 = android_permissions.run_storage_preflight_test("internal", "internal")
+            assert res21.success is False
+            assert res21.error_code == "source_video_read_failed"
+            assert res21.source_video_readable is False
+            assert "broken pipe" in res21.error_message
+        print("  [21/22] ✓ فشل قراءة فيديو المصدر: اختبار عينة حقيقية وكشف تلف/حظر دفق الفيديو.")
+
+        # 22. تحقق شامل من عدم وجود Fallback إلى الداخلية في وضع both
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={"READ_EXTERNAL_STORAGE": True, "WRITE_EXTERNAL_STORAGE": True},
+            saf_valid=False,
+        )
+        res22 = android_permissions.run_storage_preflight_test("both", "internal")
+        assert res22.success is False
+        assert res22.source_storage == "both", "المصدر يجب أن يبقى both ولا يتحول تلقائياً لـ internal!"
+        assert not res22.source_sdcard_readable
+        print("  [22/22] ✓ تحقق شامل من عدم وجود Fallback إلى الداخلية: رفض العملية بالكامل مع توضيح سبب فشل SD Card.")
 
     finally:
         android_permissions.reset_mock_environment()
         shutil.rmtree(sandbox, ignore_errors=True)
 
-    print("✓ نجحت جميع فحوصات الجناح 20 لإصلاحات Android 10 والصلاحيات والتخزين بنسبة 100%!\n")
+    print("✓ نجحت جميع فحوصات الجناح 20 لإصلاحات Android 10 والصلاحيات والتخزين (22 فحصاً) بنسبة 100%!\n")
 
 
 if __name__ == "__main__":

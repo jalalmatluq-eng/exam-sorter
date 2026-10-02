@@ -290,7 +290,9 @@ class CosmoSortApp(MDApp):
             def _delayed_service_start(_dt: float) -> None:
                 try:
                     if platform == "android":
-                        if file_manager.is_all_files_access_granted():
+                        import android_permissions
+                        preflight = android_permissions.run_storage_preflight_test("internal", "internal")
+                        if preflight.success or file_manager.is_all_files_access_granted():
                             media_watcher_service.start_system_service()
                         else:
                             logger.info("تأجيل تشغيل خدمة المراقبة لحين منح صلاحية الوصول للملفات")
@@ -512,19 +514,22 @@ class CosmoSortApp(MDApp):
         return True
 
     def on_resume(self) -> None:
-        """استئناف التطبيق عند العودة من الخلفية والتحقق من الفحص المعلق"""
+        """استئناف التطبيق عند العودة من الخلفية والتحقق من الفحص المعلق عبر الفحص الاستباقي"""
         # استئناف أي فحص كان معلقاً بانتظار موافقة المستخدم على الصلاحيات
         try:
             is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()
-            if is_pending and file_manager.is_all_files_access_granted():
-                file_manager.clear_pending_scan()
-                if self.root and hasattr(self.root, "get_screen"):
-                    home = self.root.get_screen("home_screen")
-                    if home and hasattr(home, "start_scan_with_options"):
-                        Clock.schedule_once(
-                            lambda _dt: home.start_scan_with_options(p_src, p_tgt),
-                            0.5,
-                        )
+            if is_pending:
+                import android_permissions
+                preflight = android_permissions.run_storage_preflight_test(p_src, p_tgt)
+                if preflight.success or file_manager.is_all_files_access_granted():
+                    file_manager.clear_pending_scan()
+                    if self.root and hasattr(self.root, "get_screen"):
+                        home = self.root.get_screen("home_screen")
+                        if home and hasattr(home, "start_scan_with_options"):
+                            Clock.schedule_once(
+                                lambda _dt: home.start_scan_with_options(p_src, p_tgt),
+                                0.5,
+                            )
         except Exception as e:
             logger.debug("تنبيه أثناء فحص الفحص المعلق في on_resume: %s", e)
 
@@ -537,12 +542,19 @@ class CosmoSortApp(MDApp):
             logger.warning("تنبيه: تعذر استدعاء مدير صلاحيات أندرويد الموحد: %s", e)
 
     def check_and_request_all_files_permission(self) -> None:
-        """طلب إذن الوصول الكامل لكافة الملفات عبر المعالج الآمن في file_manager"""
+        """طلب إذن الوصول الكامل لكافة الملفات عبر المعالج الآمن في file_manager وفق إصدار أندرويد"""
         if platform != "android":
             return
         try:
-            if not file_manager.is_all_files_access_granted():
-                file_manager.open_all_files_permission_settings()
+            import android_permissions
+            sdk = android_permissions.get_android_sdk_int()
+            if sdk < 30:
+                # Android 10 وما قبله: لا نطلب All Files Access؛ نتحقق من أذونات التخزين الكلاسيكية
+                if not android_permissions.is_legacy_storage_permission_granted():
+                    android_permissions.open_app_details_settings()
+            else:
+                if not file_manager.is_all_files_access_granted():
+                    file_manager.open_all_files_permission_settings()
         except Exception as e:
             logger.warning("تنبيه: تعذر فتح إعدادات إذن الملفات: %s", e)
 
