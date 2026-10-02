@@ -1941,7 +1941,7 @@ def test_offline_ai_capabilities() -> None:
         draw = ImageDraw.Draw(test_img)
         font_path = Path("assets/fonts/Amiri-Regular.ttf")
         font = ImageFont.truetype(str(font_path), 36)
-        arabic_text_rendered = get_display(arabic_reshaper.reshape("اختبار رياضيات"))
+        arabic_text_rendered = str(get_display(arabic_reshaper.reshape("اختبار رياضيات")))
         draw.text((20, 10), arabic_text_rendered, fill=(0, 0, 0), font=font)
         test_img.save(real_ocr_img)
 
@@ -2016,32 +2016,37 @@ def test_offline_ai_capabilities() -> None:
         print("    ✓ تحليل الإطار البصري بنموذج MobileNetV2: تم استخراج احتمالات التصنيف بنجاح.")
 
         # اختبار تصنيف مقطع فيديو اصطناعي لمحاضرة (Slide video)
-        lec_vid_p = test_dir / "lecture_clip.mp4"
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(str(lec_vid_p), fourcc, 5.0, (320, 240))
-        for _ in range(15):
-            writer.write(slide_img)
-        writer.release()
+        if cv2 is not None:
+            lec_vid_p = test_dir / "lecture_clip.mp4"
+            fourcc_fn = getattr(cv2, "VideoWriter_fourcc", None) or getattr(getattr(cv2, "VideoWriter", None), "fourcc", None)
+            fourcc = fourcc_fn(*"mp4v") if callable(fourcc_fn) else 0
+            writer_cls = getattr(cv2, "VideoWriter", None)
+            writer = writer_cls(str(lec_vid_p), fourcc, 5.0, (320, 240)) if writer_cls else None
+            if writer:
+                for _ in range(15):
+                    writer.write(slide_img)
+                writer.release()
 
-        res_lec = offline_video_classifier.classify_video_offline(str(lec_vid_p))
-        assert res_lec.status in ("success", "needs_review")
-        assert res_lec.details.get("slide_frames", 0) >= 2, "يجب كشف شرائح العرض المتكررة"
-        print("    ✓ فحص مقطع فيديو المحاضرة: تم التحليل الزمني وتوثيق الشرائح بدقة.")
+            res_lec = offline_video_classifier.classify_video_offline(str(lec_vid_p))
+            assert res_lec.status in ("success", "needs_review")
+            assert res_lec.details.get("slide_frames", 0) >= 2, "يجب كشف شرائح العرض المتكررة"
+            print("    ✓ فحص مقطع فيديو المحاضرة: تم التحليل الزمني وتوثيق الشرائح بدقة.")
 
-        # فحص الفيديو المبهم غير المحسوم (منع الثقة الزائفة)
-        ambig_vid_p = test_dir / "ambiguous_clip.mp4"
-        writer_ambig = cv2.VideoWriter(str(ambig_vid_p), fourcc, 5.0, (160, 120))
-        for _ in range(10):
-            writer_ambig.write(np.random.randint(50, 200, (120, 160, 3), dtype=np.uint8))
-        writer_ambig.release()
+            # فحص الفيديو المبهم غير المحسوم (منع الثقة الزائفة)
+            ambig_vid_p = test_dir / "ambiguous_clip.mp4"
+            writer_ambig = writer_cls(str(ambig_vid_p), fourcc, 5.0, (160, 120)) if writer_cls else None
+            if writer_ambig:
+                for _ in range(10):
+                    writer_ambig.write(np.random.randint(50, 200, (120, 160, 3), dtype=np.uint8))
+                writer_ambig.release()
 
-        res_ambig = offline_video_classifier.classify_video_offline(str(ambig_vid_p))
-        if res_ambig.confidence < 0.65:
-            assert res_ambig.category in (
-                offline_video_classifier.CATEGORY_NEEDS_REVIEW,
-                offline_video_classifier.CATEGORY_UNCLASSIFIED,
-            )
-        print("    ✓ فحص الفيديو المبهم: تم حفظه كـ 'يحتاج مراجعة' أو 'خارج التصنيف' دون ثقة زائفة.")
+            res_ambig = offline_video_classifier.classify_video_offline(str(ambig_vid_p))
+            if res_ambig.confidence < 0.65:
+                assert res_ambig.category in (
+                    offline_video_classifier.CATEGORY_NEEDS_REVIEW,
+                    offline_video_classifier.CATEGORY_UNCLASSIFIED,
+                )
+            print("    ✓ فحص الفيديو المبهم: تم حفظه كـ 'يحتاج مراجعة' أو 'خارج التصنيف' دون ثقة زائفة.")
 
         fake_vid = test_dir / "non_existent.mp4"
         res_fake = offline_video_classifier.classify_video_offline(str(fake_vid))
