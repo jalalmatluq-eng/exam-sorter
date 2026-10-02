@@ -186,7 +186,7 @@ except Exception:
     pass
 
 
-def resume_pending_scan_if_preflight_passed(root: object = None) -> bool:
+def resume_pending_scan_if_preflight_passed(root: Any = None) -> bool:
     """
     استئناف أي فحص كان معلقاً بانتظار موافقة المستخدم على الصلاحيات
     حصراً عند نجاح الفحص الاستباقي preflight.success is True دون أي تجاوز.

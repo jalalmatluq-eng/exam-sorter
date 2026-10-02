@@ -2579,7 +2579,7 @@ def test_android_10_and_permissions_preflight() -> None:
         preflight_resume = android_permissions.run_storage_preflight_test(p_src, p_tgt)
         assert preflight_resume.success is False
         assert preflight_resume.error_code == "missing_source_saf"
-        if preflight_resume.success is True:
+        if getattr(preflight_resume, "success", False) is True:
             file_manager.clear_pending_scan()
         is_p_after, s_after, _ = file_manager.get_pending_scan_info()
         assert is_p_after is True, "يجب عدم استئناف أو مسح الفحص المعلق عند فشل الفحص الاستباقي!"
