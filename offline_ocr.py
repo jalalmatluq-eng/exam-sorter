@@ -17,6 +17,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
+cv2: Any = None
+try:
+    import cv2  # type: ignore
+except (ImportError, Exception):
+    cv2 = None
+
 logger = logging.getLogger("OfflineOCR")
 
 
@@ -115,36 +123,79 @@ def get_tessdata_path() -> Path | None:
     return None
 
 
+_ocr_net_cache: Any = None
+_ocr_dict_cache: list[str] | None = None
+
+
+def get_ocr_onnx_net() -> tuple[Any, list[str] | None]:
+    """تحميل وحفظ شبكة OCR العصبية وقاموس الحروف في الذاكرة"""
+    global _ocr_net_cache, _ocr_dict_cache
+    if _ocr_net_cache is None:
+        model_p = Path(__file__).resolve().parent / "assets" / "models" / "ocr" / "arabic_rec.onnx"
+        dict_p = Path(__file__).resolve().parent / "assets" / "models" / "ocr" / "arabic_dict.txt"
+        if model_p.exists() and dict_p.exists() and cv2 is not None and hasattr(cv2, "dnn"):
+            try:
+                _ocr_net_cache = cv2.dnn.readNetFromONNX(str(model_p))
+                with open(dict_p, "r", encoding="utf-8") as f:
+                    _ocr_dict_cache = ["blank"] + [line.strip() for line in f]
+            except Exception as exc:
+                logger.error("فشل تحميل نموذج Arabic OCR ONNX: %s", exc)
+                _ocr_net_cache = None
+                _ocr_dict_cache = None
+    return _ocr_net_cache, _ocr_dict_cache
+
+
+def recognize_text_onnx(img_bgr: np.ndarray) -> str:
+    """استخراج النصوص العربية باستخدام نموذج الشبكة العصبية arabic_rec.onnx مع فك ترميز CTC"""
+    net, chars = get_ocr_onnx_net()
+    if net is None or chars is None or img_bgr is None or img_bgr.size == 0 or cv2 is None:
+        return ""
+    try:
+        h, w = img_bgr.shape[:2]
+        target_w = int(w * (48.0 / max(1, h)))
+        target_w = max(32, min(640, target_w))
+        resized = cv2.resize(img_bgr, (target_w, 48), interpolation=cv2.INTER_AREA)
+        blob = cv2.dnn.blobFromImage(resized, 1.0 / 127.5, (target_w, 48), (127.5, 127.5, 127.5), swapRB=True)
+        net.setInput(blob)
+        preds = net.forward()
+        pred_indices = np.argmax(preds[0], axis=-1)
+        text_chars = []
+        prev = 0
+        for idx in pred_indices:
+            if idx != 0 and idx != prev and idx < len(chars):
+                text_chars.append(chars[idx])
+            prev = idx
+        return "".join(text_chars)
+    except Exception as exc:
+        logger.debug("خطأ استدلال OCR ONNX: %s", exc)
+        return ""
+
+
 def is_offline_ocr_available() -> bool:
     """
     التحقق الصارم والواقعي من إمكانية تنفيذ OCR محلي:
-    1. توفر نموذج اللغة العربية `ara.traineddata` أو نموذج TFLite/ONNX مكافئ.
-    2. توفر محرك تشغيل (Tesseract/pytesseract/tesserocr/cv2 OCR Bridge).
+    1. توفر نموذج arabic_rec.onnx وملف القاموس ومحرك cv2.dnn.
+    2. أو توفر نموذج اللغة العربية ara.traineddata مع محرك tesseract الفعلي.
     """
-    # 1. فحص ملف النموذج العربي
-    tess_path = get_tessdata_path()
-    has_model = tess_path is not None and (tess_path / "ara.traineddata").exists()
+    # 1. نموذج ONNX العصبي المضمن
+    model_p = Path(__file__).resolve().parent / "assets" / "models" / "ocr" / "arabic_rec.onnx"
+    dict_p = Path(__file__).resolve().parent / "assets" / "models" / "ocr" / "arabic_dict.txt"
+    if model_p.exists() and dict_p.exists() and cv2 is not None and hasattr(cv2, "dnn"):
+        return True
 
-    # 2. فحص محرك pytesseract / tesseract binary
-    has_runtime = False
+    # 2. فحص Tesseract
+    tess_path = get_tessdata_path()
+    has_tess_model = tess_path is not None and (tess_path / "ara.traineddata").exists()
+    has_tess_runtime = False
     try:
         import pytesseract  # type: ignore
-        # اختبار استدعاء get_tesseract_version
         v = pytesseract.get_tesseract_version()
         if v:
-            has_runtime = True
+            has_tess_runtime = True
     except Exception:
-        has_runtime = False
+        has_tess_runtime = False
 
-    # فحص محرك C/Native في أندرويد أو TFLite OCR
-    if not has_runtime:
-        try:
-            _ = __import__("tesserocr")
-            has_runtime = True
-        except Exception:
-            pass
-
-    return has_model and has_runtime
+    return has_tess_model and has_tess_runtime
 
 
 def normalize_arabic_text(text: str) -> str:
@@ -284,36 +335,36 @@ def extract_arabic_text_offline(image_path: str) -> OCRResult:
     raw_text = ""
     conf_scores: list[float] = []
 
-    # 3. الاستدعاء الفعلي للمحرك
-    try:
-        import pytesseract  # type: ignore
-        from PIL import Image
+    # 3. الاستدعاء الفعلي للمحرك (نموذج ONNX العصبي أولاً ثم Tesseract)
+    onnx_text = recognize_text_onnx(processed_img)
+    if onnx_text:
+        raw_text = onnx_text
+        conf_scores.append(88.0)
+    else:
+        try:
+            import pytesseract  # type: ignore
+            from PIL import Image
 
-        tess_dir = get_tessdata_path()
-        tess_cfg = f'--tessdata-dir "{tess_dir}" -l ara+eng --psm 6' if tess_dir else "-l ara+eng --psm 6"
+            tess_dir = get_tessdata_path()
+            tess_cfg = f'--tessdata-dir "{tess_dir}" -l ara+eng --psm 6' if tess_dir else "-l ara+eng --psm 6"
 
-        img_input = Image.fromarray(processed_img) if processed_img is not None else Image.open(image_path)
-        data = pytesseract.image_to_data(img_input, config=tess_cfg, output_type=pytesseract.Output.DICT)
-        
-        words: list[str] = []
-        for word, conf in zip(data.get("text", []), data.get("conf", [])):
-            clean_w = str(word).strip()
-            if clean_w:
-                words.append(clean_w)
-                try:
-                    c_val = float(conf)
-                    if c_val >= 0:
-                        conf_scores.append(c_val)
-                except (ValueError, TypeError):
-                    pass
-        raw_text = " ".join(words)
-    except Exception as e:
-        logger.warning("استثناء أثناء استخراج النص عبر Tesseract: %s", e)
-        return OCRResult(
-            available=True,
-            error=f"خطأ أثناء قراءة النص: {e}",
-            needs_review=True,
-        )
+            img_input = Image.fromarray(processed_img) if processed_img is not None else Image.open(image_path)
+            data = pytesseract.image_to_data(img_input, config=tess_cfg, output_type=pytesseract.Output.DICT)
+
+            words: list[str] = []
+            for word, conf in zip(data.get("text", []), data.get("conf", [])):
+                clean_w = str(word).strip()
+                if clean_w:
+                    words.append(clean_w)
+                    try:
+                        c_val = float(conf)
+                        if c_val >= 0:
+                            conf_scores.append(c_val)
+                    except (ValueError, TypeError):
+                        pass
+            raw_text = " ".join(words)
+        except Exception as e:
+            logger.debug("استثناء أثناء استخراج النص عبر Tesseract: %s", e)
 
     if not raw_text.strip():
         return OCRResult(

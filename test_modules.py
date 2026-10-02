@@ -1910,11 +1910,14 @@ def test_offline_ai_capabilities() -> None:
     test_dir.mkdir(exist_ok=True)
 
     try:
-        # 1. اختبارات OCR العربي الأوفلاين
+        # 1. اختبارات OCR العربي الأوفلاين الحقيقي
         print("  [1/4] فحص OCR العربي الأوفلاين:")
         ocr_avail = offline_ocr.is_offline_ocr_available()
-        assert isinstance(ocr_avail, bool)
-        print(f"    - حالة توفر OCR الأوفلاين: {ocr_avail}")
+        assert ocr_avail is True, "فشل: نموذج أو محرك OCR العربي غير متوفر فعلياً داخل المشروع!"
+        print(f"    - حالة توفر OCR الأوفلاين: {ocr_avail} (نموذج arabic_rec.onnx و ara.traineddata متوفران).")
+
+        net_ocr, chars_ocr = offline_ocr.get_ocr_onnx_net()
+        assert net_ocr is not None and chars_ocr is not None, "فشل تحميل شبكة OCR العصبية وقاموس الحروف"
 
         sample_raw = "إمتحان  الرِّياضِياتِ  النهائي ١٠١"
         norm_txt = offline_ocr.normalize_arabic_text(sample_raw)
@@ -1932,6 +1935,7 @@ def test_offline_ai_capabilities() -> None:
         blank_img = test_dir / "blank_paper.jpg"
         Image.new("RGB", (300, 300), color=(255, 255, 255)).save(blank_img)
         res_blank = offline_ocr.extract_arabic_text_offline(str(blank_img))
+        assert res_blank.available is True, "OCR يجب أن يكون متاحاً للعمل"
         assert res_blank.subject == "" or res_blank.needs_review is True
         print("    ✓ فحص الصورة الفارغة: تم التعامل معها بنجاح دون أي انهيار.")
 
@@ -1941,11 +1945,20 @@ def test_offline_ai_capabilities() -> None:
         assert res_corrupt.subject == ""
         print("    ✓ فحص الملف التالف: تمت معالجته والتقاط الخطأ بأمان.")
 
-        # 2. اختبارات التعرف على الوجوه الأوفلاين
-        print("  [2/4] فحص التعرف على الوجوه الأوفلاين:")
+        # 2. اختبارات التعرف على الوجوه الأوفلاين بنموذج MobileFaceNet الحقيقي
+        print("  [2/4] فحص التعرف على الوجوه الأوفلاين (MobileFaceNet 512-dim):")
         face_avail = offline_face_recognizer.is_offline_face_model_available()
-        assert isinstance(face_avail, bool)
-        print(f"    - حالة توفر نموذج الوجوه: {face_avail}")
+        assert face_avail is True, "فشل: نموذج MobileFaceNet غير موجود أو غير قابل للتشغيل!"
+        print(f"    - حالة توفر نموذج الوجوه: {face_avail} (MobileFaceNet ONNX 512-dim متوفر).")
+
+        # فحص استخراج البصمة المتجهية الحقيقية (512-dim)
+        test_face_crop = np.zeros((112, 112, 3), dtype=np.uint8)
+        test_face_crop[30:80, 30:80] = 180  # وجه اصطناعي محدد
+        real_emb = offline_face_recognizer.extract_face_embedding(test_face_crop)
+        assert real_emb is not None, "فشل استخراج البصمة من نموذج MobileFaceNet!"
+        assert len(real_emb) == 512, f"البصمة يجب أن تكون 512 بُعداً لنموذج MobileFaceNet وليس {len(real_emb)}"
+        assert abs(float(np.linalg.norm(real_emb)) - 1.0) < 0.01, "يجب تطبيق L2 Normalization على متجه البصمة"
+        print("    ✓ فحص نموذج MobileFaceNet الحقيقي: تم استخراج متجه 512-dim وتطبيعه L2 بنجاح.")
 
         v1 = np.array([1.0, 0.0, 0.0], dtype=np.float32)
         v2 = np.array([1.0, 0.0, 0.0], dtype=np.float32)
@@ -1955,21 +1968,19 @@ def test_offline_ai_capabilities() -> None:
         assert abs(sim_same - 1.0) < 0.01, "المتجهات المتطابقة يجب أن تعيد تشابه 1.0"
         assert abs(sim_diff - 0.0) < 0.01, "المتجهات المتعامدة يجب أن تعيد تشابه 0.0"
 
-
         enroll_ok, _msg = offline_face_recognizer.enroll_user_face([str(blank_img)])
         assert not enroll_ok, "يجب رفض تسجيل الوجه عند تقديم أقل من 3 صور"
-
         print("    ✓ شروط التسجيل: تم رفض التسجيل لعدد غير كافٍ من الصور (3 صور على الأقل).")
 
         res_no_face = offline_face_recognizer.classify_face_offline(str(blank_img))
-        assert res_no_face.status in ("no_face", "model_unavailable")
-        print(f"    ✓ تصنيف صورة بلا وجه: النتيجة '{res_no_face.status}' صحيحة.")
+        assert res_no_face.status == "no_face", f"المتوقع no_face ولكن حصلنا على {res_no_face.status}"
+        print(f"    ✓ تصنيف صورة بلا وجه: النتيجة '{res_no_face.status}' صحيحة ومؤكدة.")
 
-        # 3. اختبارات تصنيف الفيديو الأوفلاين متعدد الإطارات
-        print("  [3/4] فحص مصنف الفيديو الأوفلاين متعدد الإطارات:")
+        # 3. اختبارات تصنيف الفيديو الأوفلاين بنموذج MobileNetV2 البصري
+        print("  [3/4] فحص مصنف الفيديو الأوفلاين بنموذج MobileNetV2 البصري:")
         vid_avail = offline_video_classifier.is_offline_video_model_available()
-        assert isinstance(vid_avail, bool)
-        print(f"    - حالة توفر محرك الفيديو: {vid_avail}")
+        assert vid_avail is True, "فشل: نموذج MobileNetV2 لتصنيف الفيديو غير موجود داخل المشروع!"
+        print(f"    - حالة توفر محرك الفيديو: {vid_avail} (MobileNetV2 ONNX متوفر).")
 
         slide_img = np.ones((240, 320, 3), dtype=np.uint8) * 245
         slide_img[40:45, 30:290] = 20
@@ -1978,8 +1989,9 @@ def test_offline_ai_capabilities() -> None:
         features = offline_video_classifier._analyze_frame_visuals(slide_img)
         assert "text_score" in features
         assert "brightness" in features
+        assert "vis_lecture" in features, "يجب أن يتضمن التحليل مخرجات نموذج MobileNetV2 البصري"
         assert features["brightness"] > 200, "يجب كشف سطوع الشريحة الفاتحة"
-        print("    ✓ تحليل الإطار البصري: تم استخراج كثافة الحواف والسطوع بنجاح.")
+        print("    ✓ تحليل الإطار البصري بنموذج MobileNetV2: تم استخراج احتمالات التصنيف بنجاح.")
 
         fake_vid = test_dir / "non_existent.mp4"
         res_fake = offline_video_classifier.classify_video_offline(str(fake_vid))

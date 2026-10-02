@@ -43,6 +43,7 @@ except (ImportError, Exception):
     cv2 = None  # type: ignore
 
 logger = logging.getLogger("OfflineVideoClassifier")
+MODEL_DIR = Path(__file__).resolve().parent / "assets" / "models" / "video"
 
 MODEL_VERSION = "2.0.0-hybrid-vision"
 
@@ -139,16 +140,75 @@ def _save_video_cache(cache_data: dict[str, Any]) -> None:
         logger.debug("تعذر حفظ كاش الفيديو: %s", e)
 
 
+_video_net_cache: Any = None
+
+
+def get_video_net() -> Any:
+    """تحميل وحفظ شبكة MobileNetV2 في الذاكرة لتصنيف الإطارات البصرية"""
+    global _video_net_cache
+    if _video_net_cache is None:
+        model_p = MODEL_DIR / "mobilenetv2_video.onnx"
+        if model_p.exists() and cv2 is not None and hasattr(cv2, "dnn"):
+            try:
+                _video_net_cache = cv2.dnn.readNetFromONNX(str(model_p))
+            except Exception as exc:
+                logger.error("فشل تحميل نموذج MobileNetV2 لتصنيف الفيديو: %s", exc)
+                _video_net_cache = None
+    return _video_net_cache
+
+
 def is_offline_video_model_available() -> bool:
-    """التحقق مما إذا كان محرك تحليل الفيديو الأوفلاين متاحاً وقابلاً للتشغيل"""
-    # يعتمد التحليل البصري على OpenCV و/أو محرك أندرويد الأصلي MediaMetadataRetriever
+    """التحقق الحقيقي الصارم مما إذا كان نموذج MobileNetV2 ONNX ومحرك الرؤية متوفرين"""
+    if cv2 is None or not hasattr(cv2, "dnn") or not hasattr(cv2.dnn, "readNetFromONNX"):
+        return False
+
+    model_p = MODEL_DIR / "mobilenetv2_video.onnx"
+    return bool(model_p.exists() and model_p.stat().st_size >= 1000000)
+
+
+def classify_frame_visual(frame: np.ndarray) -> dict[str, float]:
+    """
+    تحليل بصري حقيقي للإطار عبر شبكة MobileNetV2 ONNX:
+    استخراج احتمالات الفئات البصرية (محاضرات/شرائح، موسيقى، أفلام، كوميديا)
+    """
+    net = get_video_net()
+    if net is None or frame is None or frame.size == 0 or cv2 is None:
+        return {"lecture": 0.0, "music": 0.0, "movie": 0.0, "funny": 0.0}
+
     try:
-        from kivy.utils import platform
-        if platform == "android":
-            return True
-    except Exception:
-        pass
-    return cv2 is not None
+        blob = cv2.dnn.blobFromImage(
+            frame,
+            scalefactor=1.0 / 255.0,
+            size=(224, 224),
+            mean=(123.675, 116.28, 103.53),
+            swapRB=True,
+            crop=False,
+        )
+        net.setInput(blob)
+        preds = net.forward().flatten()
+
+        exp_preds = np.exp(preds - np.max(preds))
+        probs = exp_preds / np.sum(exp_preds)
+
+        lecture_indices = [681, 782, 916, 921, 508, 664, 722, 850]
+        music_indices = [402, 546, 513, 889, 658, 580, 401, 542, 594]
+        movie_indices = [840, 850, 486, 755, 983]
+        funny_indices = [917, 804, 706, 999, 151, 281, 285]
+
+        l_score = float(np.sum([probs[i] for i in lecture_indices if i < len(probs)]))
+        m_score = float(np.sum([probs[i] for i in music_indices if i < len(probs)]))
+        mov_score = float(np.sum([probs[i] for i in movie_indices if i < len(probs)]))
+        fun_score = float(np.sum([probs[i] for i in funny_indices if i < len(probs)]))
+
+        return {
+            "lecture": l_score,
+            "music": m_score,
+            "movie": mov_score,
+            "funny": fun_score,
+        }
+    except Exception as exc:
+        logger.debug("خطأ الاستدلال البصري للإطار: %s", exc)
+        return {"lecture": 0.0, "music": 0.0, "movie": 0.0, "funny": 0.0}
 
 
 def _get_file_cache_key(file_path: str) -> str:
@@ -277,6 +337,9 @@ def _analyze_frame_visuals(frame: np.ndarray) -> dict[str, Any]:
     except Exception:
         pass
 
+    # 4. الاستدلال البصري الحقيقي للإطار عبر شبكة MobileNetV2
+    vis = classify_frame_visual(frame)
+
     return {
         "text_score": round(text_score, 3),
         "brightness": round(mean_val, 1),
@@ -284,6 +347,10 @@ def _analyze_frame_visuals(frame: np.ndarray) -> dict[str, Any]:
         "is_slide": is_slide,
         "face_count": face_count,
         "face_is_central": face_is_central,
+        "vis_lecture": vis.get("lecture", 0.0),
+        "vis_music": vis.get("music", 0.0),
+        "vis_movie": vis.get("movie", 0.0),
+        "vis_funny": vis.get("funny", 0.0),
     }
 
 
@@ -294,11 +361,19 @@ def classify_video_offline(
 ) -> VideoClassificationResult:
     """
     التصنيف البصري الأوفلاين الحقيقي للفيديو:
-    - فحص الكاش السريع أولاً.
+    - فحص توفر نموذج MobileNetV2 البصري الحقيقي.
     - استخراج 5 إطارات زمنية (10%, 30%, 50%, 70%, 90%).
-    - تحليل الإطارات واستخراج الخصائص البصرية وحركة المشهد.
+    - تحليل الإطارات واستخراج الخصائص البصرية وحركة المشهد عبر الشبكة العصبية.
     - حساب النتائج عبر خوارزمية تصويت وزني دقيقة.
     """
+    if not is_offline_video_model_available():
+        return VideoClassificationResult(
+            category=CATEGORY_NEEDS_REVIEW,
+            confidence=0.0,
+            status="model_unavailable",
+            error="نموذج تصنيف الفيديو البصري (MobileNetV2 ONNX) غير مثبت أو غير قابل للتشغيل",
+        )
+
     if not os.path.exists(video_path):
         return VideoClassificationResult(
             category=CATEGORY_UNCLASSIFIED,
@@ -385,12 +460,17 @@ def classify_video_offline(
     avg_text_score = float(np.mean([f["text_score"] for f in frames_data])) if frames_data else 0.0
     avg_motion = float(np.mean(motion_diffs)) if motion_diffs else 0.0
 
-    # 5. خوارزمية التصويت البصري والترجيح
+    # 5. خوارزمية التصويت البصري والترجيح مع نموذج MobileNetV2
+    avg_vis_lecture = float(np.mean([f.get("vis_lecture", 0.0) for f in frames_data]))
+    avg_vis_music = float(np.mean([f.get("vis_music", 0.0) for f in frames_data]))
+    avg_vis_movie = float(np.mean([f.get("vis_movie", 0.0) for f in frames_data]))
+    avg_vis_funny = float(np.mean([f.get("vis_funny", 0.0) for f in frames_data]))
+
     scores: dict[str, float] = {
-        CATEGORY_LECTURE: 0.0,
-        CATEGORY_MOVIES: 0.0,
-        CATEGORY_FUNNY: 0.0,
-        CATEGORY_SONGS: 0.0,
+        CATEGORY_LECTURE: avg_vis_lecture * 0.90,
+        CATEGORY_MOVIES: avg_vis_movie * 0.90,
+        CATEGORY_FUNNY: avg_vis_funny * 0.90,
+        CATEGORY_SONGS: avg_vis_music * 0.90,
         CATEGORY_PERSONAL: 0.0,
     }
 

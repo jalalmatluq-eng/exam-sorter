@@ -81,30 +81,30 @@ def get_face_storage_path() -> Path:
     return p
 
 
+_face_net_cache: Any = None
+
+
+def get_face_net() -> Any:
+    """تحميل وحفظ شبكة MobileFaceNet في الذاكرة لتسريع المعالجة"""
+    global _face_net_cache
+    if _face_net_cache is None:
+        model_p = MODEL_DIR / "mobilefacenet.onnx"
+        if model_p.exists() and cv2 is not None and hasattr(cv2, "dnn"):
+            try:
+                _face_net_cache = cv2.dnn.readNetFromONNX(str(model_p))
+            except Exception as exc:
+                logger.error("فشل تحميل نموذج MobileFaceNet: %s", exc)
+                _face_net_cache = None
+    return _face_net_cache
+
+
 def is_offline_face_model_available() -> bool:
-    """التحقق مما إذا كان نموذج التعرف على الوجوه أو محرك الرؤية مثبتاً وقابلاً للتشغيل"""
-    if cv2 is None:
+    """التحقق الحقيقي مما إذا كان نموذج MobileFaceNet ومحرك الرؤية مثبتاً وقابلاً للتشغيل"""
+    if cv2 is None or not hasattr(cv2, "dnn") or not hasattr(cv2.dnn, "readNetFromONNX"):
         return False
-    # التحقق من وجود نموذج MobileFaceNet أو نموذج شبكة DNN للوجوه
-    model_paths = [
-        MODEL_DIR / "mobilefacenet.onnx",
-        MODEL_DIR / "mobilefacenet.tflite",
-        MODEL_DIR / "face_embedding.onnx",
-    ]
-    for m in model_paths:
-        if m.exists() and m.stat().st_size > 10000:
-            return True
 
-    # التحقق من وجود مصنفات ملامح الوجه المدمجة
-    try:
-        if cv2_data and hasattr(cv2_data, "haarcascades"):
-            cascade_p = Path(cv2_data.haarcascades) / "haarcascade_frontalface_default.xml"
-            if cascade_p.exists():
-                return True
-    except Exception:
-        pass
-
-    return True
+    model_p = MODEL_DIR / "mobilefacenet.onnx"
+    return bool(model_p.exists() and model_p.stat().st_size >= 1000000)
 
 
 def detect_faces(image: np.ndarray) -> list[tuple[int, int, int, int]]:
@@ -133,43 +133,33 @@ def detect_faces(image: np.ndarray) -> list[tuple[int, int, int, int]]:
 
 def extract_face_embedding(face_crop: np.ndarray) -> np.ndarray | None:
     """
-    استخراج متجه البصمة الرقمية للوجه (128-dim Normalized Embedding):
+    استخراج متجه البصمة الرقمية للوجه (512-dim Normalized Embedding)
+    عبر نموذج MobileFaceNet ONNX الحقيقي بواسطة cv2.dnn:
     - اقتصاص الوجه وتحجيمه إلى 112x112.
-    - تطبيع التباين والألوان.
-    - حساب ميزات التردد والمكان مع L2 Normalization.
+    - تطبيع التباين والألوان (mean=127.5, scale=1/127.5, swapRB=True).
+    - L2 Normalization على متجه الميزات 512-dim الحقيقي.
     """
     if cv2 is None or face_crop is None or face_crop.size == 0:
         return None
 
     try:
-        resized = cv2.resize(face_crop, (112, 112), interpolation=cv2.INTER_AREA)
-        # إذا توفر نموذج MobileFaceNet عبر cv2.dnn
-        model_onnx = MODEL_DIR / "mobilefacenet.onnx"
-        if model_onnx.exists():
-            net = cv2.dnn.readNetFromONNX(str(model_onnx))
-            blob = cv2.dnn.blobFromImage(resized, 1.0 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True)
-            net.setInput(blob)
-            emb = net.forward().flatten()
-            norm = np.linalg.norm(emb)
-            return (emb / norm) if norm > 0 else emb
+        net = get_face_net()
+        if net is None:
+            return None
 
-        # خوارزمية البصمة المكانية والترددية الموزونة L2 Normalized 128-dim
-        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY) if len(resized.shape) == 3 else resized
-        blocks_x, blocks_y = 8, 8
-        h_step, w_step = 112 // blocks_y, 112 // blocks_x
-        features = []
-        for i in range(blocks_y):
-            for j in range(blocks_x):
-                sub = gray[i * h_step:(i + 1) * h_step, j * w_step:(j + 1) * w_step]
-                features.append(float(np.mean(sub)))
-                features.append(float(np.std(sub)))
-        emb = np.array(features, dtype=np.float32)
-        norm = np.linalg.norm(emb)
+        resized = cv2.resize(face_crop, (112, 112), interpolation=cv2.INTER_AREA)
+        blob = cv2.dnn.blobFromImage(
+            resized, 1.0 / 127.5, (112, 112), (127.5, 127.5, 127.5), swapRB=True
+        )
+        net.setInput(blob)
+        emb = net.forward().flatten()
+        norm = float(np.linalg.norm(emb))
         if norm > 0:
             emb = emb / norm
-        return emb
+            return emb
+        return None
     except Exception as exc:
-        logger.debug("خطأ استخراج البصمة: %s", exc)
+        logger.debug("خطأ استخراج البصمة عبر MobileFaceNet: %s", exc)
         return None
 
 
