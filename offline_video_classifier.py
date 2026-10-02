@@ -143,11 +143,16 @@ def _save_video_cache(cache_data: dict[str, Any]) -> None:
 _video_net_cache: Any = None
 
 
+def get_video_model_path() -> Path:
+    """الحصول على المسار الكامل لنموذج MobileNetV2 ONNX لتصنيف الفيديو"""
+    return MODEL_DIR / "mobilenetv2_video.onnx"
+
+
 def get_video_net() -> Any:
     """تحميل وحفظ شبكة MobileNetV2 في الذاكرة لتصنيف الإطارات البصرية"""
     global _video_net_cache
     if _video_net_cache is None:
-        model_p = MODEL_DIR / "mobilenetv2_video.onnx"
+        model_p = get_video_model_path()
         if model_p.exists() and cv2 is not None and hasattr(cv2, "dnn"):
             try:
                 _video_net_cache = cv2.dnn.readNetFromONNX(str(model_p))
@@ -162,7 +167,7 @@ def is_offline_video_model_available() -> bool:
     if cv2 is None or not hasattr(cv2, "dnn") or not hasattr(cv2.dnn, "readNetFromONNX"):
         return False
 
-    model_p = MODEL_DIR / "mobilenetv2_video.onnx"
+    model_p = get_video_model_path()
     return model_p.exists() and model_p.stat().st_size >= 1000000
 
 
