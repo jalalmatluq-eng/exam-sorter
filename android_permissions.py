@@ -337,12 +337,15 @@ def find_first_media_sample(source_storage: str = "internal", media_type: str = 
             return _MOCK_SOURCE_SAMPLES[key_specific]
         if media_type in _MOCK_SOURCE_SAMPLES:
             return _MOCK_SOURCE_SAMPLES[media_type]
+        if f"{source_storage}_sample" in _MOCK_SOURCE_SAMPLES:
+            return _MOCK_SOURCE_SAMPLES[f"{source_storage}_sample"]
+        return None
 
     try:
         from kivy.utils import platform
-        if platform == "android":
-            exts = (".jpg", ".jpeg", ".png", ".webp") if media_type == "image" else (".mp4", ".mkv", ".3gp", ".mov")
+        exts = (".jpg", ".jpeg", ".png", ".webp") if media_type == "image" else (".mp4", ".mkv", ".3gp", ".mov")
 
+        if platform == "android":
             if source_storage in ("internal", "both"):
                 try:
                     from android import mActivity
@@ -387,6 +390,10 @@ def find_first_media_sample(source_storage: str = "internal", media_type: str = 
             if source_storage in ("sdcard", "both"):
                 import storage_backend
                 tree_uri = storage_backend.get_saf_persisted_uri()
+                if not tree_uri or (tree_uri.startswith("mock_saf://") and not Path(tree_uri.replace("mock_saf://", "")).exists()):
+                    loc = storage_backend.get_active_target_location("sdcard")
+                    if loc and loc.tree_uri:
+                        tree_uri = loc.tree_uri
                 if tree_uri and tree_uri.startswith("mock_saf://"):
                     base_p = Path(tree_uri.replace("mock_saf://", ""))
                     if base_p.exists():
@@ -396,12 +403,33 @@ def find_first_media_sample(source_storage: str = "internal", media_type: str = 
                                     return f"mock_doc://{Path(root) / f}"
         else:
             # بيئة سطح المكتب / بيئة الاختبارات
-            exts = (".jpg", ".jpeg", ".png", ".webp") if media_type == "image" else (".mp4", ".mkv", ".3gp", ".mov")
-            for cand_dir in [Path.cwd() / "test_data", Path.cwd()]:
-                if cand_dir.exists():
-                    for entry in cand_dir.iterdir():
-                        if entry.is_file() and entry.suffix.lower() in exts and not entry.name.startswith("."):
-                            return str(entry)
+            if source_storage in ("sdcard", "both"):
+                import storage_backend
+                tree_uri = storage_backend.get_saf_persisted_uri()
+                if not tree_uri or (tree_uri.startswith("mock_saf://") and not Path(tree_uri.replace("mock_saf://", "")).exists()):
+                    loc = storage_backend.get_active_target_location("sdcard")
+                    if loc and loc.tree_uri:
+                        tree_uri = loc.tree_uri
+                if tree_uri and tree_uri.startswith("mock_saf://"):
+                    base_p = Path(tree_uri.replace("mock_saf://", ""))
+                    if base_p.exists():
+                        for root, _, files in os.walk(base_p):
+                            for f in files:
+                                if Path(f).suffix.lower() in exts and not f.startswith("."):
+                                    return f"mock_doc://{Path(root) / f}"
+
+            if source_storage in ("internal", "both"):
+                cand_dirs = [
+                    Path.cwd() / "scratch" / "emulator_test_media",
+                    Path.cwd() / "assets",
+                    Path.cwd() / "test_data",
+                    Path.cwd(),
+                ]
+                for cand_dir in cand_dirs:
+                    if cand_dir.exists():
+                        for entry in cand_dir.iterdir():
+                            if entry.is_file() and entry.suffix.lower() in exts and not entry.name.startswith("."):
+                                return str(entry)
     except Exception as e:
         logger.debug("خطأ أثناء البحث عن عينة وسائط: %s", e)
 
@@ -484,6 +512,9 @@ class StorageAccessTest:
     source_sdcard_readable: bool = False
     source_sdcard_saf_valid: bool = False
     source_sdcard_error: str = ""
+    source_sdcard_sample_found: bool = False
+    source_sdcard_sample_path: str = ""
+    source_sdcard_sample_readable: bool = False
 
     # فحص الوجهة
     target_dir_creatable: bool = False
@@ -500,6 +531,8 @@ class StorageAccessTest:
 def run_storage_preflight_test(
     source_storage: str,
     target_storage: str,
+    organize_images: bool = True,
+    organize_videos: bool = True,
 ) -> StorageAccessTest:
     """
     اختبار عملي حقيقي لقابلية القراءة والكتابة في وحدات التخزين قبل بدء الفرز:
@@ -631,10 +664,13 @@ def run_storage_preflight_test(
             res.action_required = "request_saf_sdcard"
             return res
 
-        # فحص عينة وسائط في بطاقة SD إن وجدت
+        # فحص عينة وسائط في بطاقة SD بشكل مستقل
         sd_sample = find_first_media_sample("sdcard", "image") or find_first_media_sample("sdcard", "video")
         if sd_sample:
+            res.source_sdcard_sample_found = True
+            res.source_sdcard_sample_path = sd_sample
             read_sd_ok, err_sd = test_read_sample_bytes(sd_sample)
+            res.source_sdcard_sample_readable = read_sd_ok
             if not read_sd_ok:
                 res.source_sdcard_readable = False
                 res.source_sdcard_error = f"فشل قراءة ملف في بطاقة SD: {err_sd}"
@@ -643,10 +679,53 @@ def run_storage_preflight_test(
                 res.error_message = f"تعذر قراءة ملفات بطاقة SD عبر إذن SAF: {err_sd}"
                 res.action_required = "request_saf_sdcard"
                 return res
+            res.source_sdcard_readable = True
+            if not res.source_image_found and any(sd_sample.lower().endswith(x) for x in (".jpg", ".jpeg", ".png", ".webp")):
+                res.source_image_found = True
+                res.source_image_readable = read_sd_ok
+                res.source_image_sample_path = sd_sample
+            if not res.source_video_found and any(sd_sample.lower().endswith(x) for x in (".mp4", ".mkv", ".3gp", ".mov")):
+                res.source_video_found = True
+                res.source_video_readable = read_sd_ok
+                res.source_video_sample_path = sd_sample
+        else:
+            # لا توجد عينة على بطاقة SD: لا نعتبر القراءة ناجحة لمجرد صلاحية SAF
+            res.source_sdcard_sample_found = False
+            res.source_sdcard_sample_path = ""
+            res.source_sdcard_sample_readable = False
+            res.source_sdcard_readable = False
+            res.source_sdcard_error = "لا توجد عينة للاختبار"
 
-        res.source_sdcard_readable = True
+    # 3. التحقق الشامل من توفر عينات الوسائط وصلاحيتها للاختبار
+    has_any_image = res.source_image_found
+    has_any_video = res.source_video_found
+    has_any_sample = has_any_image or has_any_video or res.source_sdcard_sample_found
 
-    # 2. فحص الوجهة
+    # أ. إذا لم توجد صورة ولا فيديو في كل المصادر
+    if not has_any_sample:
+        res.success = False
+        res.error_code = "no_media_samples_found"
+        res.error_message = "لم يتم العثور على أي صورة أو فيديو قابل للاختبار."
+        res.action_required = "none"
+        return res
+
+    # ب. إذا كان المطلوب تنظيم الصور فقط ولم يتم العثور على أي صورة
+    if organize_images and not organize_videos and not has_any_image:
+        res.success = False
+        res.error_code = "no_image_samples_found"
+        res.error_message = "لم يتم العثور على أي صورة قابلة للاختبار (المطلوب تنظيم الصور فقط)."
+        res.action_required = "none"
+        return res
+
+    # ج. إذا كان المطلوب تنظيم الفيديو فقط ولم يتم العثور على أي فيديو
+    if organize_videos and not organize_images and not has_any_video:
+        res.success = False
+        res.error_code = "no_video_samples_found"
+        res.error_message = "لم يتم العثور على أي فيديو قابل للاختبار (المطلوب تنظيم الفيديو فقط)."
+        res.action_required = "none"
+        return res
+
+    # 4. فحص الوجهة
     if target_norm == "sdcard":
         saf_ok = is_saf_sdcard_granted()
         if not saf_ok:

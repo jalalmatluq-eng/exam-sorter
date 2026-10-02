@@ -292,10 +292,10 @@ class CosmoSortApp(MDApp):
                     if platform == "android":
                         import android_permissions
                         preflight = android_permissions.run_storage_preflight_test("internal", "internal")
-                        if preflight.success or file_manager.is_all_files_access_granted():
+                        if preflight.success is True:
                             media_watcher_service.start_system_service()
                         else:
-                            logger.info("تأجيل تشغيل خدمة المراقبة لحين منح صلاحية الوصول للملفات")
+                            logger.info("تأجيل تشغيل خدمة المراقبة لحين نجاح الفحص الاستباقي للتخزين (%s)", preflight.error_message)
                     else:
                         media_watcher_service.start_system_service()
                 except Exception:
@@ -514,14 +514,15 @@ class CosmoSortApp(MDApp):
         return True
 
     def on_resume(self) -> None:
-        """استئناف التطبيق عند العودة من الخلفية والتحقق من الفحص المعلق عبر الفحص الاستباقي"""
+        """استئناف التطبيق عند العودة من الخلفية والتحقق من الفحص المعلق عبر الفحص الاستباقي الصارم"""
         # استئناف أي فحص كان معلقاً بانتظار موافقة المستخدم على الصلاحيات
         try:
             is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()
             if is_pending:
                 import android_permissions
                 preflight = android_permissions.run_storage_preflight_test(p_src, p_tgt)
-                if preflight.success or file_manager.is_all_files_access_granted():
+                # لا يتم استئناف الفرز إلا إذا نجح الفحص الاستباقي بالكامل دون أي تجاوز
+                if preflight.success is True:
                     file_manager.clear_pending_scan()
                     if self.root and hasattr(self.root, "get_screen"):
                         home = self.root.get_screen("home_screen")
@@ -530,6 +531,14 @@ class CosmoSortApp(MDApp):
                                 lambda _dt: home.start_scan_with_options(p_src, p_tgt),
                                 0.5,
                             )
+                else:
+                    logger.warning(
+                        "تعذر استئناف الفحص المعلق لمصدر %s ووجهة %s بسبب عدم استيفاء شروط التخزين: %s (كود: %s)",
+                        p_src,
+                        p_tgt,
+                        preflight.error_message,
+                        preflight.error_code,
+                    )
         except Exception as e:
             logger.debug("تنبيه أثناء فحص الفحص المعلق في on_resume: %s", e)
 

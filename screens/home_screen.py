@@ -551,13 +551,13 @@ class HomeScreen(Screen):
             if dialog:
                 dialog.dismiss()
 
-            # 1. إذا اختار المستخدم بطاقة SD كوجهة: التحقق الصارم من توفر إذن SAF دون أي fallback صامت
-            if state["target"] == "sdcard":
+            # 1. إذا اختار المستخدم بطاقة SD كمصدر أو كوجهة (بما فيها وضع both): التحقق الصارم من توفر إذن SAF دون أي fallback صامت
+            if state["source"] in ("sdcard", "both") or state["target"] == "sdcard":
                 import storage_backend
                 target_loc = storage_backend.get_active_target_location("sdcard")
                 if not target_loc.is_valid:
                     file_manager.set_pending_scan(
-                        True, source=state["source"], target="sdcard"
+                        True, source=state["source"], target=state["target"]
                     )
 
                     def open_saf_picker_for_home() -> None:
@@ -569,8 +569,8 @@ class HomeScreen(Screen):
                     show_confirm_dialog(
                         title="إذن مجلد بطاقة الذاكرة (SAF)",
                         text=(
-                            "لقد اخترت بطاقة الذاكرة الخارجية (MicroSD) كوجهة لحفظ وترتيب الوسائط.\n\n"
-                            "على نظام أندرويد الحديث، تتطلب الكتابة في بطاقة SD اختيار مجلد الحفظ عبر منتقي النظام الرسمي (Storage Access Framework).\n\n"
+                            "لقد تم تحديد بطاقة الذاكرة الخارجية (MicroSD) ضمن عملية الفرز أو الحفظ.\n\n"
+                            "تتطلب القراءة أو الكتابة في بطاقة SD اختيار مجلد الحفظ عبر منتقي النظام الرسمي (Storage Access Framework).\n\n"
                             "اضغط 'اختيار المجلد (SAF)' ثم حدد بطاقتك واضغط 'استخدام هذا المجلد'. سيبدأ الفحص تلقائياً بمجرد منح الإذن."
                         ),
                         on_confirm=open_saf_picker_for_home,
@@ -727,24 +727,49 @@ class HomeScreen(Screen):
             issue_msg = preflight_test.error_message
             action_req = preflight_test.action_required
 
-            # بناء تقرير الفحص الاستباقي الحي مع تفصيل المصدر والوجهة وعينات الوسائط
-            img_disp = "ناجحة ✓" if preflight_test.source_image_readable else (
-                "لا توجد عينة للاختبار" if not preflight_test.source_image_found else "فاشلة ✗"
-            )
-            vid_disp = "ناجح ✓" if preflight_test.source_video_readable else (
-                "لا توجد عينة للاختبار" if not preflight_test.source_video_found else "فاشل ✗"
-            )
+            # تفصيل عينات الوسائط بدقة تشخيصية
+            if not preflight_test.source_image_found:
+                img_disp = "لا توجد عينة"
+            elif preflight_test.source_image_readable:
+                img_disp = "العينة موجودة وتمت قراءتها بنجاح ✓"
+            else:
+                img_disp = "العينة موجودة لكن القراءة فشلت ✗"
+
+            if not preflight_test.source_video_found:
+                vid_disp = "لا توجد عينة"
+            elif preflight_test.source_video_readable:
+                vid_disp = "العينة موجودة وتمت قراءتها بنجاح ✓"
+            else:
+                vid_disp = "العينة موجودة لكن القراءة فشلت ✗"
+
+            # تفصيل حالة بطاقة SD المستقلة
+            if not preflight_test.source_sdcard_saf_valid:
+                sd_status = "SAF غير صالح أو منتهٍ ✗"
+            elif not preflight_test.source_sdcard_sample_found:
+                sd_status = "لا توجد عينة (SAF صالح ✓)"
+            elif preflight_test.source_sdcard_readable:
+                sd_status = "جاهزة وقابلة للقراءة ✓"
+            else:
+                sd_status = f"فاشلة ✗ ({preflight_test.source_sdcard_error})"
+
+            # تفصيل حالة الذاكرة الداخلية المستقلة
+            if not preflight_test.source_internal_readable:
+                int_status = f"فاشلة ✗ ({preflight_test.source_internal_error})"
+            elif not preflight_test.source_image_found and not preflight_test.source_video_found:
+                int_status = "لا توجد عينة"
+            else:
+                int_status = "جاهزة وقابلة للقراءة ✓"
 
             preflight_stats: dict[str, Any] = {}
             if source_choice == "both":
-                preflight_stats["قراءة الذاكرة الداخلية"] = "جاهزة ✓" if preflight_test.source_internal_readable else (f"فاشلة ✗ ({preflight_test.source_internal_error})" if preflight_test.source_internal_error else "فاشلة ✗")
-                preflight_stats["قراءة بطاقة SD"] = "جاهزة ✓" if preflight_test.source_sdcard_readable else (f"فاشلة ✗ ({preflight_test.source_sdcard_error})" if preflight_test.source_sdcard_error else "فاشلة ✗")
+                preflight_stats["الذاكرة الداخلية"] = int_status
+                preflight_stats["بطاقة SD الخارجية"] = sd_status
                 preflight_stats["صلاحية SAF للبطاقة"] = "صالحة ومفعلة ✓" if preflight_test.source_sdcard_saf_valid else "منتهية أو غير محددة ✗"
             elif source_choice == "sdcard":
-                preflight_stats["قراءة بطاقة SD"] = "جاهزة ✓" if preflight_test.source_sdcard_readable else "فاشلة ✗"
+                preflight_stats["بطاقة SD الخارجية"] = sd_status
                 preflight_stats["إذن SAF لبطاقة SD"] = "صالح ومفعل ✓" if preflight_test.source_sdcard_saf_valid else "منتهي أو غير محدد ✗"
             else:
-                preflight_stats["قراءة الذاكرة الداخلية"] = "جاهزة ✓" if preflight_test.source_internal_readable else "فاشلة ✗"
+                preflight_stats["الذاكرة الداخلية"] = int_status
 
             preflight_stats["عينة الصور"] = img_disp
             preflight_stats["عينة الفيديو"] = vid_disp
