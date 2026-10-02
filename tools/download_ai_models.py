@@ -1,4 +1,5 @@
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -38,25 +39,28 @@ MODELS = [
 ]
 
 
-def download_file(dest_path: Path, url: str) -> bool:
+def download_file(dest_path: Path, url: str, max_retries: int = 3) -> bool:
     if dest_path.exists() and dest_path.stat().st_size > 1000:
         print(f"ALREADY EXISTS: {dest_path.name} ({dest_path.stat().st_size} bytes)")
         return True
 
-    print(f"DOWNLOADING: {dest_path.name} from {url}...")
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    try:
-        with urllib.request.urlopen(req, timeout=120) as resp:
-            content = resp.read()
-            with open(dest_path, "wb") as f:
-                f.write(content)
-        print(f"SAVED: {dest_path.name} ({dest_path.stat().st_size} bytes)")
-        return True
-    except Exception as exc:
-        print(f"ERROR downloading {dest_path.name}: {exc}")
-        if dest_path.exists():
-            dest_path.unlink()
-        return False
+    for attempt in range(1, max_retries + 1):
+        print(f"DOWNLOADING: {dest_path.name} from {url}... (attempt {attempt}/{max_retries})")
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                content = resp.read()
+                with open(dest_path, "wb") as f:
+                    f.write(content)
+            print(f"SAVED: {dest_path.name} ({dest_path.stat().st_size} bytes)")
+            return True
+        except Exception as exc:
+            print(f"ERROR downloading {dest_path.name} (attempt {attempt}): {exc}")
+            if dest_path.exists():
+                dest_path.unlink()
+            if attempt < max_retries:
+                time.sleep(5 * attempt)
+    return False
 
 
 if __name__ == "__main__":

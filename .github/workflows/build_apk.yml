@@ -35,6 +35,12 @@ jobs:
           # opencv headless: same API as opencv-python, no system libGL needed on CI runners
           pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless kivy kivymd onnxruntime
 
+      - name: Cache AI model binaries
+        uses: actions/cache@v4
+        with:
+          path: assets/models
+          key: cosmosort-models-${{ hashFiles('tools/download_ai_models.py') }}
+
       - name: Download AI model binaries (required by offline test suites)
         run: |
           python tools/download_ai_models.py
@@ -95,6 +101,12 @@ jobs:
           key: cosmosort-local-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
             cosmosort-local-v2-${{ runner.os }}-
+
+      - name: Cache AI model binaries
+        uses: actions/cache@v4
+        with:
+          path: assets/models
+          key: cosmosort-models-${{ hashFiles('tools/download_ai_models.py') }}
 
       - name: Download AI model binaries
         run: |
