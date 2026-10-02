@@ -492,7 +492,6 @@ def classify_video_locally(
     return None
 
 
-
 def classify_video_with_claude(
     video_path: str, api_key: str | None = None
 ) -> str:
