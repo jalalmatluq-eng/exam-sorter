@@ -1,3 +1,4 @@
+import sys
 import urllib.request
 from pathlib import Path
 
@@ -65,3 +66,5 @@ if __name__ == "__main__":
         if not ok:
             success = False
     print("Download finished with status:", success)
+    if not success:
+        sys.exit(1)

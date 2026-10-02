@@ -931,7 +931,8 @@ class SettingsScreen(Screen):
                 f"\n\n📊 إحصائيات التخزين:\n"
                 f"- الملفات المنظمة: {stats['total_files']} ملف\n"
                 f"- الحجم الكلي: {stats['total_size_mb']} MB\n"
-                f"- الأقسام النشطة: {cats_count}"
+                f"- الأقسام النشطة: {cats_count}\n"
+                f"- إجمالي المصنف تراكمياً: {stats.get('cumulative_classified', 0)} ملف"
             )
         except (KeyError, ValueError, OSError, RuntimeError):
             stats_text = ""
@@ -1288,6 +1289,9 @@ class SettingsScreen(Screen):
             lines = [f"📁 الملفات المنظمة: {stats['total_files']} ملف"]
             lines.append(f"💾 الحجم الكلي: {stats['total_size_mb']} MB")
             lines.append(f"📂 الأقسام: {len(cats)}")
+            lines.append(
+                f"🏆 إجمالي المصنف تراكمياً: {stats.get('cumulative_classified', 0)} ملف"
+            )
             if cats:
                 lines.append("")
                 sorted_cats = sorted(

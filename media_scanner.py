@@ -98,6 +98,15 @@ def init_cache_db() -> bool:
                 cursor.execute("ALTER TABLE scanned_files ADD COLUMN target_storage TEXT DEFAULT ''")
             except sqlite3.OperationalError:
                 pass
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS meta (
+                    key TEXT PRIMARY KEY,
+                    value INTEGER DEFAULT 0
+                )
+            """)
+            cursor.execute(
+                "INSERT OR IGNORE INTO meta (key, value) VALUES ('cumulative_classified', 0)"
+            )
             conn.commit()
         return True
     except Exception as e:
@@ -225,12 +234,32 @@ def record_processed_file(
                 ),
             )
             conn.commit()
+            cursor.execute(
+                "UPDATE meta SET value = value + 1 WHERE key = 'cumulative_classified'"
+            )
+            conn.commit()
         return True
     except (sqlite3.Error, OSError) as e:
         logger.warning(
             "تنبيه: تعذر تسجيل الملف المفحوص في الكاش: %s (الفرز مستمر)", e
         )
         return False
+
+
+def get_cumulative_classified() -> int:
+    """إجمالي عمليات التصنيف الناجحة تراكمياً منذ أول تشغيل (لا يتصفر مع مسح الكاش)."""
+    try:
+        init_cache_db()
+        db_path = get_cache_db_path()
+        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT value FROM meta WHERE key = 'cumulative_classified'")
+            row = cursor.fetchone()
+            if row and row[0] is not None:
+                return int(row[0])
+    except (sqlite3.Error, OSError, ValueError, TypeError) as e:
+        logger.debug("تعذر قراءة العداد التراكمي: %s", e)
+    return 0
 
 
 # اسم بديل موحد ومريح

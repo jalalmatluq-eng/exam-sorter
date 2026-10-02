@@ -35,7 +35,7 @@ jobs:
           # opencv headless: same API as opencv-python, no system libGL needed on CI runners
           pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless kivy kivymd onnxruntime
 
-      - name: Run test_modules.py (20 suites including SAF, UI category details, & SD card simulation)
+      - name: Run test_modules.py (21 suites including SAF, UI category details, & SD card simulation)
         env:
           KIVY_NO_ARGS: "1"
         run: |
@@ -91,6 +91,11 @@ jobs:
           key: cosmosort-local-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
           restore-keys: |
             cosmosort-local-v2-${{ runner.os }}-
+
+      - name: Download AI model binaries
+        run: |
+          python tools/download_ai_models.py
+          python -c "from pathlib import Path; files=[Path('assets/models/ocr/ara.traineddata'),Path('assets/models/ocr/arabic_rec.onnx'),Path('assets/models/ocr/arabic_dict.txt'),Path('assets/models/face/mobilefacenet.onnx'),Path('assets/models/video/mobilenetv2_video.onnx')]; missing=[str(f) for f in files if not f.exists() or f.stat().st_size<=1000]; assert not missing, f'Missing model files: {missing}'; print('All 5 model files verified OK')"
 
       - name: Build APK with Buildozer
         run: |

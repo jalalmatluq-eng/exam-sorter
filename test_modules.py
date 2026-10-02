@@ -2791,6 +2791,43 @@ def test_android_10_and_permissions_preflight() -> None:
     print("✓ نجحت جميع فحوصات الجناح 20 لإصلاحات Android 10 والصلاحيات والتخزين (27 فحصاً) بنسبة 100%!\n")
 
 
+def test_cumulative_classified_counter() -> None:
+    print("--- 21. فحص العداد التراكمي الدائم للمصنف ---")
+    sandbox = Path("test_sandbox_counter")
+    if sandbox.exists():
+        shutil.rmtree(sandbox)
+    sandbox.mkdir()
+
+    orig_get_db_path = media_scanner.get_cache_db_path
+    sandbox_db = sandbox / "cache.db"
+    media_scanner.get_cache_db_path = lambda: sandbox_db  # type: ignore[method-assign]
+    try:
+        assert media_scanner.get_cumulative_classified() == 0, (
+            "العداد يجب أن يبدأ من الصفر في قاعدة جديدة!"
+        )
+        assert media_scanner.record_processed_file(
+            "photo1.jpg", 100, 1700000000.0, "صوري"
+        ), "فشل تسجيل الملف الأول!"
+        assert media_scanner.get_cumulative_classified() == 1, (
+            "العداد يجب أن يصبح 1 بعد أول عملية!"
+        )
+        assert media_scanner.record_processed_file(
+            "video1.mp4", 200, 1700000001.0, "أفلام ومسلسلات"
+        ), "فشل تسجيل الملف الثاني!"
+        assert media_scanner.get_cumulative_classified() == 2, (
+            "العداد يجب أن يصبح 2 بعد عمليتين!"
+        )
+        assert media_scanner.clear_all_cache(), "فشل مسح الكاش!"
+        assert media_scanner.get_cumulative_classified() == 2, (
+            "العداد الدائم يجب ألا يتصفر مع مسح الكاش!"
+        )
+        print("✓ العداد التراكمي يعمل ويثبت عبر مسح الكاش.")
+    finally:
+        media_scanner.get_cache_db_path = orig_get_db_path
+        shutil.rmtree(sandbox)
+    print("✓ نجح فحص العداد التراكمي الدائم بالكامل.\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -2812,6 +2849,7 @@ if __name__ == "__main__":
     test_comprehensive_real_android_fixes()
     test_offline_ai_capabilities()
     test_android_10_and_permissions_preflight()
+    test_cumulative_classified_counter()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات (20 جناح) تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (21 جناح) تمت بنجاح 100%!  ")
     print("==================================================")

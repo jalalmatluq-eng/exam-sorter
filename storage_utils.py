@@ -40,6 +40,7 @@ class StorageStats(TypedDict):
     total_size_mb: float
     categories: dict[str, CategoryInfo]
     last_scan_time: float | None
+    cumulative_classified: int
 
 
 def get_storage_stats(
@@ -68,7 +69,14 @@ def get_storage_stats(
         "total_size_mb": 0.0,
         "categories": {},
         "last_scan_time": None,
+        "cumulative_classified": 0,
     }
+    try:
+        import media_scanner
+
+        stats["cumulative_classified"] = media_scanner.get_cumulative_classified()
+    except Exception:
+        pass
 
     # 1. إذا كانت الوجهة SAF Tree URI لبطاقة الذاكرة الخارجية
     if target_location and target_location.is_saf:

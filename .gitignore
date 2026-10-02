@@ -68,6 +68,8 @@ bin/
 *--no-deps*
 *.apk
 *.aab
+# AI model binaries (downloaded via tools/download_ai_models.py, also fetched in CI)
+assets/models/
 
 # Root Screenshots & Test Media (exclude root pngs, preserve assets/)
 /*.png
