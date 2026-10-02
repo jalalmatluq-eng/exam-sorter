@@ -397,32 +397,63 @@ class SettingsScreen(Screen):
             )
 
     def refresh_permission_ui(self) -> None:
-        """فحص وتحديث تشخيص كافة الصلاحيات (الصور، الفيديو، جميع الملفات، وإذن SAF) بدقة"""
+        """فحص وتحديث تشخيص كافة الصلاحيات وفق إصدار أندرويد الفعلي للجهاز بدقة وموثوقية"""
         import android_permissions
         import offline_classifier
         diag = android_permissions.get_permissions_diagnostic_summary()
 
+        sdk = diag.get("sdk_int", 0)
         img_ok = diag.get("images_permission", False)
         vid_ok = diag.get("videos_permission", False)
-        all_ok = diag.get("all_files_permission", False)
-        saf_ok = diag.get("saf_sdcard_permission", False)
+        write_ok = diag.get("write_permission", False)
+        all_ok = diag.get("all_files_permission")
+        saf_status = diag.get("saf_sdcard_status", "غير محدد")
         is_partial = diag.get("partial_visual_selected", False)
         ocr_avail = offline_classifier.is_offline_ocr_runtime_available()
-
-        all_granted = img_ok and vid_ok and all_ok and not is_partial
-        scope_str = "الوصول محدود (صور محددة فقط) ⚠️" if is_partial else ("وصول كامل لكافة الوسائط ✓" if (img_ok and vid_ok) else "مرفوضة ✗")
         ocr_str = "مثبت وجاهز ✓" if ocr_avail else "غير مثبت (إدخال يدوي متاح)"
 
-        status_lines = [
-            f"• نطاق الوصول (Android 14): {scope_str}",
-            f"• صلاحية الصور: {'ممنوحة ✓' if img_ok else 'مرفوضة ✗'}",
-            f"• صلاحية الفيديو: {'ممنوحة ✓' if vid_ok else 'مرفوضة ✗'}",
-            f"• وصول كافة الملفات: {'ممنوح ✓' if all_ok else 'مقيد ⚠️'}",
-            f"• إذن SAF لبطاقة SD: {'صالح ومفعل ✓' if saf_ok else 'غير مفعل / منتهي'}",
-            f"• محرك OCR الأوفلاين: {ocr_str}",
-        ]
+        if sdk == 29 or (0 < sdk < 30):
+            # أندرويد 10 (Samsung Galaxy Note 9 وما يعادله)
+            status_lines = [
+                f"• إصدار النظام: Android 10 (SDK {sdk})",
+                f"• صلاحية قراءة التخزين: {'ممنوحة ✓' if img_ok else 'مرفوضة ✗'}",
+                f"• صلاحية كتابة التخزين: {'ممنوحة ✓' if write_ok else 'مرفوضة ✗'}",
+                "• الوصول الشامل Android 11+: غير منطبق (النمط الكلاسيكي معتمد) -",
+                f"• إذن بطاقة SD الخارجية: {saf_status}",
+                f"• محرك OCR الأوفلاين: {ocr_str}",
+            ]
+            all_granted = img_ok and write_ok
+        elif sdk >= 34:
+            scope_str = "الوصول محدود (صور محددة فقط) ⚠️" if is_partial else ("وصول كامل لكافة الوسائط ✓" if (img_ok and vid_ok) else "مرفوضة ✗")
+            status_lines = [
+                f"• إصدار النظام: Android 14+ (SDK {sdk})",
+                f"• نطاق الوصول (Android 14): {scope_str}",
+                f"• صلاحية الصور: {'ممنوحة ✓' if img_ok else 'مرفوضة ✗'}",
+                f"• صلاحية الفيديو: {'ممنوحة ✓' if vid_ok else 'مرفوضة ✗'}",
+                f"• وصول كافة الملفات: {'ممنوح ✓' if all_ok else 'مقيد ⚠️'}",
+                f"• إذن بطاقة SD الخارجية: {saf_status}",
+                f"• محرك OCR الأوفلاين: {ocr_str}",
+            ]
+            all_granted = img_ok and vid_ok and all_ok and not is_partial
+        elif sdk >= 30:
+            status_lines = [
+                f"• إصدار النظام: Android (SDK {sdk})",
+                f"• صلاحية الصور والفيديو: {'ممنوحة ✓' if (img_ok and vid_ok) else 'مرفوضة ✗'}",
+                f"• وصول كافة الملفات: {'ممنوح ✓' if all_ok else 'مقيد ⚠️'}",
+                f"• إذن بطاقة SD الخارجية: {saf_status}",
+                f"• محرك OCR الأوفلاين: {ocr_str}",
+            ]
+            all_granted = img_ok and vid_ok and all_ok
+        else:
+            status_lines = [
+                f"• بيئة التشغيل: نظام التطوير / محاكي (SDK {sdk})",
+                f"• صلاحية القراءة: {'ممنوحة ✓' if img_ok else 'مرفوضة ✗'}",
+                f"• إذن بطاقة SD: {saf_status}",
+                f"• محرك OCR الأوفلاين: {ocr_str}",
+            ]
+            all_granted = True
 
-        if is_partial:
+        if is_partial and sdk >= 34:
             if "perm_desc_label" in self.ids:
                 self.ids.perm_desc_label.text = ar(
                     "الحالة: الوصول محدود (تم اختيار صور محددة فقط في أندرويد 14) ⚠️\n"
@@ -438,9 +469,11 @@ class SettingsScreen(Screen):
                 )
         elif all_granted:
             if "perm_desc_label" in self.ids:
-                self.ids.perm_desc_label.text = ar(
-                    "الحالة: الصلاحيات مكتملة وتغطي الوسائط وكافة المجلدات ✓\n" + "\n".join(status_lines)
-                )
+                if sdk == 29 or (0 < sdk < 30):
+                    header_msg = "الحالة: الذاكرة الداخلية جاهزة للقراءة والنسخ ✓\nالوصول الشامل Android 11+ غير مطلوب على جهازك.\n"
+                else:
+                    header_msg = "الحالة: الصلاحيات مكتملة وتغطي الوسائط وكافة المجلدات ✓\n"
+                self.ids.perm_desc_label.text = ar(header_msg + "\n".join(status_lines))
                 self.ids.perm_desc_label.text_color = (0.063, 0.780, 0.549, 1)
             if "perm_icon" in self.ids:
                 self.ids.perm_icon.icon = "shield-check"
@@ -451,22 +484,41 @@ class SettingsScreen(Screen):
                 )
         else:
             if "perm_desc_label" in self.ids:
-                self.ids.perm_desc_label.text = ar(
-                    "الحالة: بعض الصلاحيات ناقصة أو مقيدة ⚠️\n" + "\n".join(status_lines)
-                )
-                self.ids.perm_desc_label.text_color = (0.980, 0.647, 0.102, 1)
+                if sdk == 29 or (0 < sdk < 30):
+                    header_msg = (
+                        "الحالة: Android 10 لا يسمح بقراءة التخزين حاليًا ⚠️\n"
+                        "افتح إعدادات التطبيق > الأذونات > التخزين، ثم اختر السماح.\n"
+                        "بعد العودة اضغط فحص الصلاحيات مرة أخرى.\n"
+                    )
+                else:
+                    header_msg = "الحالة: بعض الصلاحيات ناقصة أو مقيدة ⚠️\n"
+                self.ids.perm_desc_label.text = ar(header_msg + "\n".join(status_lines))
+                self.ids.perm_desc_label.text_color = (0.95, 0.25, 0.25, 1) if (sdk == 29 or 0 < sdk < 30) else (0.980, 0.647, 0.102, 1)
             if "perm_icon" in self.ids:
                 self.ids.perm_icon.icon = "shield-alert"
-                self.ids.perm_icon.icon_color = (0.980, 0.647, 0.102, 1)
+                self.ids.perm_icon.icon_color = (0.95, 0.25, 0.25, 1) if (sdk == 29 or 0 < sdk < 30) else (0.980, 0.647, 0.102, 1)
             if "btn_permission_text" in self.ids:
                 self.ids.btn_permission_text.text = ar(
                     "منح الصلاحيات الناقصة الآن"
                 )
 
     def request_all_files_permission(self) -> None:
-        """طلب الصلاحيات الناقصة (صور/فيديو أو الوصول الشامل لكافة الملفات)"""
+        """طلب الصلاحيات الناقصة وفق إصدار أندرويد الفعلي للجهاز"""
         import android_permissions
         diag = android_permissions.get_permissions_diagnostic_summary()
+        sdk = diag.get("sdk_int", 0)
+
+        if sdk == 29 or (0 < sdk < 30):
+            # على Android 10: لا نطلب All Files Access، بل نطلب READ/WRITE أو نفتح إعدادات التطبيق
+            if not diag.get("images_permission") or not diag.get("write_permission"):
+                def _after_android10(_p, _r):
+                    if not android_permissions.is_images_permission_granted() or not android_permissions.is_storage_write_permission_granted():
+                        android_permissions.open_app_details_settings()
+                    Clock.schedule_once(lambda _dt: self.refresh_permission_ui(), 0.5)
+                android_permissions.request_media_permissions(_after_android10)
+            else:
+                android_permissions.open_app_details_settings()
+            return
 
         if diag.get("partial_visual_selected"):
             android_permissions.open_app_details_settings()
@@ -474,7 +526,6 @@ class SettingsScreen(Screen):
 
         if not diag.get("images_permission") or not diag.get("videos_permission"):
             def _after_media(_p, _r):
-                # إذا لم تُمنح الصلاحية نفتح شاشة إعدادات التطبيق مباشرة لتمكين المستخدم من تفعيلها
                 if not android_permissions.is_images_permission_granted():
                     android_permissions.open_app_details_settings()
                 Clock.schedule_once(lambda _dt: self.refresh_permission_ui(), 0.5)
@@ -570,7 +621,6 @@ class SettingsScreen(Screen):
             text="تم مسح ذاكرة التخزين المؤقت لمحركات الذكاء الاصطناعي بنجاح."
         )
         self.check_ai_models_status()
-
 
     def refresh_operation_mode_ui(self) -> None:
         """تحديث حالة أزرار نمط الفرز (نسخ أم نقل)"""

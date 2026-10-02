@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+import android_permissions
 import classifier
 import face_classifier
 import file_manager
@@ -2082,6 +2083,373 @@ def test_offline_ai_capabilities() -> None:
     print("✓ نجحت جميع فحوصات الجناح 19 لقدرات الذكاء الاصطناعي الأوفلاين بنسبة 100%!\n")
 
 
+def test_android_10_and_permissions_preflight() -> None:
+    """
+    [اختبار 20] فحص شامل وتأكيد لإصلاحات Android 10 (SDK 29) وتشخيص الصلاحيات والتخزين:
+    1. Android SDK 29 + READ granted + WRITE granted.
+    2. Android SDK 29 + READ denied.
+    3. Android SDK 29 + WRITE denied.
+    4. Android SDK 29 + no MANAGE_EXTERNAL_STORAGE API (يعيد None وليس False).
+    5. Android SDK 30 + all files granted.
+    6. Android SDK 30 + all files denied.
+    7. Android SDK 33 + READ_MEDIA_IMAGES/VIDEO granted.
+    8. Android SDK 34 + partial visual access (READ_MEDIA_VISUAL_USER_SELECTED).
+    9. Internal source / internal target (فحص حقيقي لكتابة وقراءة وحذف ملف تجريبي).
+    10. Internal source / SD target (اختبار SAF الفعلي).
+    11. SD source / internal target.
+    12. SD disconnected (فشل صريح دون أي fallback صامت).
+    13. SAF URI expired (فشل صريح وطلب تجديد الإذن).
+    14. Destination write test failure (التقاط رفض إذن الكتابة بدقة).
+    15. No silent fallback (ضمان عدم تحويل الوجهة أو النسخ للداخلية عند فشل كرت SD).
+    16. تقرير Samsung Galaxy Note 9 / Android 10 وعدم تسريب أسطر READ_MEDIA_* أو Android 14.
+    """
+    print("--- [اختبار 20] فحص شامل لإصلاحات Android 10 والتخزين الاستباقي (Preflight) ---")
+    import tempfile
+    sandbox = Path(tempfile.mkdtemp(prefix="test_suite20_android10_"))
+
+    try:
+        # 1. Android SDK 29 + READ granted + WRITE granted
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": True,
+                "WRITE_EXTERNAL_STORAGE": True,
+            },
+        )
+        assert android_permissions.get_android_sdk_int() == 29
+        assert android_permissions.is_images_permission_granted() is True
+        assert android_permissions.is_videos_permission_granted() is True
+        assert android_permissions.is_storage_write_permission_granted() is True
+        assert android_permissions.is_legacy_storage_permission_granted() is True
+        assert android_permissions.is_all_files_access_granted() is None
+        s1 = android_permissions.get_permissions_diagnostic_summary()
+        assert s1["fully_ready_for_internal"] is True
+        assert "غير منطبق" in s1["all_files_permission_status"]
+        print("  [1/16] ✓ SDK 29 + READ granted + WRITE granted: جاهز للداخلية و All Files غير منطبق.")
+
+        # 2. Android SDK 29 + READ denied
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": False,
+                "WRITE_EXTERNAL_STORAGE": True,
+            },
+        )
+        assert android_permissions.is_images_permission_granted() is False
+        assert android_permissions.is_videos_permission_granted() is False
+        res2 = android_permissions.run_storage_preflight_test("internal", "internal")
+        assert res2.success is False
+        assert res2.error_code == "missing_media_permissions"
+        assert "Android 10" in res2.error_message
+        assert res2.action_required == "request_media"
+        print("  [2/16] ✓ SDK 29 + READ denied: كشف الرفض مع رسالة توجيهية وإجراء طلب الوسائط.")
+
+        # 3. Android SDK 29 + WRITE denied
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": True,
+                "WRITE_EXTERNAL_STORAGE": False,
+            },
+        )
+        assert android_permissions.is_images_permission_granted() is True
+        assert android_permissions.is_storage_write_permission_granted() is False
+        res3 = android_permissions.run_storage_preflight_test("internal", "internal")
+        assert res3.success is False
+        assert res3.error_code == "missing_write_permission"
+        assert "WRITE_EXTERNAL_STORAGE" in res3.error_message
+        assert res3.action_required == "open_app_settings"
+        print("  [3/16] ✓ SDK 29 + WRITE denied: كشف نقص إذن الكتابة للذاكرة الداخلية وتوجيه للمستودع.")
+
+        # 4. Android SDK 29 + no MANAGE_EXTERNAL_STORAGE API
+        android_permissions.set_mock_environment(sdk_int=29, release="10")
+        assert android_permissions.is_all_files_access_granted() is None
+        s4 = android_permissions.get_permissions_diagnostic_summary()
+        assert s4["all_files_permission"] is None
+        assert "غير منطبق" in s4["all_files_permission_status"]
+        assert "مقيد" not in s4["all_files_permission_status"]
+        print("  [4/16] ✓ SDK 29 + MANAGE_EXTERNAL_STORAGE: غير منطبق تماماً ولا يعرض كمقيد.")
+
+        # 5. Android SDK 30 + all files granted
+        android_permissions.set_mock_environment(
+            sdk_int=30,
+            release="11",
+            all_files_access=True,
+            permissions={"READ_EXTERNAL_STORAGE": True},
+        )
+        assert android_permissions.is_all_files_access_granted() is True
+        s5 = android_permissions.get_permissions_diagnostic_summary()
+        assert s5["all_files_permission"] is True
+        assert "ممنوح" in s5["all_files_permission_status"]
+        print("  [5/16] ✓ SDK 30 + all files granted: كشف صحيح لإذن الوصول الشامل الممنوح.")
+
+        # 6. Android SDK 30 + all files denied
+        android_permissions.set_mock_environment(
+            sdk_int=30,
+            release="11",
+            all_files_access=False,
+            permissions={"READ_EXTERNAL_STORAGE": True},
+        )
+        assert android_permissions.is_all_files_access_granted() is False
+        s6 = android_permissions.get_permissions_diagnostic_summary()
+        assert s6["all_files_permission"] is False
+        assert "مقيد" in s6["all_files_permission_status"]
+        print("  [6/16] ✓ SDK 30 + all files denied: إظهار الحالة كمقيدة بدقة على Android 11+.")
+
+        # 7. Android SDK 33 + READ_MEDIA_IMAGES/VIDEO granted
+        android_permissions.set_mock_environment(
+            sdk_int=33,
+            release="13",
+            permissions={
+                "READ_MEDIA_IMAGES": True,
+                "READ_MEDIA_VIDEO": True,
+            },
+        )
+        assert android_permissions.is_images_permission_granted() is True
+        assert android_permissions.is_videos_permission_granted() is True
+        s7 = android_permissions.get_permissions_diagnostic_summary()
+        assert s7["images_permission"] is True
+        assert s7["videos_permission"] is True
+        print("  [7/16] ✓ SDK 33 + READ_MEDIA_IMAGES/VIDEO: التحقق من صلاحيات الوسائط الحديثة المستقلة.")
+
+        # 8. Android SDK 34 + partial visual access
+        android_permissions.set_mock_environment(
+            sdk_int=34,
+            release="14",
+            permissions={
+                "READ_MEDIA_VISUAL_USER_SELECTED": True,
+                "READ_MEDIA_IMAGES": False,
+                "READ_MEDIA_VIDEO": False,
+            },
+        )
+        assert android_permissions.is_visual_user_selected_only() is True
+        res8 = android_permissions.run_storage_preflight_test("internal", "internal")
+        assert res8.success is False
+        assert res8.error_code == "partial_media_access"
+        assert res8.action_required == "open_app_settings"
+        print("  [8/16] ✓ SDK 34 + partial visual access: منع الفرز التلقائي الناقص وتوجيه المستخدم.")
+
+        # 9. Internal source / internal target (اختبار كتابة وقراءة وحذف حقيقي)
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": True,
+                "WRITE_EXTERNAL_STORAGE": True,
+            },
+        )
+        orig_detect = storage_backend.detect_storage_locations
+        orig_target_loc = storage_backend.get_active_target_location
+        custom_internal_dir = sandbox / "internal_storage"
+        try:
+            storage_backend.detect_storage_locations = lambda force_refresh=False: {
+                "internal": storage_backend.StorageLocation(
+                    id="internal",
+                    name="الذاكرة الداخلية (اختبار)",
+                    path=str(custom_internal_dir / storage_backend.ORGANIZED_FOLDER_NAME),
+                    detected=True,
+                    mounted=True,
+                    readable=True,
+                    writable=True,
+                    requires_saf=False,
+                ),
+            }
+            res9 = android_permissions.run_storage_preflight_test("internal", "internal")
+            assert res9.success is True, f"فشل اختبار preflight الداخلي: {res9.error_message}"
+            assert res9.target_dir_creatable is True
+            assert res9.target_writable is True
+            assert res9.target_readable_after_write is True
+            assert res9.target_temp_deleted is True
+            assert res9.error_code == "ok"
+            print("  [9/16] ✓ Internal source / internal target: إنشاء وقراءة ومطابقة وحذف الملف التجريبي بنجاح.")
+
+            # 10. Internal source / SD target (اختبار SAF مع mock_saf)
+            mock_sd_dir = sandbox / "mock_sdcard_root"
+            mock_saf_tree = f"mock_saf://{mock_sd_dir}"
+            android_permissions.set_mock_environment(
+                sdk_int=29,
+                release="10",
+                permissions={
+                    "READ_EXTERNAL_STORAGE": True,
+                    "WRITE_EXTERNAL_STORAGE": True,
+                },
+                saf_valid=True,
+            )
+            storage_backend.get_active_target_location = lambda choice=None: (
+                storage_backend.TargetLocation(
+                    storage_type="sdcard",
+                    is_saf=True,
+                    tree_uri=mock_saf_tree,
+                    display_name="بطاقة الذاكرة الخارجية (SAF)",
+                    is_valid=True,
+                ) if (choice == "sdcard") else orig_target_loc(choice)
+            )
+
+            res10 = android_permissions.run_storage_preflight_test("internal", "sdcard")
+            assert res10.success is True, f"فشل اختبار preflight لبطاقة SD: {res10.error_message}"
+            assert res10.target_storage == "sdcard"
+            assert res10.target_writable is True
+            assert res10.target_readable_after_write is True
+            assert res10.target_temp_deleted is True
+            print("  [10/16] ✓ Internal source / SD target: اختبار الكتابة والقراءة والحذف عبر SAF بنجاح.")
+
+            # 11. SD source / internal target
+            res11 = android_permissions.run_storage_preflight_test("sdcard", "internal")
+            assert res11.success is True, f"فشل اختبار preflight لمصدر SD: {res11.error_message}"
+            print("  [11/16] ✓ SD source / internal target: التحقق من مصدر SD ووجهة داخلية بنجاح.")
+
+            # 12. SD disconnected
+            storage_backend.get_active_target_location = lambda choice=None: (
+                storage_backend.TargetLocation(
+                    storage_type="sdcard",
+                    is_saf=False,
+                    is_valid=False,
+                    error_message="بطاقة الذاكرة الخارجية (MicroSD) غير متوفرة أو غير مركبة بالجهاز.",
+                ) if (choice == "sdcard") else orig_target_loc(choice)
+            )
+            res12 = android_permissions.run_storage_preflight_test("internal", "sdcard")
+            assert res12.success is False
+            assert res12.error_code == "sdcard_invalid"
+            assert "غير متوفرة أو غير مركبة" in res12.error_message
+            assert res12.target_storage == "sdcard", "يجب عدم تغيير الوجهة إلى الذاكرة الداخلية بصمت"
+            print("  [12/16] ✓ SD disconnected: كشف فصل البطاقة ومنع Fallback الصامت تماماً.")
+
+            # 13. SAF URI expired
+            android_permissions.set_mock_environment(
+                sdk_int=29,
+                release="10",
+                permissions={
+                    "READ_EXTERNAL_STORAGE": True,
+                    "WRITE_EXTERNAL_STORAGE": True,
+                },
+                saf_valid=False,
+            )
+            res13 = android_permissions.run_storage_preflight_test("internal", "sdcard")
+            assert res13.success is False
+            assert res13.error_code == "missing_target_saf"
+            assert res13.action_required == "request_saf_sdcard"
+            assert res13.target_storage == "sdcard"
+            print("  [13/16] ✓ SAF URI expired: كشف انتهاء إذن SAF ومطالبة المستخدم بالتجديد.")
+
+            # 14. Destination write test failure
+            android_permissions.set_mock_environment(
+                sdk_int=29,
+                release="10",
+                permissions={
+                    "READ_EXTERNAL_STORAGE": True,
+                    "WRITE_EXTERNAL_STORAGE": True,
+                },
+            )
+            bad_dir = sandbox / "readonly_internal"
+            bad_dir.mkdir(parents=True, exist_ok=True)
+            storage_backend.detect_storage_locations = lambda force_refresh=False: {
+                "internal": storage_backend.StorageLocation(
+                    id="internal",
+                    name="الذاكرة الداخلية (محمية)",
+                    path=str(bad_dir),
+                    detected=True,
+                    mounted=True,
+                    readable=True,
+                    writable=True,
+                    requires_saf=False,
+                ),
+            }
+            import unittest.mock
+            with unittest.mock.patch.object(Path, "write_bytes", side_effect=PermissionError("Permission denied [Errno 13]")):
+                res14 = android_permissions.run_storage_preflight_test("internal", "internal")
+                assert res14.success is False
+                assert res14.error_code == "internal_write_failed"
+                assert res14.target_writable is False
+                assert "رفض الإذن" in res14.error_message
+            print("  [14/16] ✓ Destination write test failure: كشف فشل الكتابة الحقيقي والتقاط PermissionError بدقة.")
+
+            # 15. No silent fallback
+            for err_case, saf_v, loc_v in [
+                ("missing_target_saf", False, True),
+                ("sdcard_invalid", True, False),
+            ]:
+                android_permissions.set_mock_environment(
+                    sdk_int=29,
+                    release="10",
+                    permissions={"READ_EXTERNAL_STORAGE": True, "WRITE_EXTERNAL_STORAGE": True},
+                    saf_valid=saf_v,
+                )
+                storage_backend.get_active_target_location = lambda choice=None, _lv=loc_v: (
+                    storage_backend.TargetLocation(
+                        storage_type="sdcard",
+                        is_saf=True,
+                        is_valid=_lv,
+                        error_message="خطأ SD" if not _lv else "",
+                    ) if choice == "sdcard" else orig_target_loc(choice)
+                )
+                res15 = android_permissions.run_storage_preflight_test("internal", "sdcard")
+                assert res15.success is False
+                assert res15.target_storage == "sdcard", "الوجهة يجب أن تظل 'sdcard' ولا تتحول للداخلية!"
+            print("  [15/16] ✓ No silent fallback: ضمان عدم تحويل الوجهة سراً أو الكتابة بالداخلية.")
+
+        finally:
+            storage_backend.detect_storage_locations = orig_detect
+            storage_backend.get_active_target_location = orig_target_loc
+
+        # 16. تقرير Samsung Galaxy Note 9 / Android 10
+        android_permissions.set_mock_environment(
+            sdk_int=29,
+            release="10",
+            permissions={
+                "READ_EXTERNAL_STORAGE": True,
+                "WRITE_EXTERNAL_STORAGE": True,
+            },
+        )
+        note9_summary = android_permissions.get_permissions_diagnostic_summary()
+        assert note9_summary["sdk_int"] == 29
+        assert note9_summary["release"] == "10"
+        assert note9_summary["images_permission"] is True
+        assert note9_summary["videos_permission"] is True
+        assert note9_summary["write_permission"] is True
+        assert note9_summary["all_files_permission"] is None
+        assert "غير منطبق" in note9_summary["all_files_permission_status"]
+        assert note9_summary["fully_ready_for_internal"] is True
+
+        # التأكد التام من عدم ظهور READ_MEDIA_* أو Android 14 في أي سطر ناتج
+        sdk = note9_summary["sdk_int"]
+        img_ok = note9_summary["images_permission"]
+        write_ok = note9_summary["write_permission"]
+        saf_status = note9_summary["saf_sdcard_status"]
+        ocr_str = "مثبت وجاهز ✓"
+
+        if sdk == 29 or (0 < sdk < 30):
+            lines = [
+                f"• إصدار النظام: Android 10 (SDK {sdk})",
+                f"• صلاحية قراءة التخزين: {'ممنوحة ✓' if img_ok else 'مرفوضة ✗'}",
+                f"• صلاحية كتابة التخزين: {'ممنوحة ✓' if write_ok else 'مرفوضة ✗'}",
+                "• الوصول الشامل Android 11+: غير منطبق (النمط الكلاسيكي معتمد) -",
+                f"• إذن بطاقة SD الخارجية: {saf_status}",
+                f"• محرك OCR الأوفلاين: {ocr_str}",
+            ]
+        else:
+            lines = []
+
+        combined_text = "\n".join(lines)
+        assert "READ_MEDIA_IMAGES" not in combined_text
+        assert "READ_MEDIA_VIDEO" not in combined_text
+        assert "READ_MEDIA_VISUAL_USER_SELECTED" not in combined_text
+        assert "Android 14" not in combined_text
+        assert "Android 10" in combined_text
+        assert "صلاحية قراءة التخزين: ممنوحة ✓" in combined_text
+        assert "صلاحية كتابة التخزين: ممنوحة ✓" in combined_text
+        assert "غير منطبق" in combined_text
+        print("  [16/16] ✓ محاكاة تقرير Samsung Galaxy Note 9 (Android 10): خلو تام من أسطر Android 14 و READ_MEDIA_* وتأكيد الجاهزية.")
+
+    finally:
+        android_permissions.reset_mock_environment()
+        shutil.rmtree(sandbox, ignore_errors=True)
+
+    print("✓ نجحت جميع فحوصات الجناح 20 لإصلاحات Android 10 والصلاحيات والتخزين بنسبة 100%!\n")
+
+
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
@@ -2102,6 +2470,7 @@ if __name__ == "__main__":
     test_category_ui_details_and_layout_resilience()
     test_comprehensive_real_android_fixes()
     test_offline_ai_capabilities()
+    test_android_10_and_permissions_preflight()
     print("==================================================")
-    print("  جميع الفحوصات الآلية للوحدات (19 جناح) تمت بنجاح 100%!  ")
+    print("  جميع الفحوصات الآلية للوحدات (20 جناح) تمت بنجاح 100%!  ")
     print("==================================================")

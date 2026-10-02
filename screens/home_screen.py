@@ -44,6 +44,7 @@ class HomeScreen(Screen):
         self._is_scanning: bool = False
         self._anim_running: bool = False
         self._has_requested_perms: bool = False
+        self.awaiting_settings_return: bool = False
 
     def on_enter(self, *args: object) -> None:
         """يتم استدعاؤها في كل مرة يدخل فيها المستخدم للشاشة لتحديث القائمة"""
@@ -64,11 +65,15 @@ class HomeScreen(Screen):
 
         # استئناف الفحص المعلق تلقائياً إن كان المستخدم قد غادر لمنح الصلاحيات وعاد
         is_pending, p_src, p_tgt = file_manager.get_pending_scan_info()
-        if is_pending and file_manager.is_all_files_access_granted():
-            file_manager.clear_pending_scan()
-            Clock.schedule_once(
-                lambda _dt: self.start_scan_with_options(p_src, p_tgt), 0.5
-            )
+        if is_pending:
+            import android_permissions
+            preflight = android_permissions.run_storage_preflight_test(p_src, p_tgt)
+            if preflight.success:
+                file_manager.clear_pending_scan()
+                self.awaiting_settings_return = False
+                Clock.schedule_once(
+                    lambda _dt: self.start_scan_with_options(p_src, p_tgt), 0.5
+                )
 
         # طلب الصلاحيات الأساسية مرة واحدة فقط عند الإقلاع وليس مع كل دخول
         if platform == "android" and not self._has_requested_perms:
@@ -712,23 +717,42 @@ class HomeScreen(Screen):
         if getattr(self, "_is_scanning", False):
             return
 
-        # 1. الفحص الاستباقي للصلاحيات لمنع التشغيل الكاذب والإخفاقات المتكررة
-        can_proceed, _issue_code, issue_msg, action_req = android_permissions.preflight_scan_access(
+        # 1. الفحص الاستباقي العملي للصلاحيات والوصول الحقيقي للتخزين
+        preflight_test = android_permissions.run_storage_preflight_test(
             source_choice, target_choice
         )
-        if not can_proceed:
+        if not preflight_test.success:
+            issue_msg = preflight_test.error_message
+            action_req = preflight_test.action_required
+
+            # بناء تقرير الفحص الاستباقي الحي
+            preflight_stats = {
+                "قراءة الصور": "ناجحة ✓" if preflight_test.source_readable_images else "فاشلة ✗",
+                "قراءة الفيديو": "ناجحة ✓" if preflight_test.source_readable_videos else "فاشلة ✗",
+                "إنشاء مجلد الوجهة": "ناجح ✓" if preflight_test.target_dir_creatable else "فاشل ✗",
+                "اختبار الكتابة": "ناجح ✓" if preflight_test.target_writable else "فاشل ✗",
+                "اختبار القراءة بعد الكتابة": "ناجح ✓" if preflight_test.target_readable_after_write else "فاشل ✗",
+                "الحذف الآمن للملف التجريبي": "ناجح ✓" if preflight_test.target_temp_deleted else "فاشل ✗",
+            }
+
             preflight_buttons = []
             if action_req == "request_media":
                 def _on_grant():
                     def _after_perms(_p, _r):
-                        import android_permissions
-                        if not android_permissions.is_images_permission_granted():
+                        # بعد اكتمال طلب الصلاحيات: فحص مباشر دون حلقة مفرغة
+                        chk_res = android_permissions.run_storage_preflight_test(source_choice, target_choice)
+                        if chk_res.success:
+                            self.awaiting_settings_return = False
+                            Clock.schedule_once(lambda _dt: self.start_scan_with_options(source_choice, target_choice), 0.3)
+                        else:
+                            # توجيه المستخدم لفتح الإعدادات يدوياً مرة واحدة
+                            self.awaiting_settings_return = True
                             android_permissions.open_app_details_settings()
-                        Clock.schedule_once(lambda _dt: self.start_scan_with_options(source_choice, target_choice), 0.5)
+
                     android_permissions.request_media_permissions(_after_perms)
 
                 preflight_buttons.append({
-                    "text": "منح صلاحيات الصور والفيديو",
+                    "text": "منح صلاحيات التخزين",
                     "callback": _on_grant,
                     "filled": True,
                     "bg_color": (0.486, 0.302, 0.988, 1),
@@ -754,12 +778,13 @@ class HomeScreen(Screen):
                     "filled": True,
                     "bg_color": (0.9, 0.4, 0.1, 1),
                 })
+
             preflight_buttons.append({"text": "إلغاء", "callback": None, "filled": False})
 
-            dlg_title = "الوصول محدود (أندرويد 14)" if action_req == "open_app_settings" else "مطلوب إذن وصول للتخزين"
+            dlg_title = "فحص التخزين والاستباقية"
             show_rich_results_dialog(
                 title=dlg_title,
-                stats_dict={"total_found": 0, "success_count": 0, "failed_count": 0},
+                stats_dict=preflight_stats,
                 failures_by_reason={issue_msg: 1},
                 buttons=preflight_buttons,
             )

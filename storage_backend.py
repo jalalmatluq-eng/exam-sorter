@@ -559,7 +559,12 @@ def detect_storage_locations(force_refresh: bool = False) -> dict[str, StorageLo
         if _get_platform() == "android":
             # 1. الذاكرة الداخلية المشتركة (/storage/emulated/0)
             int_path = Path("/storage/emulated/0")
-            int_target = int_path / ORGANIZED_FOLDER_NAME
+            int_candidates = [
+                int_path / ORGANIZED_FOLDER_NAME,
+                int_path / "Download" / ORGANIZED_FOLDER_NAME,
+                int_path / "Android" / "data" / "com.cosmosort.ai.cosmosort" / "files" / ORGANIZED_FOLDER_NAME,
+            ]
+            int_target = int_candidates[0]
             int_free, int_total = 0.0, 0.0
             int_detected = int_path.exists()
             int_writable = False
@@ -572,9 +577,21 @@ def detect_storage_locations(force_refresh: bool = False) -> dict[str, StorageLo
                     int_total = round(du.total / (1024 ** 3), 1)
                 except OSError:
                     pass
-                int_writable = is_directory_writable(int_target)
+
+                # تجربة مسارات الحفظ بالترتيب حتى نجد مساراً قابلاً للكتابة
+                for cand in int_candidates:
+                    if is_directory_writable(cand):
+                        int_target = cand
+                        int_writable = True
+                        break
+
                 if not int_writable:
-                    int_reason = "تتطلب صلاحية إدارة كافة الملفات (All Files Access)"
+                    import android_permissions
+                    sdk = android_permissions.get_android_sdk_int()
+                    if sdk < 30:
+                        int_reason = "تتطلب منح إذن التخزين (Storage) من إعدادات التطبيق"
+                    else:
+                        int_reason = "تتطلب صلاحية إدارة كافة الملفات (All Files Access)"
 
             locations["internal"] = StorageLocation(
                 id="internal",
@@ -588,7 +605,7 @@ def detect_storage_locations(force_refresh: bool = False) -> dict[str, StorageLo
                 free_gb=int_free,
                 total_gb=int_total,
                 failure_reason=int_reason,
-                description=f"المسار: /storage/emulated/0/{ORGANIZED_FOLDER_NAME} ({int_free} GB متاح)",
+                description=f"المسار: {int_target} ({int_free} GB متاح)",
             )
 
             # 2. بطاقة الذاكرة الخارجية MicroSD
@@ -2247,7 +2264,66 @@ def delete_media_item(item: MediaItem | Path | str) -> bool:
         return False
 
 
+def saf_write_data_to_uri(uri_or_doc_str: str, data: bytes) -> bool:
+    """
+    كتابة مصفوفة بايتات مباشرة إلى Document URI أو مسار محلي أو mock URI.
+    يستخدم لاختبارات Preflight والتحقق من قابلية الكتابة دون إنشاء ملفات غير ضرورية.
+    """
+    if not uri_or_doc_str:
+        return False
+
+    if uri_or_doc_str.startswith("mock_doc://"):
+        try:
+            p = Path(uri_or_doc_str.replace("mock_doc://", ""))
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(data)
+            return p.exists() and p.stat().st_size == len(data)
+        except Exception as e:
+            logger.warning("فشل كتابة البيانات إلى mock_doc: %s", e)
+            return False
+
+    if _get_platform() == "android" and uri_or_doc_str.startswith("content://"):
+        out_stream = None
+        try:
+            from android import mActivity
+            from jnius import autoclass
+            Uri = autoclass("android.net.Uri")
+            parsed_uri = Uri.parse(uri_or_doc_str)
+            cr = mActivity.getContentResolver()
+            out_stream = cr.openOutputStream(parsed_uri)
+            if not out_stream:
+                return False
+            out_stream.write(bytearray(data))
+            out_stream.flush()
+            return True
+        except Exception as e:
+            logger.warning("فشل كتابة البيانات إلى SAF URI (%s): %s", uri_or_doc_str, e)
+            return False
+        finally:
+            if out_stream is not None:
+                try:
+                    out_stream.close()
+                except Exception:
+                    pass
+
+    # مسار فيزيائي
+    try:
+        p = Path(uri_or_doc_str)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_bytes(data)
+        return p.exists() and p.stat().st_size == len(data)
+    except Exception as e:
+        logger.warning("فشل كتابة البيانات إلى المسار المحلي: %s", e)
+        return False
+
+
+def saf_delete_document(uri_or_doc_str: str) -> bool:
+    """حذف مستند SAF أو ملف تجريبي بأمان بالاعتماد على delete_media_item"""
+    return delete_media_item(uri_or_doc_str)
+
+
 # =========================================================================
+
 # إدارة العمليات المعلقة لـ RecoverableSecurityException (Request Code 4202)
 # =========================================================================
 

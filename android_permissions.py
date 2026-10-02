@@ -2,89 +2,234 @@
 android_permissions.py
 ----------------------
 مدير الصلاحيات الموحد لتطبيق رتّب / CosmoSort:
-- فحص دقيق لكل صلاحية وفق إصدار أندرويد (SDK_INT من أندرويد 8 إلى 15).
-- التفريق بين صلاحيات القراءة من الذاكرة الداخلية وصلاحيات الكتابة على بطاقة SD عبر SAF.
-- تقديم فحص استباقي (Preflight Check) يمنع بدء الفحص عند غياب الصلاحيات اللازمة.
-- تقديم تشخيص تفصيلي للمستخدم لحالة كل إذن.
+- فحص دقيق وموثوق لكل صلاحية وفق إصدار أندرويد الفعلي (SDK_INT).
+- دعم سلسلة تحقق ثلاثية (check_permission -> ContextCompat -> mActivity.checkSelfPermission).
+- التمييز الصارم بين Android 10 (SDK 29) والإصدارات الأحدث (SDK 30+ و SDK 33+ و SDK 34+).
+- فصل صلاحيات المصدر عن صلاحيات الوجهة وعدم فرض MANAGE_EXTERNAL_STORAGE على Android 10.
+- منع الحلقات التكرارية لحوارات طلب الصلاحيات.
+- فحص وصول تخزيني حي وحقيقي قبل بدء الفرز (StorageAccessTest).
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Callable
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("AndroidPermissions")
 
+# متغيرات للمحاكاة أثناء الاختبارات الآلية
+_MOCK_ANDROID_SDK_INT: int | None = None
+_MOCK_ANDROID_RELEASE: str | None = None
+_MOCK_PERMISSIONS: dict[str, bool] | None = None
+_MOCK_ALL_FILES_ACCESS: bool | None = None
+_MOCK_SAF_VALID: bool | None = None
+
+
+def set_mock_environment(
+    sdk_int: int | None = None,
+    release: str | None = None,
+    permissions: dict[str, bool] | None = None,
+    all_files_access: bool | None = None,
+    saf_valid: bool | None = None,
+) -> None:
+    """ضبط بيئة المحاكاة للاختبارات الآلية"""
+    global _MOCK_ANDROID_SDK_INT, _MOCK_ANDROID_RELEASE, _MOCK_PERMISSIONS, _MOCK_ALL_FILES_ACCESS, _MOCK_SAF_VALID
+    _MOCK_ANDROID_SDK_INT = sdk_int
+    _MOCK_ANDROID_RELEASE = release
+    _MOCK_PERMISSIONS = permissions
+    _MOCK_ALL_FILES_ACCESS = all_files_access
+    _MOCK_SAF_VALID = saf_valid
+
+
+def reset_mock_environment() -> None:
+    """إعادة تعيين بيئة المحاكاة إلى الوضع الطبيعي"""
+    global _MOCK_ANDROID_SDK_INT, _MOCK_ANDROID_RELEASE, _MOCK_PERMISSIONS, _MOCK_ALL_FILES_ACCESS, _MOCK_SAF_VALID
+    _MOCK_ANDROID_SDK_INT = None
+    _MOCK_ANDROID_RELEASE = None
+    _MOCK_PERMISSIONS = None
+    _MOCK_ALL_FILES_ACCESS = None
+    _MOCK_SAF_VALID = None
+
 
 def get_android_sdk_int() -> int:
-    """الحصول على رقم إصدار أندرويد (Build.VERSION.SDK_INT) بأمان تام"""
+    """الحصول على رقم إصدار أندرويد (Build.VERSION.SDK_INT) بأمان وموثوقية عالية"""
+    if _MOCK_ANDROID_SDK_INT is not None:
+        return _MOCK_ANDROID_SDK_INT
+
     try:
         from kivy.utils import platform
         if platform != "android":
             return 0
         from jnius import autoclass
-        BuildVersion = autoclass("android.os.Build$VERSION")
-        return int(BuildVersion.SDK_INT)
+
+        try:
+            BuildVersion = autoclass("android.os.Build$VERSION")
+            return int(BuildVersion.SDK_INT)
+        except Exception:
+            try:
+                Build = autoclass("android.os.Build")
+                return int(Build.VERSION.SDK_INT)
+            except Exception:
+                pass
     except Exception as e:
-        logger.debug("تعذر استخراج SDK_INT: %s", e)
-        return 0
+        logger.warning("تعذر استخراج Build.VERSION.SDK_INT: %s", e)
+
+    return -1  # غير معروف
+
+
+def get_android_system_info() -> dict[str, Any]:
+    """
+    استخراج معلومات النظام وبيانات الإصدار الفعلية:
+    - SDK_INT
+    - Android release
+    - package name
+    - target SDK
+    """
+    sdk = get_android_sdk_int()
+    release = _MOCK_ANDROID_RELEASE or ""
+    pkg_name = "com.cosmosort.ai.cosmosort"
+    target_sdk = 34
+
+    try:
+        from kivy.utils import platform
+        if platform == "android":
+            from android import mActivity
+            from jnius import autoclass
+            if not release:
+                try:
+                    BuildVersion = autoclass("android.os.Build$VERSION")
+                    release = str(BuildVersion.RELEASE)
+                except Exception:
+                    try:
+                        Build = autoclass("android.os.Build")
+                        release = str(Build.VERSION.RELEASE)
+                    except Exception:
+                        pass
+            try:
+                pkg_name = str(mActivity.getPackageName())
+                app_info = mActivity.getApplicationInfo()
+                target_sdk = int(app_info.targetSdkVersion)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    status = "known" if sdk >= 0 else "unknown"
+    return {
+        "sdk_int": sdk,
+        "release": release,
+        "package_name": pkg_name,
+        "target_sdk": target_sdk,
+        "status": status,
+    }
 
 
 def has_permission(permission_name: str) -> bool:
     """
     التحقق مما إذا كانت صلاحية أندرويد معينة ممنوحة حالياً.
-    يدعم المنصات غير أندرويد (يعيد True افتراضياً للاختبارات).
+    تعتمد سلسلة فحص ثلاثية متتالية:
+    1. android.permissions.check_permission من python-for-android
+    2. ContextCompat.checkSelfPermission من AndroidX
+    3. mActivity.checkSelfPermission المباشر (Android 6.0+)
+    توحد النتيجة دائماً إلى True أو False دون إرجاع False لمجرد عدم تحميل AndroidX.
     """
+    if _MOCK_PERMISSIONS is not None:
+        short = permission_name.replace("android.permission.", "")
+        if permission_name in _MOCK_PERMISSIONS:
+            return bool(_MOCK_PERMISSIONS[permission_name])
+        if short in _MOCK_PERMISSIONS:
+            return bool(_MOCK_PERMISSIONS[short])
+        return False
+
     try:
         from kivy.utils import platform
         if platform != "android":
             return True
-        from android import mActivity
-        from jnius import autoclass
 
-        ContextCompat = autoclass("androidx.core.content.ContextCompat")
-        PackageManager = autoclass("android.content.pm.PackageManager")
-
-        # تحويل اسم الصلاحية لصيغتها الكاملة
         if not permission_name.startswith("android.permission."):
             full_perm = f"android.permission.{permission_name}"
+            short_perm = permission_name
         else:
             full_perm = permission_name
+            short_perm = permission_name.replace("android.permission.", "")
 
-        result = ContextCompat.checkSelfPermission(mActivity, full_perm)
-        return result == PackageManager.PERMISSION_GRANTED
+        # 1. محاولة android.permissions.check_permission من python-for-android
+        try:
+            from android.permissions import Permission, check_permission
+            perm_obj = getattr(Permission, short_perm, full_perm)
+            if check_permission(perm_obj):
+                return True
+        except Exception:
+            pass
+
+        # 2. محاولة ContextCompat.checkSelfPermission إذا كان AndroidX متاحاً
+        try:
+            from android import mActivity
+            from jnius import autoclass
+            ContextCompat = autoclass("androidx.core.content.ContextCompat")
+            PackageManager = autoclass("android.content.pm.PackageManager")
+            res = ContextCompat.checkSelfPermission(mActivity, full_perm)
+            return res == PackageManager.PERMISSION_GRANTED
+        except Exception:
+            pass
+
+        # 3. محاولة mActivity.checkSelfPermission كحل أخير وموثوق على Android 6+
+        try:
+            from android import mActivity
+            from jnius import autoclass
+            PackageManager = autoclass("android.content.pm.PackageManager")
+            res = mActivity.checkSelfPermission(full_perm)
+            return res == PackageManager.PERMISSION_GRANTED
+        except Exception:
+            pass
+
+        return False
     except Exception as e:
         logger.debug("خطأ أثناء فحص الصلاحية %s: %s", permission_name, e)
         return False
 
 
 def is_images_permission_granted() -> bool:
-    """فحص صلاحية قراءة الصور كاملة حسب إصدار أندرويد (لا تعتبر الصلاحية الجزئية كاملة)"""
+    """فحص صلاحية قراءة الصور كاملة وفق إصدار أندرويد الفعلي"""
     sdk = get_android_sdk_int()
-    if sdk == 0:  # بيئة غير أندرويد
+    if sdk == 0:  # بيئة غير أندرويد (تطوير واختبارات)
         return True
     if sdk >= 33:
         return has_permission("READ_MEDIA_IMAGES")
-    # أندرويد 12 وما قبل
+    # أندرويد 12 وما قبل (بما فيها أندرويد 10 SDK 29)
     return has_permission("READ_EXTERNAL_STORAGE")
 
 
 def is_videos_permission_granted() -> bool:
-    """فحص صلاحية قراءة الفيديوهات كاملة حسب إصدار أندرويد"""
+    """فحص صلاحية قراءة الفيديوهات كاملة وفق إصدار أندرويد الفعلي"""
     sdk = get_android_sdk_int()
     if sdk == 0:  # بيئة غير أندرويد
         return True
     if sdk >= 33:
         return has_permission("READ_MEDIA_VIDEO")
-    # أندرويد 12 وما قبل
+    # أندرويد 12 وما قبل (بما فيها أندرويد 10 SDK 29)
     return has_permission("READ_EXTERNAL_STORAGE")
+
+
+def is_storage_write_permission_granted() -> bool:
+    """فحص صلاحية كتابة التخزين (WRITE_EXTERNAL_STORAGE) للذاكرة الداخلية على Android 10 وما قبله"""
+    sdk = get_android_sdk_int()
+    if sdk == 0:
+        return True
+    if sdk >= 30:
+        # أندرويد 11+ يعتمد Scoped Storage أو MANAGE_EXTERNAL_STORAGE
+        return True
+    return has_permission("WRITE_EXTERNAL_STORAGE")
 
 
 def is_visual_user_selected_only() -> bool:
     """
     التحقق مما إذا كان المستخدم في أندرويد 14 قد اختار صوراً محددة فقط (الوصول المحدود/الجزئي).
-    في هذه الحالة لا نعتبر الصلاحية كاملة وننبه المستخدم بعدم بدء فحص كل الهاتف.
+    لا ينطبق مطلقاً على أندرويد 10 ويعيد False دائماً على ما دون أندرويد 14.
     """
     sdk = get_android_sdk_int()
     if sdk >= 34:
@@ -95,11 +240,22 @@ def is_visual_user_selected_only() -> bool:
     return False
 
 
-def is_all_files_access_granted() -> bool:
-    """فحص إذن الوصول الشامل لكافة الملفات (MANAGE_EXTERNAL_STORAGE)"""
+def is_all_files_access_granted() -> bool | None:
+    """
+    فحص إذن الوصول الشامل لكافة الملفات (MANAGE_EXTERNAL_STORAGE):
+    - يعيد True إذا كان ممنوحاً (Android 11+ / SDK >= 30).
+    - يعيد False إذا كان مرفوضاً (Android 11+ / SDK >= 30).
+    - يعيد None (not_applicable) على Android 10 وما دون (SDK < 30) لأنه غير منطبق.
+    """
+    if _MOCK_ALL_FILES_ACCESS is not None:
+        return _MOCK_ALL_FILES_ACCESS
+
     sdk = get_android_sdk_int()
-    if sdk < 30:  # أندرويد 10 وما دون
-        return has_permission("READ_EXTERNAL_STORAGE") and has_permission("WRITE_EXTERNAL_STORAGE")
+    if sdk <= 0:  # بيئة غير أندرويد
+        return True
+    if sdk < 30:  # أندرويد 10 وما دون -> غير منطبق تماماً
+        return None
+
     try:
         from jnius import autoclass
         Environment = autoclass("android.os.Environment")
@@ -108,8 +264,16 @@ def is_all_files_access_granted() -> bool:
         return False
 
 
+def is_legacy_storage_permission_granted() -> bool:
+    """فحص الصلاحيات الكلاسيكية للتخزين (READ/WRITE) على أندرويد 10 وما قبله"""
+    return has_permission("READ_EXTERNAL_STORAGE") and has_permission("WRITE_EXTERNAL_STORAGE")
+
+
 def is_saf_sdcard_granted() -> bool:
     """فحص ما إذا كان هناك إذن SAF صالح ومحفوظ لبطاقة الذاكرة الخارجية"""
+    if _MOCK_SAF_VALID is not None:
+        return _MOCK_SAF_VALID
+
     try:
         import storage_backend
         tree_uri = storage_backend.get_saf_persisted_uri()
@@ -155,17 +319,239 @@ def is_source_path_readable(path_or_uri: str) -> bool:
         return False
 
 
+@dataclass
+class StorageAccessTest:
+    """نتيجة اختبار الفحص الاستباقي والوصول الفعلي للتخزين قبل بدء الفرز"""
+    success: bool = False
+    source_storage: str = "internal"
+    target_storage: str = "internal"
+    source_exists: bool = False
+    source_readable_images: bool = False
+    source_readable_videos: bool = False
+    target_dir_creatable: bool = False
+    target_writable: bool = False
+    target_readable_after_write: bool = False
+    target_temp_deleted: bool = False
+    target_actual_path: str = ""
+    error_code: str = ""
+    error_message: str = ""
+    action_required: str = "none"
+    details: dict[str, Any] = field(default_factory=dict)
+
+
+def run_storage_preflight_test(
+    source_storage: str,
+    target_storage: str,
+) -> StorageAccessTest:
+    """
+    اختبار عملي حقيقي لقابلية القراءة والكتابة في وحدات التخزين قبل بدء الفرز:
+    1. التحقق من وجود المصدر وقابلية قراءة الصور والفيديوهات منه.
+    2. التحقق من إنشاء مجلد الوجهة الفعلي (الملفات المنظمة).
+    3. كتابة ملف تجريبي مؤقت ثم قراءته ومطابقة الحجم ثم حذفه بأمان.
+    4. منع أي Fallback صامت وضمان أن الوجهة هي نفسها التي ستستخدم فعلياً.
+    """
+    source_norm = (source_storage or "both").lower()
+    target_norm = (target_storage or "internal").lower()
+    sdk = get_android_sdk_int()
+
+    res = StorageAccessTest(
+        source_storage=source_norm,
+        target_storage=target_norm,
+    )
+
+    # 1. فحص المصدر
+    if source_norm in ("internal", "both"):
+        img_ok = is_images_permission_granted()
+        vid_ok = is_videos_permission_granted()
+        res.source_readable_images = img_ok
+        res.source_readable_videos = vid_ok
+
+        # التحقق من حالة أندرويد 14 المحدودة
+        if is_visual_user_selected_only():
+            res.success = False
+            res.error_code = "partial_media_access"
+            res.error_message = (
+                "صلاحية الوصول محدودة (تم اختيار صور محددة فقط في أندرويد 14). "
+                "لا يمكن بدء فحص وفرز الهاتف كاملاً بهذا الإذن الجزئي. "
+                "يرجى منح إذن 'السماح دائمًا بالوصول إلى كل الصور والفيديوهات' من إعدادات التطبيق."
+            )
+            res.action_required = "open_app_settings"
+            return res
+
+        if not img_ok and not vid_ok:
+            res.success = False
+            res.error_code = "missing_media_permissions"
+            if sdk == 29 or (0 < sdk < 30):
+                res.error_message = (
+                    "Android 10 لا يسمح بقراءة التخزين حاليًا.\n"
+                    "افتح إعدادات التطبيق > الأذونات > التخزين، ثم اختر السماح.\n"
+                    "بعد العودة اضغط فحص الصلاحيات مرة أخرى."
+                )
+            else:
+                res.error_message = "صلاحية الوصول للصور والفيديوهات غير ممنوحة."
+            res.action_required = "request_media"
+            return res
+
+        # فحص وجود مسار الذاكرة الداخلية
+        try:
+            from kivy.utils import platform
+            if platform == "android":
+                int_src_path = Path("/storage/emulated/0")
+                res.source_exists = int_src_path.exists()
+            else:
+                res.source_exists = True
+        except Exception:
+            res.source_exists = True
+
+    if source_norm in ("sdcard", "both"):
+        if source_norm == "sdcard":
+            saf_ok = is_saf_sdcard_granted()
+            if not saf_ok:
+                res.success = False
+                res.error_code = "missing_source_saf"
+                res.error_message = "تم اختيار بطاقة الذاكرة الخارجية كمصدر، ولكن لم يتم تحديد مجلد البطاقة أو انتهت صلاحيته."
+                res.action_required = "request_saf_sdcard"
+                return res
+
+    # 2. فحص الوجهة
+    if target_norm == "sdcard":
+        saf_ok = is_saf_sdcard_granted()
+        if not saf_ok:
+            res.success = False
+            res.error_code = "missing_target_saf"
+            res.error_message = "تم تحديد الحفظ في بطاقة SD الخارجية، لكن مجلد الحفظ غير محدد أو انتهت صلاحية إذن الوصول (SAF)."
+            res.action_required = "request_saf_sdcard"
+            return res
+
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location("sdcard")
+        if not target_loc or not target_loc.is_valid:
+            res.success = False
+            res.error_code = "sdcard_invalid"
+            res.error_message = target_loc.error_message if target_loc else "بطاقة SD غير صالحة للكتابة."
+            res.action_required = "request_saf_sdcard"
+            return res
+
+        res.target_actual_path = target_loc.display_name or "بطاقة SD الخارجية (SAF)"
+
+        # اختبار كتابة وقراءة وحذف حقيقي على بطاقة SD عبر SAF
+        try:
+            test_content = b"COSMOSORT_SD_PREFLIGHT_TEST_OK"
+            test_filename = f".preflight_test_{int(time.time() * 1000)}.tmp"
+            new_file_uri, created_uri_str = storage_backend.saf_create_target_document(
+                target_loc.tree_uri,
+                "خارج التصنيف",
+                test_filename,
+                "application/octet-stream",
+            )
+            if created_uri_str or new_file_uri is not None:
+                res.target_dir_creatable = True
+                res.target_writable = True
+                write_ok = storage_backend.saf_write_data_to_uri(created_uri_str, test_content)
+                if write_ok:
+                    res.target_readable_after_write = True
+                del_ok = storage_backend.saf_delete_document(created_uri_str)
+                if del_ok:
+                    res.target_temp_deleted = True
+            else:
+                res.target_dir_creatable = False
+                res.target_writable = False
+        except Exception as e:
+            res.target_writable = False
+            res.error_code = "sdcard_write_failed"
+            res.error_message = f"فشل اختبار الكتابة على بطاقة SD: {e}"
+            return res
+
+        if not res.target_writable or not res.target_readable_after_write:
+            res.success = False
+            res.error_code = "sdcard_write_failed"
+            res.error_message = "فشل اختبار كتابة وقراءة الملف التجريبي على بطاقة SD الخارجية."
+            return res
+
+    else:
+        # الذاكرة الداخلية
+        write_ok = is_storage_write_permission_granted()
+        if not write_ok:
+            res.success = False
+            res.error_code = "missing_write_permission"
+            res.error_message = (
+                "Android 10 يتطلب صلاحية كتابة التخزين (WRITE_EXTERNAL_STORAGE) لإنشاء مجلد الملفات المنظمة.\n"
+                "يرجى فتح إعدادات التطبيق وتفعيل إذن التخزين."
+            )
+            res.action_required = "open_app_settings"
+            return res
+
+        import storage_backend
+        target_loc = storage_backend.get_active_target_location("internal")
+        target_path = Path(target_loc.path) if (target_loc and target_loc.path) else (Path("/storage/emulated/0") / "الملفات المنظمة")
+        res.target_actual_path = str(target_path)
+
+        # اختبار إنشاء المجلد والكتابة والقراءة والحذف
+        try:
+            target_path.mkdir(parents=True, exist_ok=True)
+            res.target_dir_creatable = True
+
+            test_file = target_path / f".preflight_test_{int(time.time() * 1000)}.tmp"
+            test_content = b"COSMOSORT_INTERNAL_PREFLIGHT_TEST_OK"
+            test_file.write_bytes(test_content)
+            res.target_writable = True
+
+            read_back = test_file.read_bytes()
+            if read_back == test_content:
+                res.target_readable_after_write = True
+
+            test_file.unlink(missing_ok=True)
+            res.target_temp_deleted = not test_file.exists()
+
+        except (PermissionError, OSError) as e:
+            logger.warning("فشل اختبار الكتابة للذاكرة الداخلية على %s: %s", target_path, e)
+            res.target_writable = False
+            res.success = False
+            res.error_code = "internal_write_failed"
+            res.error_message = f"تعذر الكتابة في مجلد الذاكرة الداخلية ({target_path.name}): تم رفض الإذن من النظام."
+            res.action_required = "open_app_settings"
+            return res
+
+    res.success = True
+    res.error_code = "ok"
+    res.error_message = ""
+    return res
+
+
+def preflight_scan_access(
+    source_storage: str,
+    target_storage: str,
+) -> tuple[bool, str, str, str]:
+    """
+    فحص استباقي يمنع التشغيل الكاذب ويضمن توافر الصلاحيات قبل بدء الفحص:
+    العائد: (مسموح_البدء: bool, رمز_المشكلة: str, رسالة_عربية: str, الإجراء_المطلوب: str)
+    """
+    test_res = run_storage_preflight_test(source_storage, target_storage)
+    return (
+        test_res.success,
+        test_res.error_code,
+        test_res.error_message,
+        test_res.action_required,
+    )
+
+
 def get_permissions_diagnostic_summary() -> dict[str, Any]:
     """
-    استخراج تقرير تشخيص دقيق ومفصل لكافة الصلاحيات لعرضه للمستخدم.
+    استخراج تقرير تشخيص دقيق ومفصل لكافة الصلاحيات لعرضه للمستخدم وفق إصدار أندرويد الفعلي:
+    - على Android 10: لا يعرض READ_MEDIA_* ولا يعرض Android 14.
+    - على Android 11+: يعرض حالة وصول كافة الملفات (All files access).
+    - على Android 13+: يعرض صلاحيات الصور والفيديو المخصصة.
+    - على Android 14+: يعرض نطاق الوصول الجزئي/المحدود.
     """
-    sdk = get_android_sdk_int()
+    sys_info = get_android_system_info()
+    sdk = sys_info["sdk_int"]
     img_ok = is_images_permission_granted()
     vid_ok = is_videos_permission_granted()
+    write_ok = is_storage_write_permission_granted()
     all_files_ok = is_all_files_access_granted()
     saf_ok = is_saf_sdcard_granted()
 
-    # تشخيص جزئي في أندرويد 14
+    # تشخيص جزئي في أندرويد 14 فقط
     is_partial_access = is_visual_user_selected_only()
 
     # فحص ما إذا كان هناك مسار سابق للـ SAF
@@ -176,105 +562,55 @@ def get_permissions_diagnostic_summary() -> dict[str, Any]:
     except Exception:
         pass
 
-    saf_status = "صالح" if saf_ok else ("منتهي" if has_prev_saf else "غير موجود")
-    access_scope = "الوصول محدود" if is_partial_access else ("وصول كامل" if (img_ok and vid_ok) else "غير ممنوح")
+    saf_status = "صالح ومفعل ✓" if saf_ok else ("غير مفعل / منتهي" if has_prev_saf else "غير محدد")
+
+    if sdk == 29 or (0 < sdk < 30):
+        # Android 10
+        all_files_str = "غير منطبق (النمط الكلاسيكي معتمد) -"
+        access_scope = "وصول كامل للذاكرة الداخلية" if (img_ok and write_ok) else "غير ممنوح"
+        ready_for_internal = img_ok and write_ok
+    elif sdk >= 30:
+        # Android 11+
+        all_files_str = "ممنوح ✓" if all_files_ok else "مقيد ⚠️"
+        access_scope = "الوصول محدود" if is_partial_access else ("وصول كامل لكافة الوسائط ✓" if (img_ok and vid_ok) else "مرفوضة ✗")
+        ready_for_internal = img_ok and vid_ok and not is_partial_access
+    else:
+        # بيئة غير أندرويد أو غير محددة
+        all_files_str = "ممنوح (بيئة تجريبية) ✓"
+        access_scope = "وصول كامل"
+        ready_for_internal = True
 
     return {
         "sdk_int": sdk,
+        "release": sys_info["release"],
+        "package_name": sys_info["package_name"],
+        "target_sdk": sys_info["target_sdk"],
+        "system_status": sys_info["status"],
         "images_permission": img_ok,
         "videos_permission": vid_ok,
-        "images_permission_status": "ممنوحة" if img_ok else "مرفوضة",
-        "videos_permission_status": "ممنوحة" if vid_ok else "مرفوضة",
+        "write_permission": write_ok,
+        "images_permission_status": "ممنوحة ✓" if img_ok else "مرفوضة ✗",
+        "videos_permission_status": "ممنوحة ✓" if vid_ok else "مرفوضة ✗",
+        "write_permission_status": "ممنوحة ✓" if write_ok else "مرفوضة ✗",
         "all_files_permission": all_files_ok,
-        "all_files_permission_status": "ممنوح" if all_files_ok else "مقيد",
+        "all_files_permission_status": all_files_str,
         "saf_sdcard_permission": saf_ok,
         "saf_sdcard_status": saf_status,
         "partial_visual_selected": is_partial_access,
         "access_scope": access_scope,
-        "fully_ready_for_internal": img_ok and vid_ok and not is_partial_access,
+        "fully_ready_for_internal": ready_for_internal,
         "fully_ready_for_sdcard": saf_ok,
     }
-
-
-def preflight_scan_access(
-    source_storage: str,
-    target_storage: str,
-) -> tuple[bool, str, str, str]:
-    """
-    فحص استباقي يمنع التشغيل الكاذب ويضمن توافر الصلاحيات قبل بدء الفحص:
-    العائد: (مسموح_البدء: bool, رمز_المشكلة: str, رسالة_عربية: str, الإجراء_المطلوب: str)
-    الإجراءات الممكنة:
-    - 'none'
-    - 'request_media'
-    - 'request_saf_sdcard'
-    - 'open_app_settings'
-    """
-    source_norm = (source_storage or "both").lower()
-    target_norm = (target_storage or "internal").lower()
-
-    # 1. فحص صلاحيات المصدر
-    if source_norm in ("internal", "both"):
-        # في أندرويد 14، التحقق الصارم من حالة "الوصول المحدود"
-        if is_visual_user_selected_only():
-            return (
-                False,
-                "partial_media_access",
-                "صلاحية الوصول محدودة (تم اختيار صور محددة فقط في أندرويد 14). لا يمكن بدء فحص وفرز الهاتف كاملاً بهذا الإذن الجزئي. يرجى منح إذن 'السماح دائمًا بالوصول إلى كل الصور والفيديوهات' من إعدادات التطبيق.",
-                "open_app_settings",
-            )
-
-        img_ok = is_images_permission_granted()
-        vid_ok = is_videos_permission_granted()
-        if not img_ok and not vid_ok:
-            return (
-                False,
-                "missing_media_permissions",
-                "صلاحية الوصول إلى الصور والفيديوهات غير ممنوحة. يرجى منح الإذن للتمكن من قراءة ملفات الجهاز.",
-                "request_media",
-            )
-        if not img_ok:
-            return (
-                False,
-                "missing_images_permission",
-                "صلاحية الوصول إلى الصور غير ممنوحة. يرجى منح الإذن.",
-                "request_media",
-            )
-        if not vid_ok:
-            return (
-                False,
-                "missing_videos_permission",
-                "صلاحية الوصول إلى مقاطع الفيديو غير ممنوحة. يرجى منح الإذن.",
-                "request_media",
-            )
-
-    if source_norm in ("sdcard", "both"):
-        # فحص إذن SAF للبطاقة كمصدر
-        if source_norm == "sdcard" and not is_saf_sdcard_granted():
-            return (
-                False,
-                "missing_source_saf",
-                "تم اختيار بطاقة الذاكرة الخارجية كمصدر، ولكن لم يتم تحديد مجلد البطاقة أو انتهت صلاحيته.",
-                "request_saf_sdcard",
-            )
-
-    # 2. فحص صلاحيات الوجهة
-    if target_norm == "sdcard":
-        if not is_saf_sdcard_granted():
-            return (
-                False,
-                "missing_target_saf",
-                "تم تحديد الحفظ في بطاقة SD الخارجية، لكن مجلد الحفظ غير محدد أو انتهت صلاحية إذن الوصول (SAF). يرجى اختيار مجلد البطاقة وتفويضه.",
-                "request_saf_sdcard",
-            )
-
-    return (True, "ok", "", "none")
 
 
 def request_media_permissions(
     callback: Callable[[list[str], list[bool]], None] | None = None
 ) -> None:
     """
-    طلب الصلاحيات المخصصة للنظام وفق إصدار أندرويد الفعلي.
+    طلب الصلاحيات المخصصة للنظام وفق إصدار أندرويد الفعلي:
+    - SDK <= 32: طلب READ_EXTERNAL_STORAGE و WRITE_EXTERNAL_STORAGE فقط (بدون READ_MEDIA_* وبدون POST_NOTIFICATIONS).
+    - SDK >= 33: طلب صلاحيات الوسائط الحديثة READ_MEDIA_IMAGES و READ_MEDIA_VIDEO.
+    - SDK >= 34: دعم READ_MEDIA_VISUAL_USER_SELECTED إن لزم.
     """
     try:
         from kivy.utils import platform
@@ -286,10 +622,10 @@ def request_media_permissions(
         from android.permissions import Permission, request_permissions  # type: ignore
 
         sdk = get_android_sdk_int()
-        perms = [Permission.CAMERA]
+        perms = []
 
         if sdk >= 33:
-            for p_name in ["READ_MEDIA_IMAGES", "READ_MEDIA_VIDEO", "POST_NOTIFICATIONS"]:
+            for p_name in ["READ_MEDIA_IMAGES", "READ_MEDIA_VIDEO"]:
                 if hasattr(Permission, p_name):
                     perms.append(getattr(Permission, p_name))
             if sdk >= 34 and hasattr(Permission, "READ_MEDIA_VISUAL_USER_SELECTED"):
