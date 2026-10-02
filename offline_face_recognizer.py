@@ -58,8 +58,9 @@ class FaceRecognitionResult:
 def get_face_storage_path() -> Path:
     """مسار ملف تخزين بصمات وجه المستخدم في التخزين الخاص بالتطبيق"""
     try:
-        from android import mActivity  # type: ignore
-        ctx = mActivity.getApplicationContext()
+        from jnius import autoclass  # type: ignore
+        PythonActivity = autoclass("org.kivy.android.PythonActivity")
+        ctx = PythonActivity.mActivity.getApplicationContext()
         p = Path(ctx.getFilesDir().getAbsolutePath()) / "face_identity_profile.json"
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
@@ -229,10 +230,14 @@ def enroll_user_face(image_paths: list[str], threshold: float = DEFAULT_THRESHOL
 
     # حفظ في التخزين الخاص
     profile_data = {
+        "registered": True,
         "enrolled": True,
         "embedding": avg_emb.tolist(),
+        "mean_embedding": avg_emb.tolist(),
         "dimensions": len(avg_emb),
+        "sample_count": len(extracted_embeddings),
         "samples_count": len(extracted_embeddings),
+        "samples": [emb.tolist() for emb in extracted_embeddings],
         "threshold": threshold,
         "updated_at": os.stat(image_paths[0]).st_mtime if os.path.exists(image_paths[0]) else 0,
     }

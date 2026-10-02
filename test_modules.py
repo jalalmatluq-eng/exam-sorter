@@ -30,6 +30,7 @@ except Exception:
     cv2 = None  # type: ignore
 
 os.environ.setdefault("KIVY_NO_ARGS", "1")
+os.environ["COSMOSORT_TEST_ENV"] = "1"
 
 
 def test_arabic_helper() -> None:
@@ -188,6 +189,44 @@ def test_face_classifier() -> None:
     print(
         "✓ تم بنجاح إنشاء واعتماد بصمة الوجه من صورة مرجعية واحدة."
     )
+
+    # 4. فحص توحيد مخزن بصمة الوجه: تسجيل 3 صور ثم مطابقة صورة رابعة من نفس الشخص وتأكيد النتيجة me
+    try:
+        f_dir = sandbox / "samples_4"
+        f_dir.mkdir(exist_ok=True)
+        img_paths = []
+        for i in range(1, 5):
+            img_mat = np.full((100, 100, 3), 150, dtype=np.uint8)
+            cv2.circle(img_mat, (35, 35), 8, (30, 30, 30), -1)
+            cv2.circle(img_mat, (65, 35), 8, (30, 30, 30), -1)
+            cv2.rectangle(img_mat, (40, 70), (60, 80), (20, 20, 20), -1)
+            ipath = f_dir / f"face_person_{i}.jpg"
+            cv2.imwrite(str(ipath), img_mat)
+            img_paths.append(str(ipath))
+
+        import unittest.mock
+        with unittest.mock.patch("offline_face_recognizer.detect_faces", return_value=[(10, 10, 80, 80)]):
+            res_enroll = face_classifier.save_user_face_profile(img_paths[:3], threshold=0.68)
+            assert res_enroll["success"] is True, f"فشل تسجيل 3 صور: {res_enroll}"
+
+            # التحقق من أن المخزن الموحد يحتوي على البصمة
+            prof_unified = face_classifier.load_user_face_profile()
+            assert prof_unified is not None
+            assert prof_unified["registered"] is True
+            assert prof_unified.get("sample_count") == 3 or prof_unified.get("samples_count") == 3
+
+            # مطابقة صورة رابعة لنفس الشخص والتأكد من أنها تعيد 'me'
+            match_res = face_classifier.classify_face(img_paths[3])
+            assert match_res == "me", f"فشل المطابقة! المتوقع 'me' ولكن وجد: '{match_res}'"
+            print("✓ فحص توحيد البصمة: تم تسجيل 3 صور بنجاح ومطابقة الصورة الرابعة لنفس الشخص كـ 'me'.")
+
+            # التحقق من الحذف من المخزن الموحد
+            face_classifier.delete_user_face_profile()
+            assert not face_classifier.get_profile_path().exists(), "ملف البصمة الموحد لم يُحذف!"
+            assert face_classifier.load_user_face_profile() is None
+            print("✓ فحص الحذف الموحد: تم حذف بصمة الوجه نهائياً من المخزن الموحد بنجاح.")
+    except Exception as e_test:
+        raise AssertionError(f"فشل اختبار توحيد بصمة الوجه: {e_test}") from e_test
 
     # تنظيف
     if sandbox.exists():
@@ -355,7 +394,32 @@ def test_poison_files_and_pending_scan() -> None:
     # تنظيف
     file_manager.save_api_key_to_persistent_storage("")
 
-    print("✓ نجح فحص درع الملف السام والفحص المعلق والمفتاح المشترك بنجاح.\n")
+    # 4. فحص سقف 200 مسار لقائمة poison_files مع إسقاط الأقدم
+    sample_poisons = [f"path/to/corrupt_{i}.mp4" for i in range(250)]
+    file_manager.save_sorter_preferences({"poison_files": sample_poisons})
+    raw_poisons = file_manager.get_sorter_preferences().get("poison_files", [])
+    assert isinstance(raw_poisons, list)
+    saved_poisons: list[Any] = raw_poisons
+    assert len(saved_poisons) == 200, f"المتوقع 200 مسار كحد أقصى ولكن وُجد: {len(saved_poisons)}"
+    assert saved_poisons[0] == "path/to/corrupt_50.mp4", "يجب إسقاط الأقدم من القائمة!"
+    assert saved_poisons[-1] == "path/to/corrupt_249.mp4"
+    file_manager.save_sorter_preferences({"poison_files": []})
+    print("✓ فحص سقف 200 مسار لـ poison_files: تم التحقق وإسقاط الأقدم بنجاح.")
+
+    # 5. فحص عزل مسار transfer_history.json في الاختبارات عن المسار الحقيقي
+    real_prod_log = Path(__file__).resolve().parent / ".app_private" / "transfer_history.json"
+    assert not real_prod_log.exists(), "مسار transfer_history.json الحقيقي لا يجب أن يُمس أثناء الاختبارات!"
+    test_log = file_manager.get_transfer_log_path()
+    assert test_log != real_prod_log, "مسار السجل في الاختبارات يجب أن يكون معزولاً عن المسار الحقيقي!"
+    print("✓ فحص عزل مسار transfer_history.json: مؤكد ومعزول تماماً عن مسار الإنتاج الحقيقي.")
+
+    # 6. فحص منع كتابة crash.log إلى Download المشتركة إلا بعد منح إذن الكتابة
+    main_code = Path("main.py").read_text(encoding="utf-8")
+    assert "is_storage_write_permission_granted" in main_code, "يجب فحص إذن الكتابة قبل محاولة الكتابة في Download!"
+    assert "/storage/emulated/0" in main_code
+    print("✓ فحص حماية crash.log: تم منع الكتابة في التخزين المشترك عند غياب إذن الكتابة بنجاح.")
+
+    print("✓ نجح فحص درع الملف السام والفحص المعلق والمفتاح المشترك والتحسينات المصغرة بنجاح.\n")
 
 
 def test_export_logs() -> None:

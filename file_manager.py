@@ -764,6 +764,8 @@ def get_app_private_storage_dir() -> Path:
             return p
 
     # 5. للحاسوب وبيئة الاختبارات والتطوير
+    if os.environ.get("COSMOSORT_TEST_ENV") or "test" in sys.argv[0].lower():
+        return Path(__import__("tempfile").gettempdir()) / "cosmosort_test_private"
     fallback = Path(__file__).resolve().parent / ".app_private"
     fallback.mkdir(parents=True, exist_ok=True)
     return fallback
@@ -799,6 +801,8 @@ def save_sorter_preferences(prefs: dict[str, object]) -> None:
     prefs_file = get_prefs_file_path()
     current = get_sorter_preferences()
     current.update(prefs)
+    if "poison_files" in current and isinstance(current["poison_files"], list):
+        current["poison_files"] = current["poison_files"][-200:]
     try:
         with open(prefs_file, "w", encoding="utf-8") as f:
             json.dump(current, f, ensure_ascii=False, indent=2)
@@ -939,10 +943,11 @@ def save_api_key_to_persistent_storage(new_key: str) -> None:
     except Exception:
         pass
 
-    targets = [
-        get_prefs_file_path().parent / ".api_key",
-        get_media_sorter_base_path() / ".api_key",
-    ]
+    targets = [get_prefs_file_path().parent / ".api_key"]
+    try:
+        targets.append(get_media_sorter_base_path() / ".api_key")
+    except Exception:
+        pass
     for target in targets:
         try:
             if clean_k:

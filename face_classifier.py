@@ -34,25 +34,17 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.68
-PROFILE_FILENAME = "my_face_profile.json"
+PROFILE_FILENAME = "face_identity_profile.json"
 
 
 def get_profile_path() -> Path:
-    """تحديد مسار حفظ ملف بصمة الوجه المرجعية لصاحب الجهاز"""
+    """تحديد مسار حفظ ملف بصمة الوجه المرجعية لصاحب الجهاز عبر المخزن الموحد"""
     try:
-        from kivy.app import App
-        app = App.get_running_app()
-        if app and hasattr(app, "user_data_dir"):
-            user_data_dir = getattr(app, "user_data_dir", None)
-            if isinstance(user_data_dir, str) and user_data_dir:
-                profile_dir = Path(user_data_dir)
-                profile_dir.mkdir(parents=True, exist_ok=True)
-                return profile_dir / PROFILE_FILENAME
-    except (ImportError, AttributeError, OSError) as exc:
-        logger.debug("تعذر جلب user_data_dir من تطبيق Kivy: %s", exc)
-
-    profile_dir = Path(__file__).resolve().parent
-    return profile_dir / PROFILE_FILENAME
+        import offline_face_recognizer
+        return offline_face_recognizer.get_face_storage_path()
+    except Exception:
+        profile_dir = Path(__file__).resolve().parent
+        return profile_dir / PROFILE_FILENAME
 
 
 def _load_cascade(xml_name: str) -> object | None:
@@ -359,7 +351,19 @@ def save_user_face_profile(
     image_paths: list[str],
     threshold: float = DEFAULT_SIMILARITY_THRESHOLD
 ) -> dict[str, object]:
-    """استخراج بصمات الوجه من الصور المرجعية لصاحب الجهاز وحفظها محلياً"""
+    """استخراج بصمات الوجه من الصور المرجعية لصاحب الجهاز وحفظها في المخزن الموحد"""
+    try:
+        import offline_face_recognizer
+        ok, msg = offline_face_recognizer.enroll_user_face(image_paths, threshold=threshold)
+        if ok:
+            return {
+                "success": True,
+                "count": len(image_paths),
+                "message": msg,
+            }
+    except Exception as exc:
+        logger.debug("التسجيل عبر offline_face_recognizer: %s", exc)
+
     valid_embeddings: list[list[float]] = []
 
     for path in image_paths:
@@ -382,7 +386,7 @@ def save_user_face_profile(
             "message": (
                 "لم يتم كشف أي وجه بشري واضح في الصور المحددة. "
                 "يرجى اختيار أو التقاط صورة واضحة لوجهك."
-            )
+            ),
         }
 
     # حساب المتوسط التراكمي (Centroid) للبصمات المرجعية
@@ -394,9 +398,13 @@ def save_user_face_profile(
 
     profile_data: dict[str, object] = {
         "registered": True,
+        "enrolled": True,
         "sample_count": len(valid_embeddings),
+        "samples_count": len(valid_embeddings),
         "threshold": threshold,
         "mean_embedding": mean_emb.tolist(),
+        "embedding": mean_emb.tolist(),
+        "dimensions": len(mean_emb),
         "samples": valid_embeddings,
         "updated_at": os.path.getmtime(image_paths[0]) if image_paths else 0,
     }
@@ -414,29 +422,48 @@ def save_user_face_profile(
     return {
         "success": True,
         "count": len(valid_embeddings),
-        "message": success_msg
+        "message": success_msg,
     }
 
 
 def load_user_face_profile(
     profile_path: Path | None = None
 ) -> dict[str, object] | None:
-    """تحميل البصمة المرجعية المحفوظة لصاحب الجهاز"""
+    """تحميل البصمة المرجعية المحفوظة لصاحب الجهاز من المخزن الموحد"""
     path = Path(profile_path) if profile_path else get_profile_path()
     if not path.exists():
         return None
     try:
         with open(path, "r", encoding="utf-8") as f:
             data: object = json.load(f)
-            if (
-                isinstance(data, dict)
-                and data.get("registered")
-                and "mean_embedding" in data
-            ):
-                return data
+            if isinstance(data, dict):
+                if data.get("registered") or data.get("enrolled"):
+                    if "mean_embedding" not in data and "embedding" in data:
+                        data["mean_embedding"] = data["embedding"]
+                    if "sample_count" not in data and "samples_count" in data:
+                        data["sample_count"] = data["samples_count"]
+                    data["registered"] = True
+                    return data
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("خطأ أثناء قراءة ملف بصمة الوجه: %s", exc)
     return None
+
+
+def delete_user_face_profile() -> bool:
+    """حذف بيانات وبصمات الوجه المسجلة من المخزن الموحد"""
+    try:
+        import offline_face_recognizer
+        offline_face_recognizer.delete_user_face_profile()
+    except Exception:
+        pass
+    p = get_profile_path()
+    if p.exists():
+        try:
+            p.unlink()
+            return True
+        except Exception:
+            return False
+    return True
 
 
 load_user_profile = load_user_face_profile
@@ -520,3 +547,6 @@ def detect_and_match_face(
                 return "me"
 
     return "other"
+
+
+classify_face = detect_and_match_face

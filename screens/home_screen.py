@@ -100,9 +100,9 @@ class HomeScreen(Screen):
         """تطبيق إعادة التشكيل العربي على عناصر الشاشة الثابتة"""
         if hasattr(self, "ids"):
             if "top_bar_title" in self.ids:
-                self.ids.top_bar_title.text = ar("رتّب | Rateb AI")
+                self.ids.top_bar_title.text = ar("Rateb - رتّب | المُنظّم الذكي")
             if "hero_title" in self.ids:
-                self.ids.hero_title.text = ar("رتّب | المُنظّم الذكي")
+                self.ids.hero_title.text = ar("Rateb - رتّب | المُنظّم الذكي")
             if "hero_sub" in self.ids:
                 self.ids.hero_sub.text = ar(
                     "فرز وتنظيم ذكي للصور والفيديوهات والمستندات"
@@ -961,7 +961,7 @@ class HomeScreen(Screen):
                             json.dump(report_data, jf, ensure_ascii=False, indent=2)
 
                         with open(rep_txt, "w", encoding="utf-8") as rf:
-                            rf.write("=== تقرير تشخيص فرز الوسائط (Rateb / CosmoSort) ===\n")
+                            rf.write("=== تقرير تشخيص فرز الوسائط (Rateb - رتّب | المُنظّم الذكي) ===\n")
                             rf.write(f"المصدر: {src_name} | الوجهة: {tgt_name}\n")
                             rf.write(f"إجمالي الملفات المكتشفة: {report_data['total_found']}\n")
                             rf.write(f"الملفات القابلة للقراءة: {report_data['readable_count']}\n")

@@ -93,8 +93,8 @@ if DEBUG_LOG_FILE is not None:
     except Exception:
         pass
 
-logger = logging.getLogger("CosmoSortApp")
-logger.info("=== بدء تشغيل تطبيق CosmoSort (كوزمو سورت) ===")
+logger = logging.getLogger("RatebApp")
+logger.info("=== بدء تشغيل تطبيق Rateb - رتّب | المُنظّم الذكي ===")
 logger.info("Python: %s | Platform: %s", sys.version, sys.platform)
 
 
@@ -109,6 +109,8 @@ def _handle_uncaught_exception(exctype: Any, value: Any, tb: Any) -> None:
             Path(__file__).resolve().parent / "crash.log",
         ]:
             if log_target is not None:
+                if "/storage/emulated/0" in str(log_target) and not __import__("android_permissions").is_storage_write_permission_granted():
+                    continue
                 try:
                     with open(log_target, "a", encoding="utf-8") as f:
                         f.write(f"\n--- CRASH AT {err}\n")
@@ -439,7 +441,14 @@ class CosmoSortApp(MDApp):
                 if result_code == Activity.RESULT_OK and intent is not None:
                     tree_uri = intent.getData()
                     if tree_uri is not None:
-                        from android import mActivity
+                        try:
+                            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+                            mActivity = PythonActivity.mActivity
+                        except Exception:
+                            try:
+                                from android import mActivity
+                            except Exception:
+                                mActivity = None
                         Intent = autoclass("android.content.Intent")
                         intent_flags = intent.getFlags() if hasattr(intent, "getFlags") else 0
                         take_flags = intent_flags & (
@@ -451,12 +460,15 @@ class CosmoSortApp(MDApp):
                                 Intent.FLAG_GRANT_READ_URI_PERMISSION
                                 | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                             )
-                        cr = mActivity.getContentResolver()
-                        try:
-                            cr.takePersistableUriPermission(tree_uri, take_flags)
-                            logger.info("تم منح وحفظ takePersistableUriPermission بنجاح (Flags: %s)", take_flags)
-                        except Exception as e:
-                            logger.warning("تنبيه takePersistableUriPermission: %s", e)
+                        if mActivity is not None:
+                            cr = mActivity.getContentResolver()
+                            try:
+                                cr.takePersistableUriPermission(tree_uri, take_flags)
+                                logger.info("تم منح وحفظ takePersistableUriPermission بنجاح (Flags: %s)", take_flags)
+                            except Exception as e:
+                                logger.warning("تنبيه takePersistableUriPermission: %s", e)
+                        else:
+                            logger.warning("تعذر العثور على mActivity لحفظ إذن الوصول الدائم للبطاقة")
 
                         uri_str = str(tree_uri.toString())
                         import storage_backend

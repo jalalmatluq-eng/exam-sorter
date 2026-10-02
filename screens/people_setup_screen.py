@@ -206,20 +206,7 @@ class PeopleSetupScreen(Screen):
             _ = show_app_dialog(title="تنبيه: عدد الصور غير كافٍ", text=warn_msg)
             return
 
-        # 1. تدريب وحفظ عبر محرك الذكاء الاصطناعي الأوفلاين المتقدم
-        try:
-            import offline_face_recognizer
-            adv_ok, adv_msg = offline_face_recognizer.enroll_user_face(
-                self.selected_paths, threshold=self.threshold
-            )
-            if not adv_ok:
-                _ = show_app_dialog(title="تعذر تسجيل البصمة", text=adv_msg or "فشل التحقق من وضوح الوجوه في الصور.")
-                return
-        except Exception as e_adv:
-            logger.debug("تجاوز التسجيل المتقدم: %s", e_adv)
-
-
-        # 2. الحفظ التوافقي في النظام المحلي
+        # الحفظ الموحد لبصمة الوجه في مخزن واحد آمن
         result = face_classifier.save_user_face_profile(
             self.selected_paths, threshold=self.threshold
         )
@@ -235,24 +222,16 @@ class PeopleSetupScreen(Screen):
             _ = show_app_dialog(title="تم الحفظ بنجاح", text=msg_ok)
         else:
             msg_err = str(
-                result.get("message", "تعذر التعرف على الوجه في الصور")
+                result.get("message", "تعذر التعرف على الوجه في الصور المحددة")
             )
             _ = show_app_dialog(title="تعذر التعرف", text=msg_err)
 
     def delete_face_profile(self) -> None:
-        """حذف بيانات وبصمات الوجه المسجلة نهائياً وتعطيل الميزة محلياً"""
+        """حذف بيانات وبصمات الوجه المسجلة نهائياً وتعطيل الميزة محلياً من المخزن الموحد"""
         try:
-            import offline_face_recognizer
-            offline_face_recognizer.delete_user_face_profile()
-        except Exception:
-            pass
-
-        try:
-            p = face_classifier.get_profile_path()
-            if p.exists():
-                p.unlink()
-        except Exception:
-            pass
+            face_classifier.delete_user_face_profile()
+        except Exception as e:
+            logger.debug("حذف البصمة: %s", e)
 
         self.selected_paths.clear()
         if hasattr(self, "ids") and "samples_grid" in self.ids:
@@ -262,7 +241,6 @@ class PeopleSetupScreen(Screen):
             title="حذف البصمة",
             text="تم حذف بيانات وبصمة وجهك بالكامل من هاتفك بنجاح."
         )
-
 
     def test_recognition(self) -> None:
         """تجربة فحص صورة فورياً"""

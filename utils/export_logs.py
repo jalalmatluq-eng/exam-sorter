@@ -42,7 +42,7 @@ def get_private_log_file() -> Path:
         if not target.exists():
             with open(target, "w", encoding="utf-8") as f:
                 f.write(
-                    f"=== CosmoSort Diagnostic Log ===\n"
+                    f"=== Rateb - رتّب | المُنظّم الذكي Diagnostic Log ===\n"
                     f"Platform: {sys.platform}\n"
                     f"Version: 2.0.1\n"
                     f"Initialized\n"
