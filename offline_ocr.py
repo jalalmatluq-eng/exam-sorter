@@ -164,18 +164,35 @@ def get_ocr_onnx_net() -> tuple[Any, list[str] | None]:
     return _ocr_net_cache, _ocr_dict_cache
 
 
-def recognize_text_onnx(img_bgr: np.ndarray) -> str:
-    """استخراج النصوص العربية باستخدام نموذج الشبكة العصبية arabic_rec.onnx مع فك ترميز CTC"""
-    net, chars = get_ocr_onnx_net()
-    if net is None or chars is None or img_bgr is None or img_bgr.size == 0:
+def _recognize_text_strip(strip_bgr: np.ndarray, net: Any, chars: list[str]) -> str:
+    """استدلال خط نصوص مفرد عبر نموذج ONNX مع فك ترميز CTC ودعم RTL للغة العربية"""
+    if strip_bgr is None or strip_bgr.size == 0 or cv2 is None:
         return ""
     try:
-        h, w = img_bgr.shape[:2]
+        if len(strip_bgr.shape) == 2:
+            strip_bgr = cv2.cvtColor(strip_bgr, cv2.COLOR_GRAY2BGR)
+
+        # اقتصاص الحواف البيضاء حول النص لضمان وضوح الحروف بارتفاع النموذج
+        gray = cv2.cvtColor(strip_bgr, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, 220, 255, cv2.THRESH_BINARY_INV)
+        coords = cv2.findNonZero(thresh)
+        if coords is not None and len(coords) > 20:
+            bx, by, bw, bh = cv2.boundingRect(coords)
+            if bw >= 10 and bh >= 10:
+                pad = 4
+                y1 = max(0, by - pad)
+                y2 = min(strip_bgr.shape[0], by + bh + pad)
+                x1 = max(0, bx - pad)
+                x2 = min(strip_bgr.shape[1], bx + bw + pad)
+                strip_bgr = strip_bgr[y1:y2, x1:x2]
+
+        h, w = strip_bgr.shape[:2]
+        if h < 8 or w < 8:
+            return ""
+
         target_w = int(w * (48.0 / max(1, h)))
         target_w = max(32, min(640, target_w))
-        resized = cv2.resize(img_bgr, (target_w, 48), interpolation=cv2.INTER_AREA) if cv2 is not None else None
-        if resized is None:
-            return ""
+        resized = cv2.resize(strip_bgr, (target_w, 48), interpolation=cv2.INTER_AREA)
 
         blob = ((resized.astype(np.float32) / 127.5) - 1.0).transpose(2, 0, 1)
         blob = np.expand_dims(blob, axis=0)
@@ -195,7 +212,70 @@ def recognize_text_onnx(img_bgr: np.ndarray) -> str:
             if idx != 0 and idx != prev and idx < len(chars):
                 text_chars.append(chars[idx])
             prev = idx
-        return "".join(text_chars)
+
+        # نموذج PaddleOCR يقرأ من اليسار لليمين، والعربية تُكتب من اليمين لليسار (RTL)
+        # لذلك نعكس ترتيب الحروف المستخرجة لتمثيل الكلمة العربية السليمة
+        return "".join(text_chars[::-1])
+    except Exception as exc:
+        logger.debug("خطأ استدلال شريط OCR: %s", exc)
+        return ""
+
+
+def recognize_text_onnx(img_bgr: np.ndarray) -> str:
+    """
+    استخراج النصوص العربية باستخدام نموذج الشبكة العصبية arabic_rec.onnx:
+    - فحص ما إذا كانت الصورة شريطاً نصياً مفرداً أو صفحة مستند كاملة.
+    - تقطيع سطور النصوص الأفقية (Text Line Segmentation) واستدعاء النموذج لكل سطر.
+    """
+    net, chars = get_ocr_onnx_net()
+    if net is None or chars is None or img_bgr is None or img_bgr.size == 0 or cv2 is None:
+        return ""
+
+    try:
+        if len(img_bgr.shape) == 2:
+            img_3ch = cv2.cvtColor(img_bgr, cv2.COLOR_GRAY2BGR)
+            gray = img_bgr
+        else:
+            img_3ch = img_bgr
+            gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
+
+        h, w = img_3ch.shape[:2]
+
+        # إذا كانت الصورة شريطاً نصياً مفرداً (مثل عنوان أو قصاصة نص)
+        if h <= 90 or (w > 3.0 * h and h <= 150):
+            return _recognize_text_strip(img_3ch, net, chars)
+
+        # إذا كانت صفحة مستند/ورقة اختبار: كشف الأسطر الأفقية عبر العتبة والتشكيل
+        _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
+        kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (25, 5))
+        dilated = cv2.dilate(thresh, kernel, iterations=2)
+        contours, _ = cv2.findContours(dilated, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        boxes = []
+        for cnt in contours:
+            bx, by, bw, bh = cv2.boundingRect(cnt)
+            if bw > 30 and bh > 12:
+                boxes.append((bx, by, bw, bh))
+
+        boxes.sort(key=lambda b: b[1])
+
+        if not boxes:
+            header_crop = img_3ch[:min(h, int(h * 0.4)), :]
+            return _recognize_text_strip(header_crop, net, chars)
+
+        recognized_lines: list[str] = []
+        for bx, by, bw, bh in boxes[:8]:  # التركيز على الأسطر العلوية للمستند
+            pad = 4
+            y1 = max(0, by - pad)
+            y2 = min(h, by + bh + pad)
+            x1 = max(0, bx - pad)
+            x2 = min(w, bx + bw + pad)
+            line_crop = img_3ch[y1:y2, x1:x2]
+            line_txt = _recognize_text_strip(line_crop, net, chars)
+            if line_txt:
+                recognized_lines.append(line_txt)
+
+        return " ".join(recognized_lines)
     except Exception as exc:
         logger.debug("خطأ استدلال OCR ONNX: %s", exc)
         return ""
@@ -373,7 +453,19 @@ def extract_arabic_text_offline(image_path: str) -> OCRResult:
     conf_scores: list[float] = []
 
     # 3. الاستدعاء الفعلي للمحرك (نموذج ONNX العصبي أولاً ثم Tesseract)
-    onnx_text = recognize_text_onnx(processed_img) if processed_img is not None else ""
+    raw_bgr = None
+    if cv2 is not None:
+        try:
+            with open(str(p), "rb") as f:
+                raw_bytes = bytearray(f.read())
+            raw_bgr = cv2.imdecode(np.asarray(raw_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
+        except Exception:
+            raw_bgr = None
+
+    onnx_text = recognize_text_onnx(raw_bgr) if raw_bgr is not None else ""
+    if not onnx_text and processed_img is not None:
+        onnx_text = recognize_text_onnx(processed_img)
+
     if onnx_text:
         raw_text = onnx_text
         conf_scores.append(88.0)

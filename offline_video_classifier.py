@@ -1,26 +1,22 @@
 """
 offline_video_classifier.py
 ----------------------------
-نظام تصنيف الفيديو الأوفلاين الحقيقي لتطبيق رتّب (Rateb AI):
-- تصنيف بصري متعدد الإطارات (Temporal Multi-Frame Analysis):
-  استخراج 5 إطارات موزعة زمنياً (10%, 30%, 50%, 70%, 90%).
-- استخراج المؤشرات البصرية الخفيفة:
-  * كشف الشرائح والنصوص الأكاديمية والسبورات (Edge & Text Density).
-  * كشف الوجوه والأشخاص عبر الإطارات (Face & Person Dynamics).
-  * قياس الاستقرار البصري ومعدل الحركة والقطع (Scene Stability & Motion Score).
-  * الأبعاد ونسبة العرض إلى الارتفاع (Aspect Ratio: سينمائي، عمودي، قياسي).
-  * المدة الزمنية والمؤشرات المساعدة.
-- تصويت ترجيحي عبر الإطارات وحساب درجة الثقة (Confidence Score).
-- تصنيفات واضحة:
-  * فيديوهات مضحكة
-  * محاضرات ودروس
-  * أفلام ومسلسلات
-  * أغاني وأناشيد
-  * فيديوهات شخصية
-  * خارج التصنيف
-  * يحتاج مراجعة
-- نظام كاش سريع ودائم يمنع تكرار التحليل لنفس الفيديو.
-- تشغيل آمن ومضبوط للذاكرة مع دعم الإلغاء وتقدم العمل (Progress & Cancellation).
+نظام تصنيف الفيديو الأوفلاين الهجين لتطبيق رتّب (Rateb AI):
+1. المعمارية ونموذج الرؤية:
+   - يعتمد الاستخراج البصري على شبكة MobileNetV2 ONNX (المدربة على ImageNet-1k بـ 1001 فئة بصرية عامة).
+   - المصدر: ONNX Community (onnx-community/mobilenet_v2_1.0_224).
+   - النموذج ليس شبكة تصنيف فيديو متخصصة وشاملة لجميع السلوكيات (End-to-End Action Recognition)،
+     بل يُستخدم كنموذج استخراج سمات بصرية خفيف (Feature Extractor) للأجهزة المحمولة.
+
+2. التصنيف الهجين متعدد الإطارات (Hybrid Temporal Multi-Frame Analysis):
+   - استخراج 5 إطارات موزعة زمنياً (10%, 30%, 50%, 70%, 90%).
+   - دمج سمات الرؤية العصبية مع مؤشرات الكثافة النصية والشرائح (Slide & Text Density).
+   - كشف الوجوه واستقرار المشهد (Face Dynamics & Scene Stability).
+   - نسبة العرض إلى الارتفاع والمدة الزمنية (Aspect Ratio & Duration).
+
+3. سياسة الشفافية وعدم الجزم الكاذب:
+   - عند انخفاض درجة الثقة البصرية (< 0.65)، يتم تصنيف النتيجة كـ 'يحتاج مراجعة' (needs_review)
+     أو 'خارج التصنيف' (unclassified) منعاً لأي تصنيف تخصصي مضلل.
 """
 
 from __future__ import annotations
@@ -173,8 +169,11 @@ def is_offline_video_model_available() -> bool:
 
 def classify_frame_visual(frame: np.ndarray) -> dict[str, float]:
     """
-    تحليل بصري حقيقي للإطار عبر شبكة MobileNetV2 ONNX:
-    استخراج احتمالات الفئات البصرية (محاضرات/شرائح، موسيقى، أفلام، كوميديا)
+    استخراج مؤشرات بصرية استرشادية للإطار عبر شبكة MobileNetV2 ONNX:
+    - النموذج مدرب على 1001 فئة بصرية من معيار ImageNet-1k.
+    - نستخدم فئات الشاشات/الحواسيب كقرائن للمحاضرات، والآلات الموسيقية للأغاني،
+      والمسارح/الأزياء للأفلام، والمشاهد الهزلية للكوميديا.
+    - هذه الاحتمالات تمثل مدخلات استرشادية للنظام الهجين، ولا تدعي تصنيفاً تخصصياً منفرداً.
     """
     net = get_video_net()
     if net is None or frame is None or frame.size == 0 or cv2 is None:
@@ -195,9 +194,14 @@ def classify_frame_visual(frame: np.ndarray) -> dict[str, float]:
         exp_preds = np.exp(preds - np.max(preds))
         probs = exp_preds / np.sum(exp_preds)
 
+        # فئات ImageNet الاسترشادية:
+        # شاشات، حواسيب، لوحات، كتب (Screen, Monitor, Web site, Notebook, Keyboard)
         lecture_indices = [681, 782, 916, 921, 508, 664, 722, 850]
+        # آلات موسيقية ومكبرات صوت ومسارح غنائية (Guitar, Mic, Stage, Instrument)
         music_indices = [402, 546, 513, 889, 658, 580, 401, 542, 594]
+        # مسارح، أزياء سينمائية، لقطات شاشات عرض (Cinema, Theater, Stage, Costume)
         movie_indices = [840, 850, 486, 755, 983]
+        # عناصر هزلية وألعاب ومهرجين (Comic markers, Playful elements, Costumes)
         funny_indices = [917, 804, 706, 999, 151, 281, 285]
 
         l_score = float(np.sum([probs[i] for i in lecture_indices if i < len(probs)]))
@@ -323,7 +327,7 @@ def _analyze_frame_visuals(frame: np.ndarray) -> dict[str, Any]:
         text_score = edge_density
 
         # خلفية شريحة عرض: تباين عالي مع كثافة حواف متوازنة
-        if (mean_val > 180 or mean_val < 45) and 0.04 < edge_density < 0.35 and std_val > 35:
+        if (mean_val > 175 or mean_val < 45) and 0.03 < edge_density < 0.40 and std_val > 25:
             is_slide = True
 
     # 3. كشف الوجوه
