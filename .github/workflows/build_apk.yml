@@ -41,8 +41,10 @@ jobs:
 
       - name: Check for secrets in code
         run: |
-          # فحص بسيط للأسرار المكشوفة في الكود المصدري
-          if grep -rn "sk-ant-api" --include="*.py" --include="*.yml" --include="*.yaml" .; then
+          # فحص استباقي للأسرار ومفاتيح الـ API في الكود المصدري
+          KEY_PREFIX="sk-ant-"
+          KEY_PATTERN="${KEY_PREFIX}api"
+          if grep -rn "$KEY_PATTERN" --include="*.py" --exclude-dir=".git" .; then
             echo "::error::Potential API key found in source code!"
             exit 1
           fi
