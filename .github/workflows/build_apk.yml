@@ -69,7 +69,7 @@ jobs:
           pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless kivy kivymd materialyoucolor asynckivy onnxruntime
 
       - name: Cache AI model binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: assets/models
           key: cosmosort-models-${{ hashFiles('tools/download_ai_models.py') }}
@@ -119,7 +119,7 @@ jobs:
 
       - name: Cache Buildozer global directory (~/.buildozer)
         if: ${{ !inputs.clean_cache }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.buildozer
           key: cosmosort-global-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
@@ -128,7 +128,7 @@ jobs:
 
       - name: Cache .buildozer local directory
         if: ${{ !inputs.clean_cache }}
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: .buildozer
           key: cosmosort-local-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
@@ -136,7 +136,7 @@ jobs:
             cosmosort-local-v2-${{ runner.os }}-
 
       - name: Cache AI model binaries
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: assets/models
           key: cosmosort-models-${{ hashFiles('tools/download_ai_models.py') }}
