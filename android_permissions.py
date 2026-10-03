@@ -324,6 +324,21 @@ def is_source_path_readable(path_or_uri: str) -> bool:
         return False
 
 
+def get_primary_external_storage_dir() -> Path:
+    """استرجاع مسار الذاكرة الداخلية المشتركة الأساسية عبر Android API أو المسار الافتراضي"""
+    try:
+        from kivy.utils import platform
+        if platform == "android":
+            from jnius import autoclass
+            Environment = autoclass("android.os.Environment")
+            ext = Environment.getExternalStorageDirectory()
+            if ext is not None:
+                return Path(ext.getAbsolutePath())
+    except Exception:
+        pass
+    return Path("/storage/emulated/0")
+
+
 def find_first_media_sample(source_storage: str = "internal", media_type: str = "image") -> str | None:
     """
     البحث عن أول عينة حقيقية لملف صورة أو فيديو للتحقق من إمكانية قراءتها الفعلية:
@@ -369,16 +384,7 @@ def find_first_media_sample(source_storage: str = "internal", media_type: str = 
                 except Exception as e_ms:
                     logger.debug("تعذر جلب عينة من MediaStore: %s", e_ms)
 
-                int_root = Path("/storage/emulated/0")
-                try:
-                    from jnius import autoclass
-                    Environment = autoclass("android.os.Environment")
-                    ext_storage = Environment.getExternalStorageDirectory()
-                    if ext_storage is not None:
-                        int_root = Path(ext_storage.getAbsolutePath())
-                except Exception:
-                    pass
-
+                int_root = get_primary_external_storage_dir()
                 check_subdirs = [
                     int_root / "DCIM" / "Camera",
                     int_root / "DCIM",

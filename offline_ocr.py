@@ -164,8 +164,8 @@ def generate_and_rank_arabic_candidates(raw_text: str) -> tuple[str, str, float]
 
     try:
         import arabic_reshaper  # type: ignore
-        candidates.add(str(arabic_reshaper.reshape(t)))
-        candidates.add(str(arabic_reshaper.reshape(t[::-1])))
+        candidates.add(arabic_reshaper.reshape(t))
+        candidates.add(arabic_reshaper.reshape(t[::-1]))
     except Exception:
         pass
 
