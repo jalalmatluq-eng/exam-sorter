@@ -19,7 +19,7 @@ env:
 jobs:
   lint:
     name: Code quality checks
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 5
 
     steps:
@@ -50,7 +50,7 @@ jobs:
   test:
     name: Run automated unit tests
     needs: lint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 15
 
     steps:
@@ -66,7 +66,7 @@ jobs:
         run: |
           pip install --upgrade pip
           # opencv headless: same API as opencv-python, no system libGL needed on CI runners
-          pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless kivy kivymd onnxruntime
+          pip install pillow python-dotenv arabic-reshaper python-bidi numpy opencv-python-headless kivy kivymd materialyoucolor asynckivy onnxruntime
 
       - name: Cache AI model binaries
         uses: actions/cache@v4
@@ -86,7 +86,7 @@ jobs:
 
   build-apk:
     needs: test
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 120
 
     steps:
