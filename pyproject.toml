@@ -30,9 +30,22 @@ reportMissingParameterType = false
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    "build",
+    "dist",
+    ".buildozer",
+    "assets",
+    "tools",
+]
 
 [tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
 ignore = [
+    "E501",   # Line too long
     "BLE001", # Do not catch blind exception
     "S110",   # try-except-pass
     "RUF012", # Mutable default value for class attribute
