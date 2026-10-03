@@ -13,7 +13,7 @@ numpy>=1.26.0
 opencv-python>=4.10.0
 
 # إدارة المتغيرات البيئية والتخزين
-python-dotenv>=1.0.0
+python-dotenv>=1.2.3
 plyer>=2.1.0
 
 # دعم اللغة العربية والتشكيل داخل Kivy (متوافق مع buildozer.spec)
