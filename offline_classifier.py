@@ -19,19 +19,18 @@ from typing import Any
 
 logger = logging.getLogger("OfflineClassifier")
 
-# تصنيفات الاختبارات والمقررات الدراسية
-# ملاحظة: يجب أن تتطابق مع الأسماء في storage_backend.py لمنع المجلدات المكررة
-CATEGORY_EXAMS_ROOT = "صور الاختبارات"
-CATEGORY_EXAMS_GENERAL = "صور الاختبارات/اختبارات عامة"
-CATEGORY_MY_PHOTOS = "صوري"
-CATEGORY_FRIENDS_PHOTOS = "صور اخوتي وزملائي"
-CATEGORY_UNCLASSIFIED = "خارج التصنيف"
-
-# تصنيفات الفيديو
-CATEGORY_FUNNY_VIDEOS = "فيديوهات مضحكة"
-CATEGORY_LECTURES = "محاضرات ودروس"
-CATEGORY_MOVIES = "أفلام ومسلسلات"
-CATEGORY_SONGS = "أغاني وأناشيد"
+# استيراد الثوابت الموحدة من المصدر المركزي (Single Source of Truth)
+from constants import (  # noqa: E402
+    CATEGORY_EXAMS_GENERAL,
+    CATEGORY_EXAMS_ROOT,
+    CATEGORY_FRIENDS_PHOTOS,
+    CATEGORY_FUNNY_VIDEOS,
+    CATEGORY_LECTURES,
+    CATEGORY_MOVIES,
+    CATEGORY_MY_PHOTOS,
+    CATEGORY_SONGS,
+    CATEGORY_UNCLASSIFIED,
+)
 
 # قواميس المواد الدراسية الذكية
 SUBJECT_KEYWORDS: dict[str, list[str]] = {

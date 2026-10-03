@@ -1,7 +1,9 @@
-name: Build APK - CosmoSort
+name: Build APK - Rateb
 
 on:
   push:
+    branches: [ main, master ]
+  pull_request:
     branches: [ main, master ]
   workflow_dispatch:
     inputs:
@@ -15,9 +17,40 @@ env:
   PYTHONFORANDROID_PREREQUISITES_INSTALL_INTERACTIVE: 0
 
 jobs:
+  lint:
+    name: Code quality checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install linting tools
+        run: |
+          pip install --upgrade pip
+          pip install ruff
+
+      - name: Run ruff linter
+        run: ruff check .
+
+      - name: Check for secrets in code
+        run: |
+          # فحص بسيط للأسرار المكشوفة في الكود المصدري
+          if grep -rn "sk-ant-api" --include="*.py" --include="*.yml" --include="*.yaml" .; then
+            echo "::error::Potential API key found in source code!"
+            exit 1
+          fi
+
   test:
     name: Run automated unit tests
-    runs-on: ubuntu-22.04
+    needs: lint
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     steps:
@@ -53,7 +86,7 @@ jobs:
 
   build-apk:
     needs: test
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 120
 
     steps:

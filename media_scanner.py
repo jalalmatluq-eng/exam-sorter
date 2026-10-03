@@ -21,6 +21,7 @@ import os
 import sqlite3
 import time
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -62,12 +63,26 @@ def get_cache_db_path() -> Path:
     return p
 
 
+@contextmanager
+def _get_cache_db_conn(timeout: float = 5.0):
+    """إدارة اتصال قاعدة البيانات وإغلاق المقبض حتمياً لمنع تسريب المقابض أو قفل الملفات"""
+    db_path = get_cache_db_path()
+    conn = sqlite3.connect(str(db_path), timeout=timeout)
+    try:
+        yield conn
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def init_cache_db() -> bool:
     """تهيئة جدول تتبع الملفات المفحوصة في SQLite بشكل غير حاجب للفرز مع دعم حالة العملية والوجهة"""
     try:
         db_path = get_cache_db_path()
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+        with _get_cache_db_conn(timeout=5.0) as conn:
             cursor = conn.cursor()
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS scanned_files (
@@ -125,7 +140,7 @@ def is_file_already_processed(
         db_path = get_cache_db_path()
         if not db_path.exists():
             return False
-        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+        with _get_cache_db_conn(timeout=5.0) as conn:
             cursor = conn.cursor()
             query = (
                 "SELECT file_size, mtime, dest_path, dest_size, operation_status, target_storage FROM scanned_files WHERE file_path = ?"
@@ -161,7 +176,7 @@ def get_all_scanned_files_set() -> set[str]:
         db_path = get_cache_db_path()
         if not db_path.exists():
             return scanned
-        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+        with _get_cache_db_conn(timeout=5.0) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT file_path FROM scanned_files WHERE operation_status != 'failed'")
             for row in cursor.fetchall():
@@ -179,7 +194,7 @@ def get_scanned_files_details() -> dict[str, dict[str, object]]:
         db_path = get_cache_db_path()
         if not db_path.exists():
             return details
-        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+        with _get_cache_db_conn(timeout=5.0) as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT file_path, file_size, dest_path, dest_size, operation_status, target_storage FROM scanned_files"
@@ -211,8 +226,7 @@ def record_processed_file(
     """تسجيل الملف في كاش التتبع مع حالة العملية ونوع التخزين لمنع تكرار النسخ بعد تعذر حذف المصدر"""
     try:
         init_cache_db()
-        db_path = get_cache_db_path()
-        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+        with _get_cache_db_conn(timeout=5.0) as conn:
             cursor = conn.cursor()
             sql = """
                 INSERT OR REPLACE INTO scanned_files
@@ -250,8 +264,7 @@ def get_cumulative_classified() -> int:
     """إجمالي عمليات التصنيف الناجحة تراكمياً منذ أول تشغيل (لا يتصفر مع مسح الكاش)."""
     try:
         init_cache_db()
-        db_path = get_cache_db_path()
-        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+        with _get_cache_db_conn(timeout=5.0) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT value FROM meta WHERE key = 'cumulative_classified'")
             row = cursor.fetchone()
@@ -274,7 +287,7 @@ def unrecord_processed_file(
         db_path = get_cache_db_path()
         if not db_path.exists():
             return
-        with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+        with _get_cache_db_conn(timeout=5.0) as conn:
             cursor = conn.cursor()
             del_sql = "DELETE FROM scanned_files WHERE file_path = ?"
             cursor.execute(del_sql, (file_path,))
@@ -290,7 +303,7 @@ def clear_all_cache() -> bool:
     try:
         db_path = get_cache_db_path()
         if db_path.exists():
-            with sqlite3.connect(str(db_path), timeout=5.0) as conn:
+            with _get_cache_db_conn(timeout=5.0) as conn:
                 cursor = conn.cursor()
                 cursor.execute("DELETE FROM scanned_files")
                 conn.commit()

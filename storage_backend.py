@@ -19,75 +19,41 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger("StorageBackend")
-
-ORGANIZED_FOLDER_NAME = "الملفات المنظمة"
-
-# أسماء التصنيفات المعتمدة والموحدة لكافة أجزاء التطبيق
-CATEGORY_MY_PHOTOS = "صوري"
-CATEGORY_FRIENDS_PHOTOS = "صور اخوتي وزملائي"
-CATEGORY_EXAMS_ROOT = "صور الاختبارات"
-CATEGORY_LECTURES = "محاضرات ودروس"
-CATEGORY_FUNNY_VIDEOS = "فيديوهات مضحكة"
-CATEGORY_MOVIES = "أفلام ومسلسلات"
-CATEGORY_SONGS = "أغاني وأناشيد"
-CATEGORY_UNCLASSIFIED = "خارج التصنيف"
-
-STANDARD_CATEGORIES: list[str] = [
-    CATEGORY_MY_PHOTOS,
-    CATEGORY_FRIENDS_PHOTOS,
-    CATEGORY_MOVIES,
-    CATEGORY_LECTURES,
-    CATEGORY_SONGS,
-    CATEGORY_FUNNY_VIDEOS,
+from constants import (
     CATEGORY_EXAMS_ROOT,
+    CATEGORY_FRIENDS_PHOTOS,
+    CATEGORY_FUNNY_VIDEOS,
+    CATEGORY_LECTURES,
+    CATEGORY_MOVIES,
+    CATEGORY_MY_PHOTOS,
+    CATEGORY_SONGS,
     CATEGORY_UNCLASSIFIED,
+    IMAGE_EXTENSIONS,
+    LEGACY_CATEGORY_MAPPINGS,
+    MIME_TYPE_MAP,
+    ORGANIZED_FOLDER_NAME,
+    STANDARD_CATEGORIES,
+    VIDEO_EXTENSIONS,
+)
+
+__all__ = [
+    "CATEGORY_EXAMS_ROOT",
+    "CATEGORY_FRIENDS_PHOTOS",
+    "CATEGORY_FUNNY_VIDEOS",
+    "CATEGORY_LECTURES",
+    "CATEGORY_MOVIES",
+    "CATEGORY_MY_PHOTOS",
+    "CATEGORY_SONGS",
+    "CATEGORY_UNCLASSIFIED",
+    "IMAGE_EXTENSIONS",
+    "LEGACY_CATEGORY_MAPPINGS",
+    "MIME_TYPE_MAP",
+    "ORGANIZED_FOLDER_NAME",
+    "STANDARD_CATEGORIES",
+    "VIDEO_EXTENSIONS",
 ]
 
-# خريطة توحيد الأسماء القديمة والمتباينة
-LEGACY_CATEGORY_MAPPINGS: dict[str, str] = {
-    "محاضرات وتعلم": CATEGORY_LECTURES,
-    "محاضرات_وتعلم": CATEGORY_LECTURES,
-    "محاضرات": CATEGORY_LECTURES,
-    "دروس": CATEGORY_LECTURES,
-    "صور_الاختبارات": CATEGORY_EXAMS_ROOT,
-    "صور اختبارات": CATEGORY_EXAMS_ROOT,
-    "صور_اخوتي_وزملائي": CATEGORY_FRIENDS_PHOTOS,
-    "صور_الزملاء_والإخوة": CATEGORY_FRIENDS_PHOTOS,
-    "فيديوهات_مضحكة": CATEGORY_FUNNY_VIDEOS,
-    "افلام ومسلسلات": CATEGORY_MOVIES,
-    "أفلام_ومسلسلات": CATEGORY_MOVIES,
-    "اغاني واناشيد": CATEGORY_SONGS,
-    "أغاني_وأناشيد": CATEGORY_SONGS,
-}
-
-IMAGE_EXTENSIONS: set[str] = {
-    ".jpg", ".jpeg", ".png", ".webp",
-    ".gif", ".bmp", ".heic", ".heif",
-}
-
-VIDEO_EXTENSIONS: set[str] = {
-    ".mp4", ".mkv", ".3gp", ".mov",
-    ".avi", ".webm", ".m4v", ".flv",
-}
-
-MIME_TYPE_MAP: dict[str, str] = {
-    "image/jpeg": ".jpg",
-    "image/png": ".png",
-    "image/webp": ".webp",
-    "image/heic": ".heic",
-    "image/heif": ".heif",
-    "image/gif": ".gif",
-    "image/bmp": ".bmp",
-    "video/mp4": ".mp4",
-    "video/x-matroska": ".mkv",
-    "video/3gpp": ".3gp",
-    "video/quicktime": ".mov",
-    "video/x-msvideo": ".avi",
-    "video/webm": ".webm",
-    "video/x-m4v": ".m4v",
-    "video/x-flv": ".flv",
-}
+logger = logging.getLogger("StorageBackend")
 
 
 def resolve_media_mime_type(filename_or_path: str, explicit_mime: str = "") -> str:

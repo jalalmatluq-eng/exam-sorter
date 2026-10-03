@@ -44,13 +44,20 @@ MODEL_DIR = Path(__file__).resolve().parent / "assets" / "models" / "video"
 MODEL_VERSION = "2.0.0-hybrid-vision"
 
 # التصنيفات الرسمية المعتمدة
-CATEGORY_FUNNY = "فيديوهات مضحكة"
-CATEGORY_LECTURE = "محاضرات ودروس"
-CATEGORY_MOVIES = "أفلام ومسلسلات"
-CATEGORY_SONGS = "أغاني وأناشيد"
-CATEGORY_PERSONAL = "فيديوهات شخصية"
-CATEGORY_UNCLASSIFIED = "خارج التصنيف"
-CATEGORY_NEEDS_REVIEW = "يحتاج مراجعة"
+# استيراد الثوابت الموحدة من المصدر المركزي
+from constants import (  # noqa: E402
+    CATEGORY_FUNNY_VIDEOS,
+    CATEGORY_LECTURES,
+    CATEGORY_MOVIES,
+    CATEGORY_NEEDS_REVIEW,
+    CATEGORY_PERSONAL,
+    CATEGORY_SONGS,
+    CATEGORY_UNCLASSIFIED,
+)
+
+# أسماء مختصرة للتوافق مع الكود الحالي
+CATEGORY_FUNNY = CATEGORY_FUNNY_VIDEOS
+CATEGORY_LECTURE = CATEGORY_LECTURES
 
 # الكلمات المساعدة (Auxiliary Clues)
 AUX_KEYWORDS: dict[str, list[str]] = {

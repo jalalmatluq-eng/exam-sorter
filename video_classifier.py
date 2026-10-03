@@ -33,11 +33,18 @@ import numpy as np
 import classifier
 import file_manager
 
-CATEGORY_FUNNY = "فيديوهات مضحكة"
-CATEGORY_LECTURE = "محاضرات ودروس"
-CATEGORY_MOVIES = "أفلام ومسلسلات"
-CATEGORY_SONGS = "أغاني وأناشيد"
-CATEGORY_UNCLASSIFIED = "خارج التصنيف"
+# استيراد الثوابت الموحدة من المصدر المركزي
+from constants import (  # noqa: E402
+    CATEGORY_FUNNY_VIDEOS,
+    CATEGORY_LECTURES,
+    CATEGORY_MOVIES,
+    CATEGORY_SONGS,
+    CATEGORY_UNCLASSIFIED,
+)
+
+# أسماء مختصرة للتوافق مع الكود الحالي
+CATEGORY_FUNNY = CATEGORY_FUNNY_VIDEOS
+CATEGORY_LECTURE = CATEGORY_LECTURES
 
 # قواميس الكلمات المفتاحية الذكية
 KEYWORDS_MAP = {

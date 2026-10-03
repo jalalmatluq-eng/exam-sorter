@@ -1,3 +1,15 @@
+[project]
+name = "rateb"
+version = "2.0.1"
+description = "Smart Media Organizer (رتّب - المُنظّم الذكي للوسائط)"
+authors = [
+    { name = "Jalal Matluq" }
+]
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["media", "organizer", "kivy", "ai", "ocr", "android"]
+
 [tool.basedpyright]
 typeCheckingMode = "basic"
 reportMissingTypeStubs = false

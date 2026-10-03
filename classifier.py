@@ -213,8 +213,9 @@ def classify_with_claude(
         if offline_classifier.is_circuit_breaker_open():
             raise ClassificationError("الخدمة السحابية غير متاحة حالياً بسبب انقطاع الإنترنت (قاطع الدائرة مفعل).")
 
-        # مهلة قصيرة 3.5 ثانية للاتصال بالشبكة لضمان سلاسة التطبيق
-        with urllib.request.urlopen(req, timeout=3.5) as response:
+        # مهلة اتصال مناسبة لشبكات الهاتف المحمول البطيئة (3G/4G)
+        from constants import API_TIMEOUT_SECONDS
+        with urllib.request.urlopen(req, timeout=API_TIMEOUT_SECONDS) as response:
             raw_response = response.read().decode("utf-8")
             result = cast(
                 dict[str, Any], json.loads(raw_response)
@@ -272,7 +273,7 @@ def classify_with_claude(
         import offline_classifier
         offline_classifier.record_cloud_api_failure()
         raise ClassificationError(
-            "استغرق الطلب وقتاً طويلاً (انتهت مهلة الاتصال 3.5 ثانية)."
+            "استغرق الطلب وقتاً طويلاً (انتهت مهلة الاتصال). تحقق من جودة الاتصال بالإنترنت."
         )
 
     except Exception as ex:

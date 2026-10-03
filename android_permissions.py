@@ -145,9 +145,9 @@ def has_permission(permission_name: str) -> bool:
     if _MOCK_PERMISSIONS is not None:
         short = permission_name.replace("android.permission.", "")
         if permission_name in _MOCK_PERMISSIONS:
-            return bool(_MOCK_PERMISSIONS[permission_name])
+            return _MOCK_PERMISSIONS[permission_name]
         if short in _MOCK_PERMISSIONS:
-            return bool(_MOCK_PERMISSIONS[short])
+            return _MOCK_PERMISSIONS[short]
         return False
 
     try:
@@ -370,6 +370,15 @@ def find_first_media_sample(source_storage: str = "internal", media_type: str = 
                     logger.debug("تعذر جلب عينة من MediaStore: %s", e_ms)
 
                 int_root = Path("/storage/emulated/0")
+                try:
+                    from jnius import autoclass
+                    Environment = autoclass("android.os.Environment")
+                    ext_storage = Environment.getExternalStorageDirectory()
+                    if ext_storage is not None:
+                        int_root = Path(ext_storage.getAbsolutePath())
+                except Exception:
+                    pass
+
                 check_subdirs = [
                     int_root / "DCIM" / "Camera",
                     int_root / "DCIM",
@@ -380,9 +389,14 @@ def find_first_media_sample(source_storage: str = "internal", media_type: str = 
                 for s_dir in check_subdirs:
                     if s_dir.exists() and s_dir.is_dir():
                         try:
-                            for entry in s_dir.iterdir():
-                                if entry.is_file() and entry.suffix.lower() in exts and not entry.name.startswith("."):
-                                    return str(entry)
+                            with os.scandir(s_dir) as it:
+                                for count, entry in enumerate(it):
+                                    if count > 100:
+                                        break
+                                    if entry.is_file():
+                                        ext = os.path.splitext(entry.name)[1].lower()
+                                        if ext in exts and not entry.name.startswith("."):
+                                            return entry.path
                         except Exception as e:
                             logger.debug("Failed scanning %s: %s", s_dir, e)
                             continue

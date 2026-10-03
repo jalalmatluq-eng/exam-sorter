@@ -116,14 +116,23 @@ def _handle_uncaught_exception(exctype: Any, value: Any, tb: Any) -> None:
     err = "".join(traceback.format_exception(exctype, value, tb))
     logger.critical("CRITICAL UNCAUGHT EXCEPTION: %s", err)
     try:
+        primary_ext = Path("/storage/emulated/0")
+        try:
+            from android_permissions import get_primary_external_storage_dir
+            primary_ext = get_primary_external_storage_dir()
+        except Exception:
+            pass
+
         for log_target in [
             DEBUG_LOG_FILE,
-            Path("/storage/emulated/0/Download/cosmosort_crash.log"),
-            Path("/storage/emulated/0/cosmosort_crash.log"),
+            primary_ext / "Download" / "rateb_crash.log",
+            primary_ext / "Download" / "cosmosort_crash.log",
+            primary_ext / "rateb_crash.log",
+            primary_ext / "cosmosort_crash.log",
             Path(__file__).resolve().parent / "crash.log",
         ]:
             if log_target is not None:
-                if "/storage/emulated/0" in str(log_target) and not __import__("android_permissions").is_storage_write_permission_granted():
+                if str(primary_ext) in str(log_target) and not __import__("android_permissions").is_storage_write_permission_granted():
                     continue
                 try:
                     with open(log_target, "a", encoding="utf-8") as f:

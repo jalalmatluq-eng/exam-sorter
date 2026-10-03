@@ -8,8 +8,11 @@
 لتظهر الكلمات العربية متصلة ومن اليمين إلى اليسار بدون تقطيع.
 """
 
+import logging
 import os
 from pathlib import Path
+
+logger = logging.getLogger("ArabicHelper")
 
 # استيراد مكتبات التشكيل وإعادة الترتيب
 try:
@@ -17,10 +20,24 @@ try:
     from bidi.algorithm import get_display  # type: ignore
     has_arabic_support: bool = True
 except (ImportError, ModuleNotFoundError) as e:
-    print("تنبيه: تعذر استيراد مكتبات التشكيل العربي:", e)
+    logger.warning("تنبيه: تعذر استيراد مكتبات التشكيل العربي: %s", e)
     arabic_reshaper = None  # type: ignore
     get_display = None  # type: ignore
     has_arabic_support = False
+
+# تخزين كائن ArabicReshaper مرة واحدة على مستوى الوحدة لتفادي إعادة الإنشاء في كل استدعاء
+_reshaper_instance = None
+if has_arabic_support and arabic_reshaper is not None:
+    try:
+        _reshaper_instance = arabic_reshaper.ArabicReshaper(
+            configuration={
+                "delete_harakat": False,
+                "support_ligatures": True,
+                "shift_harakat_position": False,
+            }
+        )
+    except Exception as e:
+        logger.warning("تعذر إنشاء كائن ArabicReshaper: %s", e)
 
 
 def ar(text: str) -> str:
@@ -45,26 +62,17 @@ def ar(text: str) -> str:
         return text
 
     if (
-        has_arabic_support
-        and arabic_reshaper is not None
+        _reshaper_instance is not None
         and get_display is not None
     ):
         try:
-            configuration: dict[str, bool] = {
-                "delete_harakat": False,
-                "support_ligatures": True,
-                "shift_harakat_position": False,
-            }
-            reshaper = arabic_reshaper.ArabicReshaper(
-                configuration=configuration
-            )
-            reshaped_text = reshaper.reshape(text)
+            reshaped_text = _reshaper_instance.reshape(text)
             display_result = get_display(reshaped_text)
             if isinstance(display_result, bytes):
                 return display_result.decode("utf-8", errors="replace")
             return display_result
         except (TypeError, ValueError, AttributeError, RuntimeError) as e:
-            print("خطأ أثناء تشكيل النص العربي:", e)
+            logger.warning("خطأ أثناء تشكيل النص العربي: %s", e)
             return text
     return text
 
