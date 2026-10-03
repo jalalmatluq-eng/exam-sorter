@@ -151,7 +151,7 @@ jobs:
           buildozer -v android debug
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         if: always()
         with:
           name: rateb-2.0.1-debug
