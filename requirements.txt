@@ -18,7 +18,7 @@ plyer>=2.1.0
 
 # دعم اللغة العربية والتشكيل داخل Kivy (متوافق مع buildozer.spec)
 arabic-reshaper>=2.1.4
-python-bidi>=0.4.2
+python-bidi>=0.6.11
 
 # خيار بديل اختياري: التعرف الضوئي على الحروف بدون إنترنت (OCR)
 # pytesseract>=0.3.10
