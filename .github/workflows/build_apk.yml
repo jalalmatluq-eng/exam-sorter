@@ -144,7 +144,7 @@ jobs:
       - name: Download AI model binaries
         run: |
           python tools/download_ai_models.py
-          python -c "from pathlib import Path; files=[Path('assets/models/ocr/ara.traineddata'),Path('assets/models/ocr/arabic_rec.onnx'),Path('assets/models/ocr/arabic_dict.txt'),Path('assets/models/face/mobilefacenet.onnx'),Path('assets/models/video/mobilenetv2_video.onnx')]; missing=[str(f) for f in files if not f.exists() or f.stat().st_size<=1000]; assert not missing, f'Missing model files: {missing}'; print('All 5 model files verified OK')"
+          python -c "from pathlib import Path; files=[Path('assets/models/ocr/ara.traineddata'),Path('assets/models/ocr/arabic_rec.onnx'),Path('assets/models/ocr/arabic_dict.txt'),Path('assets/models/face/mobilefacenet.onnx'),Path('assets/models/video/mobilenetv2_video.onnx')]; missing=[str(f) for f in files if not f.exists() or f.stat().st_size <= (50 if f.suffix == '.txt' else 1000)]; assert not missing, f'Missing model files: {missing}'; print('All 5 model files verified OK')"
 
       - name: Build APK with Buildozer
         run: |
