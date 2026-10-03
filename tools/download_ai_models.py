@@ -39,8 +39,11 @@ MODELS = [
 ]
 
 
-def download_file(dest_path: Path, url: str, max_retries: int = 5) -> bool:
-    if dest_path.exists() and dest_path.stat().st_size > 1000:
+def download_file(dest_path: Path, url: str, max_retries: int = 5, min_size: int | None = None) -> bool:
+    if min_size is None:
+        min_size = 50 if dest_path.suffix.lower() in [".txt", ".json", ".csv"] else 1000
+
+    if dest_path.exists() and dest_path.stat().st_size >= min_size:
         print(f"ALREADY EXISTS: {dest_path.name} ({dest_path.stat().st_size} bytes)")
         return True
 
@@ -54,8 +57,8 @@ def download_file(dest_path: Path, url: str, max_retries: int = 5) -> bool:
                 with open(dest_path, "wb") as f:
                     f.write(content)
             size = dest_path.stat().st_size
-            if size <= 1000:
-                raise ValueError(f"downloaded file suspiciously small ({size} bytes)")
+            if size < min_size:
+                raise ValueError(f"downloaded file suspiciously small ({size} bytes, expected >= {min_size})")
             print(f"SAVED: {dest_path.name} ({size} bytes)")
             return True
         except Exception as exc:
