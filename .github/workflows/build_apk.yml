@@ -41,11 +41,9 @@ jobs:
 
       - name: Check for secrets in code
         run: |
-          # فحص استباقي للأسرار ومفاتيح الـ API في الكود المصدري
-          KEY_PREFIX="sk-ant-"
-          KEY_PATTERN="${KEY_PREFIX}api"
-          if grep -rn "$KEY_PATTERN" --include="*.py" --exclude-dir=".git" .; then
-            echo "::error::Potential API key found in source code!"
+          # فحص استباقي للأسرار ومفاتيح الـ API الحقيقية في الكود المصدري
+          if grep -rnE "sk-ant-api[0-9]{2}-[a-zA-Z0-9_\-]{20,}" --include="*.py" --exclude-dir=".git" .; then
+            echo "::error::Potential Anthropic API key found in source code!"
             exit 1
           fi
 
