@@ -22,6 +22,7 @@ import media_scanner
 import storage_backend
 import video_classifier
 from service import media_watcher_service
+from test_transfer_history import test_transfer_history_security
 from utils.arabic_helper import ar, get_arabic_font_path
 
 try:
@@ -791,6 +792,7 @@ def test_advanced_saf_and_edge_cases() -> None:
             "is_saf_dest": True,
             "timestamp": "2026-10-01T00:00:00Z",
         }
+        saf_rec["undo_signature"] = file_manager._transfer_record_signature(saf_rec)
         log_f = file_manager.get_transfer_log_path(private_dir)
         import json
         with open(log_f, "w", encoding="utf-8") as f:
@@ -2829,6 +2831,7 @@ def test_cumulative_classified_counter() -> None:
 
 
 if __name__ == "__main__":
+    test_transfer_history_security()
     test_arabic_helper()
     test_file_manager()
     test_classifier_encoding()

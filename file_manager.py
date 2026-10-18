@@ -10,10 +10,13 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import sys
@@ -1217,6 +1220,73 @@ def get_transfer_log_path(base_path: Path | None = None) -> Path:
     return private_log
 
 
+def _transfer_record_signature(record: dict[str, object], *, create_key: bool = False) -> str | None:
+    """Authenticate records with a key that is never imported from shared storage."""
+    key_file = get_app_private_storage_dir() / ".transfer_history.key"
+    try:
+        if create_key:
+            key_file.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(secrets.token_bytes(32))
+        key = key_file.read_bytes()
+        if len(key) != 32:
+            return None
+        payload = {k: v for k, v in record.items() if k != "undo_signature"}
+        data = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
+        return hmac.new(key, data, hashlib.sha256).hexdigest()
+    except (OSError, TypeError, ValueError):
+        return None
+
+
+def _is_trusted_transfer_record(record: dict[str, object]) -> bool:
+    signature = record.get("undo_signature")
+    expected = _transfer_record_signature(record)
+    return (
+        isinstance(signature, str)
+        and re.fullmatch(r"[0-9a-f]{64}", signature) is not None
+        and expected is not None
+        and hmac.compare_digest(signature, expected)
+    )
+
+
+def can_undo_transfer(record: dict[str, object]) -> bool:
+    """Old/imported records are display-only; undo must never touch private files."""
+    if not _is_trusted_transfer_record(record):
+        return False
+    source = record.get("source")
+    destination = record.get("destination")
+    if not isinstance(source, str) or not source or not isinstance(destination, str) or not destination:
+        return False
+    paths = [destination]
+    if not record.get("is_copy", True):
+        paths.append(source)
+    try:
+        private_dir = get_app_private_storage_dir().resolve()
+        for path in paths:
+            if path.startswith("content://"):
+                continue
+            local_path = Path(path.strip().removeprefix("mock_doc://")).resolve()
+            if local_path.is_relative_to(private_dir):
+                return False
+    except (OSError, ValueError, RuntimeError):
+        return False
+    return True
+
+
+def _set_transfer_record_copy_mode(record: dict[str, object], is_copy: bool) -> bool:
+    """Update authenticated records without granting undo to imported history."""
+    if not _is_trusted_transfer_record(record):
+        return False
+    record["is_copy"] = is_copy
+    record["undo_signature"] = _transfer_record_signature(record)
+    return True
+
+
 def _log_transfer_record(
     src_path: str,
     dest_path: str,
@@ -1241,7 +1311,7 @@ def _log_transfer_record(
             records = []
 
     rec_id = int(datetime.now(UTC).timestamp() * 1000)
-    records.append({
+    record: dict[str, object] = {
         "id": rec_id,
         "source": src_path,
         "destination": dest_path,
@@ -1250,7 +1320,9 @@ def _log_transfer_record(
         "is_copy": is_copy,
         "is_saf_dest": is_saf_dest or dest_path.startswith("content://"),
         "timestamp": datetime.now(UTC).isoformat(),
-    })
+    }
+    record["undo_signature"] = _transfer_record_signature(record, create_key=True)
+    records.append(record)
 
     records = records[-1000:]
     try:
@@ -1269,8 +1341,7 @@ def _update_last_transfer_record_to_copy(base_path: Path | None = None) -> None:
     try:
         with open(log_file, "r", encoding="utf-8") as f:
             records = json.load(f)
-        if records and isinstance(records, list):
-            records[-1]["is_copy"] = True
+        if records and isinstance(records, list) and _set_transfer_record_copy_mode(records[-1], True):
             with open(log_file, "w", encoding="utf-8") as f:
                 json.dump(records, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -1289,8 +1360,7 @@ def update_transfer_record_to_move(record_id: int, base_path: Path | None = None
         if isinstance(records, list):
             for rec in records:
                 if rec.get("id") == record_id:
-                    rec["is_copy"] = False
-                    updated = True
+                    updated = _set_transfer_record_copy_mode(rec, False)
                     break
         if updated:
             with open(log_file, "w", encoding="utf-8") as f:
@@ -1314,8 +1384,7 @@ def update_transfer_record_by_src_to_move(src_path: str, base_path: Path | None 
         if isinstance(records, list):
             for rec in reversed(records):
                 if str(rec.get("source", "")).lower() == src_lower:
-                    rec["is_copy"] = False
-                    updated = True
+                    updated = _set_transfer_record_copy_mode(rec, False)
                     break
         if updated:
             with open(log_file, "w", encoding="utf-8") as f:
@@ -1406,7 +1475,7 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
             target_record = r
             break
 
-    if target_record is None:
+    if target_record is None or not can_undo_transfer(target_record):
         return False
 
     dest_str = str(target_record["destination"])
@@ -1527,6 +1596,9 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
     cleared_keys: list[tuple[str, str]] = []
 
     for r in records:
+        if not can_undo_transfer(r):
+            remaining_records.append(r)
+            continue
         dest_str = str(r.get("destination", ""))
         src_str = str(r.get("source", ""))
         is_copy = bool(r.get("is_copy", True))
