@@ -25,6 +25,8 @@ from typing import Any, cast
 from dotenv import load_dotenv
 from PIL import Image
 
+from constants import MAX_IMAGE_DECODE_DIMENSION, MAX_IMAGE_DECODE_PIXELS
+
 # تحميل المتغيرات من ملف .env إن وجد بأمان
 try:
     _env_file = Path(__file__).resolve().parent / ".env"
@@ -55,6 +57,10 @@ DEFAULT_MODEL = os.getenv(
 
 class ClassificationError(Exception):
     """استثناء مخصص لأخطاء التصنيف"""
+
+
+class ImageSizeError(ClassificationError):
+    """Reject oversized source images without retrying another decoder."""
 
 
 def get_api_key(custom_key: str | None = None) -> str:
@@ -123,12 +129,22 @@ def encode_and_resize_image(
         media_type = "image/webp"
 
     with Image.open(image_path) as img:
+        # Check header dimensions before convert, resize, or save loads pixels.
+        width, height = img.size
+        if (
+            width > MAX_IMAGE_DECODE_DIMENSION
+            or height > MAX_IMAGE_DECODE_DIMENSION
+            or width * height > MAX_IMAGE_DECODE_PIXELS
+        ):
+            raise ImageSizeError(
+                "أبعاد الصورة كبيرة جداً لمعالجتها بأمان. يرجى اختيار صورة أصغر."
+            )
+
         # تحويل صيغ RGBA إلى RGB إن كانت JPEG
         if img.mode in ("RGBA", "P") and media_type == "image/jpeg":
             img = img.convert("RGB")
 
         # تصغير الحجم إذا كانت الصورة أكبر من max_dimension
-        width, height = img.size
         if max(width, height) > max_dimension:
             scale = max_dimension / max(width, height)
             new_size = (int(width * scale), int(height * scale))
@@ -343,6 +359,8 @@ def classify_exam_image(
     """
     try:
         return classify_with_claude(image_path, api_key=api_key)
+    except ImageSizeError:
+        raise
     except ClassificationError:
         if fallback_to_ocr:
             try:

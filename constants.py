@@ -92,3 +92,8 @@ MIME_TYPE_MAP: dict[str, str] = {
 
 # ─── مهلة اتصال API ─────────────────────────────────────────────────────────────
 API_TIMEOUT_SECONDS = 12.0
+
+# Bound source rasters before decoding on mobile devices (about 61 MiB at 4 bytes/pixel).
+# These limits are independent of the resized output dimensions.
+MAX_IMAGE_DECODE_DIMENSION = 8192
+MAX_IMAGE_DECODE_PIXELS = 16_000_000

@@ -5,17 +5,24 @@
 - فحص ترميز وتجهيز الصور في وحدة الذكاء الاصطناعي.
 """
 
+import base64
 import os
 import shutil
+import struct
 import time
+import zlib
+from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
 
 import android_permissions
 import classifier
+import constants
 import face_classifier
 import file_manager
 import media_scanner
@@ -146,6 +153,63 @@ def test_classifier_encoding() -> None:
             file_manager.save_api_key_to_persistent_storage(saved_stored_key)
 
     print("✓ نجح فحص وحدة التصنيف.\n")
+
+
+def test_classifier_image_limits() -> None:
+    """Reject oversized headers before decoding or attempting OCR/network calls."""
+    with TemporaryDirectory() as directory:
+        image_path = Path(directory) / "input.png"
+        dimension_limit = constants.MAX_IMAGE_DECODE_DIMENSION
+        pixel_limit = constants.MAX_IMAGE_DECODE_PIXELS
+        area_width = int(pixel_limit ** 0.5)
+        oversized = (
+            (dimension_limit + 1, 1),
+            (1, dimension_limit + 1),
+            (area_width, pixel_limit // area_width + 1),
+        )
+        for mode, suffix in (("RGB", ".png"), ("RGBA", ".jpg"), ("P", ".jpg")):
+            image_path = image_path.with_suffix(suffix)
+            for size in oversized:
+                # A valid PNG header with a tiny payload avoids allocating a huge test raster.
+                Image.new(mode, (1, 1)).save(image_path, format="PNG")
+                data = bytearray(image_path.read_bytes())
+                data[16:24] = struct.pack(">II", *size)
+                data[29:33] = struct.pack(">I", zlib.crc32(data[12:29]))
+                image_path.write_bytes(data)
+
+                with (
+                    patch.object(Image.Image, "load", side_effect=AssertionError("Pixel load attempted")) as load,
+                    patch.object(classifier, "classify_with_local_ocr") as ocr,
+                    patch("urllib.request.urlopen") as request,
+                ):
+                    for prepare in (
+                        lambda: classifier.encode_and_resize_image(str(image_path), max_dimension=dimension_limit + 1),
+                        lambda: classifier.classify_exam_image(str(image_path), api_key="test", fallback_to_ocr=True),
+                    ):
+                        try:
+                            prepare()
+                        except classifier.ImageSizeError:
+                            pass
+                        else:
+                            raise AssertionError(f"Oversized image accepted: {size}, {mode}")
+                    load.assert_not_called()
+                    ocr.assert_not_called()
+                    request.assert_not_called()
+
+        # Exercise exact boundaries with small real rasters and a reduced test budget.
+        with (
+            patch.object(classifier, "MAX_IMAGE_DECODE_DIMENSION", 100),
+            patch.object(classifier, "MAX_IMAGE_DECODE_PIXELS", 8000),
+        ):
+            for mode, suffix in (("RGB", ".png"), ("RGBA", ".jpg"), ("P", ".jpg")):
+                image_path = image_path.with_suffix(suffix)
+                Image.new(mode, (100, 80)).save(image_path, format="PNG")
+                encoded, media_type = classifier.encode_and_resize_image(str(image_path), max_dimension=50)
+                with Image.open(BytesIO(base64.b64decode(encoded))) as result:
+                    result.load()
+                    assert result.size == (50, 40)
+                    assert result.format == ("PNG" if suffix == ".png" else "JPEG")
+                    assert media_type == ("image/png" if suffix == ".png" else "image/jpeg")
 
 
 def test_face_classifier() -> None:
@@ -2832,6 +2896,7 @@ if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
     test_classifier_encoding()
+    test_classifier_image_limits()
     test_face_classifier()
     test_video_classifier()
     test_media_scanner_and_rollback()
