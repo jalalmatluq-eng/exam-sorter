@@ -286,7 +286,8 @@ class CosmoSortApp(MDApp):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self.title = "Rateb - رتّب | المُنظّم الذكي"
-        self.api_key = os.getenv("ANTHROPIC_API_KEY", "")
+        stored_key = file_manager.get_stored_api_key()
+        self.api_key = os.getenv("ANTHROPIC_API_KEY", "") or stored_key
         self.arabic_font = font_path or "Roboto"
         self.batch_queue = []
 

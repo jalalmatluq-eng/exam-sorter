@@ -62,7 +62,7 @@ def get_api_key(custom_key: str | None = None) -> str:
     استرجاع مفتاح الـ API بالترتيب التالي:
     1. المفتاح الممرر يدوياً من الشاشة/الإعدادات.
     2. متغير البيئة ANTHROPIC_API_KEY من ملف .env.
-    3. ملف التخزين الدائم المشترك (لتوافق الخدمات الخلفية).
+    3. التخزين الخاص بالتطبيق (لتوافق الخدمات الخلفية).
     4. مسار user_data_dir لتطبيقات الجوال.
     5. القيمة الافتراضية DEFAULT_API_KEY.
     """
@@ -73,7 +73,7 @@ def get_api_key(custom_key: str | None = None) -> str:
     if env_key:
         return env_key
 
-    # فحص مسار التخزين المشترك للتطبيق والخدمة الخلفية
+    # فحص التخزين الخاص بالتطبيق والخدمة الخلفية
     try:
         import file_manager
         stored = file_manager.get_stored_api_key()
