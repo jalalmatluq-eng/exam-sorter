@@ -334,7 +334,122 @@ def test_media_scanner_and_rollback() -> None:
 
     # تنظيف
     shutil.rmtree(sandbox)
+    test_transfer_collision_safety()
     print("✓ نجح فحص النقل الآمن والتراجع بالكامل.\n")
+
+
+def test_transfer_collision_safety() -> None:
+    """Collisions must preserve existing files through copy, move and both undo APIs."""
+    import json
+    from tempfile import TemporaryDirectory
+    from unittest.mock import patch
+
+    with TemporaryDirectory() as temp:
+        root = Path(temp)
+        # Keep undo cache cleanup inside the isolated test directory.
+        with (
+            patch.object(file_manager, "get_app_private_storage_dir", return_value=root),
+            patch.object(file_manager, "get_internal_media_sorter_base_path", return_value=root),
+        ):
+            for copy_only in (True, False):
+                for bulk_undo in (True, False):
+                    for existing_bytes in (b"GOOD", b"EVIL", b"LONGER"):
+                        case = root / f"{copy_only}_{bulk_undo}_{existing_bytes.decode()}"
+                        case.mkdir()
+                        src = case / "photo.jpg"
+                        src.write_bytes(b"GOOD")
+                        target = case / "target"
+                        folder = target / "صوري"
+                        folder.mkdir(parents=True)
+                        existing = [folder / "photo.jpg", folder / "photo_01.jpg"]
+                        for path in existing:
+                            path.write_bytes(existing_bytes)
+                        dest = file_manager.move_to_category(src, "صوري", base_path=target, copy_only=copy_only)
+                        assert dest == folder / "photo_02.jpg"
+                        assert dest.read_bytes() == b"GOOD"
+                        assert src.exists() is copy_only
+                        record = file_manager.get_transfer_history(target)[0]
+                        assert record["destination_created"] is True
+                        if bulk_undo:
+                            assert file_manager.undo_all_transfers(target) == 1
+                        else:
+                            assert file_manager.undo_transfer(record["id"], target) is True
+                        assert src.read_bytes() == b"GOOD"
+                        assert not dest.exists()
+                        assert all(path.read_bytes() == existing_bytes for path in existing)
+
+            # Copying a file already in the category must not make undo own it.
+            target = root / "same_path"
+            folder = target / "صوري"
+            folder.mkdir(parents=True)
+            src = folder / "photo.jpg"
+            src.write_bytes(b"GOOD")
+            dest = file_manager.move_to_category(src, "صوري", base_path=target, copy_only=False)
+            assert dest != src and dest.read_bytes() == b"GOOD"
+            assert file_manager.undo_all_transfers(target) == 1
+            assert src.read_bytes() == b"GOOD"
+
+            # URI sources with unknown size still copy rather than reuse a collision.
+            src = root / "uri_source.jpg"
+            src.write_bytes(b"GOOD")
+            item = storage_backend.MediaItem(
+                id="uri-source", source_type="content_uri", path="",
+                uri=f"mock_doc://{src}", display_name="photo.jpg", size_bytes=0,
+            )
+            existing = folder / "photo.jpg"
+            existing.write_bytes(b"EVIL")
+            dest = file_manager.move_to_category(item, "صوري", base_path=target, copy_only=False)
+            assert dest.read_bytes() == b"GOOD" and not src.exists()
+            assert existing.read_bytes() == b"EVIL"
+
+            # Neither undo API may delete or move an output without proven ownership.
+            for copy_only in (True, False):
+                for ownership in (None, False):
+                    record = file_manager.get_transfer_history(target)[0]
+                    record["is_copy"] = copy_only
+                    if ownership is None:
+                        record.pop("destination_created", None)
+                    else:
+                        record["destination_created"] = ownership
+                    log = file_manager.get_transfer_log_path(target)
+                    log.write_text(json.dumps([record]), encoding="utf-8")
+                    assert file_manager.undo_transfer(record["id"], target) is False
+                    assert file_manager.undo_all_transfers(target) == 0
+                    assert dest.read_bytes() == b"GOOD"
+                    assert len(file_manager.get_transfer_history(target)) == 1
+
+            # A successful helper and matching byte count are insufficient for Move.
+            src = root / "verify.jpg"
+            src.write_bytes(b"GOOD")
+            target = root / "verify_target"
+            target.mkdir()
+
+            def corrupt_copy(source: Path, destination: Path) -> bool:
+                destination.write_bytes(b"EVIL")
+                return True
+
+            for copier in (corrupt_copy, lambda source, destination: False):
+                with patch.object(storage_backend, "copy_path_to_path", side_effect=copier):
+                    try:
+                        file_manager.move_to_category(src, "صوري", base_path=target, copy_only=False)
+                    except OSError:
+                        pass
+                    else:
+                        raise AssertionError("Move accepted an unverified destination")
+                assert src.read_bytes() == b"GOOD"
+                assert list((target / "صوري").iterdir()) == []
+                assert file_manager.get_transfer_history(target) == []
+
+            with patch.object(storage_backend, "compute_content_uri_hash", return_value=None):
+                try:
+                    file_manager.move_to_category(src, "صوري", base_path=target, copy_only=False)
+                except OSError:
+                    pass
+                else:
+                    raise AssertionError("Move accepted unavailable content verification")
+            assert src.read_bytes() == b"GOOD"
+            assert list((target / "صوري").iterdir()) == []
+            assert file_manager.get_transfer_history(target) == []
 
 
 def test_service_watcher() -> None:

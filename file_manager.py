@@ -1249,6 +1249,7 @@ def _log_transfer_record(
         "size_bytes": file_size,
         "is_copy": is_copy,
         "is_saf_dest": is_saf_dest or dest_path.startswith("content://"),
+        "destination_created": True,
         "timestamp": datetime.now(UTC).isoformat(),
     })
 
@@ -1409,6 +1410,10 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     if target_record is None:
         return False
 
+    # Older records may refer to a reused file; ownership cannot be inferred.
+    if target_record.get("destination_created") is not True:
+        return False
+
     dest_str = str(target_record["destination"])
     src_str = str(target_record["source"])
     is_copy = bool(target_record.get("is_copy", True))
@@ -1527,6 +1532,10 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
     cleared_keys: list[tuple[str, str]] = []
 
     for r in records:
+        if r.get("destination_created") is not True:
+            remaining_records.append(r)
+            continue
+
         dest_str = str(r.get("destination", ""))
         src_str = str(r.get("source", ""))
         is_copy = bool(r.get("is_copy", True))
@@ -1758,51 +1767,42 @@ def copy_to_category(
     stem = Path(filename).stem
     suffix = Path(filename).suffix
 
-    # حل تعارض الأسماء
+    # Every transfer owns a new output, even when an existing file is identical.
+    # Exclusive creation also prevents two transfers from choosing the same name.
     primary_dest = target_folder / f"{stem}{suffix}"
-    if primary_dest.exists() and primary_dest.stat().st_size == src_size:
-        _log_transfer_record(
-            src_path=str(src_uri if is_uri_source else resolved_src_path),
-            dest_path=str(primary_dest),
-            category=clean_cat,
-            file_size=src_size,
-            base_path=base_path,
-            is_copy=is_copy,
-            is_saf_dest=False,
-        )
-        return primary_dest
-
     dest = primary_dest
     counter = 1
-    while dest.exists():
-        if dest.stat().st_size == src_size:
-            _log_transfer_record(
-                src_path=str(src_uri if is_uri_source else resolved_src_path),
-                dest_path=str(dest),
-                category=clean_cat,
-                file_size=src_size,
-                base_path=base_path,
-                is_copy=is_copy,
-                is_saf_dest=False,
-            )
-            return dest
-        dest = target_folder / f"{stem}_{counter:02d}{suffix}"
-        counter += 1
+    while True:
+        try:
+            with dest.open("xb"):
+                pass
+            break
+        except FileExistsError:
+            dest = target_folder / f"{stem}_{counter:02d}{suffix}"
+            counter += 1
 
     # تنفيذ النسخ بالدفق
-    if is_uri_source:
-        success = storage_backend.copy_uri_to_path(src_uri, dest)
-    else:
-        assert resolved_src_path is not None
-        success = storage_backend.copy_path_to_path(resolved_src_path, dest)
+    try:
+        if is_uri_source:
+            success = storage_backend.copy_uri_to_path(src_uri, dest)
+        else:
+            assert resolved_src_path is not None
+            success = storage_backend.copy_path_to_path(resolved_src_path, dest)
 
-    if not success or not dest.exists():
-        raise OSError(f"فشل التحقق: تعذر إتمام نسخ الملف إلى الوجهة: {dest}")
+        if not success or not dest.exists():
+            raise OSError(f"فشل التحقق: تعذر إتمام نسخ الملف إلى الوجهة: {dest}")
 
-    dest_size = dest.stat().st_size
-    if src_size > 0 and dest_size != src_size:
+        dest_size = dest.stat().st_size
+        if src_size > 0 and dest_size != src_size:
+            raise OSError(f"عدم تطابق الحجم بعد النسخ: المصدر {src_size} بايت، الوجهة {dest_size} بايت")
+
+        if not is_copy:
+            source_hash = storage_backend.compute_content_uri_hash(str(src_uri if is_uri_source else resolved_src_path))
+            if not source_hash or source_hash != storage_backend.compute_content_uri_hash(str(dest)):
+                raise OSError(f"تعذر التحقق من محتوى الوجهة قبل حذف الأصل: {dest}")
+    except Exception:
         dest.unlink(missing_ok=True)
-        raise OSError(f"عدم تطابق الحجم بعد النسخ: المصدر {src_size} بايت، الوجهة {dest_size} بايت")
+        raise
 
     # توثيق العملية في app-private storage (أو base_path إن مرر صراحة)
     _log_transfer_record(
