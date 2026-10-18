@@ -781,26 +781,24 @@ def test_advanced_saf_and_edge_cases() -> None:
             storage_backend.delete_media_item = orig_del
 
         # 4. فحص فقدان إذن SAF أثناء التراجع
-        saf_rec = {
-            "id": 999999,
-            "source": str(f_src),
-            "destination": "content://com.android.externalstorage.documents/tree/SD/document/SD%3Atest.jpg",
-            "category": "صوري",
-            "size_bytes": 4,
-            "is_copy": True,
-            "is_saf_dest": True,
-            "timestamp": "2026-10-01T00:00:00Z",
-        }
         log_f = file_manager.get_transfer_log_path(private_dir)
         import json
         with open(log_f, "w", encoding="utf-8") as f:
-            json.dump([saf_rec], f)
+            json.dump([], f)
+        saf_record_id = file_manager._log_transfer_record(
+            src_path=str(f_src),
+            dest_path="content://com.android.externalstorage.documents/tree/SD/document/SD%3Atest.jpg",
+            category="صوري",
+            file_size=4,
+            base_path=private_dir,
+            is_saf_dest=True,
+        )
 
         # بطاقة مفصولة / إذن غير صالح
         orig_valid = storage_backend.is_saf_uri_valid
         storage_backend.is_saf_uri_valid = lambda uri_str: False
         try:
-            saf_undo_res = file_manager.undo_transfer(999999, base_path=private_dir)
+            saf_undo_res = file_manager.undo_transfer(saf_record_id, base_path=private_dir)
             assert saf_undo_res is False, "يجب أن يفشل التراجع بأمان عند فقدان إذن SAF أو فصل SD"
             saf_hist = file_manager.get_transfer_history(base_path=private_dir)
             assert len(saf_hist) == 1, "يجب عدم حذف السجل عند فصل كرت SD أو انتهاء الإذن!"

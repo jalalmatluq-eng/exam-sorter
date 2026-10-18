@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import sys
@@ -1210,11 +1212,50 @@ def get_transfer_log_path(base_path: Path | None = None) -> Path:
         try:
             legacy_log = get_internal_media_sorter_base_path() / "transfer_history.json"
             if legacy_log.exists():
-                shutil.copy2(str(legacy_log), str(private_log))
+                with open(legacy_log, "r", encoding="utf-8") as f:
+                    legacy_records = json.load(f)
+                # Shared history is display-only, even if it claims to be signed.
+                records = [r for r in legacy_records if isinstance(r, dict)] if isinstance(legacy_records, list) else []
+                for record in records:
+                    record.pop("undo_signature", None)
+                with open(private_log, "w", encoding="utf-8") as f:
+                    json.dump(records, f, ensure_ascii=False, indent=2)
                 logger.info("تمت هجرة سجل transfer_history.json إلى التخزين الخاص بالتطبيق بنجاح")
         except Exception as e:
             logger.debug("تعذر نسخ سجل العمليات القديم: %s", e)
     return private_log
+
+
+def _transfer_record_signature(record: dict[str, object], create_key: bool = False) -> str:
+    """Authenticate history using a key that is never imported from shared storage."""
+    key_file = get_app_private_storage_dir() / "transfer_history.key"
+    try:
+        if create_key:
+            key_file.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                fd = os.open(key_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(fd, "wb") as f:
+                    f.write(secrets.token_bytes(32))
+        key = key_file.read_bytes()
+        if len(key) != 32:
+            return ""
+        payload = {k: v for k, v in record.items() if k not in ("undo_signature", "can_undo")}
+        data = json.dumps(payload, sort_keys=True, ensure_ascii=True).encode("utf-8")
+        return hmac.new(key, data, "sha256").hexdigest()
+    except (OSError, TypeError, ValueError):
+        return ""
+
+
+def _can_undo_transfer_record(record: dict[str, object]) -> bool:
+    """Fail closed for legacy, tampered, or otherwise unauthenticated records."""
+    signature = record.get("undo_signature")
+    if not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+        return False
+    expected = _transfer_record_signature(record)
+    return bool(expected) and hmac.compare_digest(signature, expected)
 
 
 def _log_transfer_record(
@@ -1241,7 +1282,7 @@ def _log_transfer_record(
             records = []
 
     rec_id = int(datetime.now(UTC).timestamp() * 1000)
-    records.append({
+    record: dict[str, object] = {
         "id": rec_id,
         "source": src_path,
         "destination": dest_path,
@@ -1250,7 +1291,9 @@ def _log_transfer_record(
         "is_copy": is_copy,
         "is_saf_dest": is_saf_dest or dest_path.startswith("content://"),
         "timestamp": datetime.now(UTC).isoformat(),
-    })
+    }
+    record["undo_signature"] = _transfer_record_signature(record, create_key=True)
+    records.append(record)
 
     records = records[-1000:]
     try:
@@ -1269,8 +1312,9 @@ def _update_last_transfer_record_to_copy(base_path: Path | None = None) -> None:
     try:
         with open(log_file, "r", encoding="utf-8") as f:
             records = json.load(f)
-        if records and isinstance(records, list):
+        if records and isinstance(records, list) and _can_undo_transfer_record(records[-1]):
             records[-1]["is_copy"] = True
+            records[-1]["undo_signature"] = _transfer_record_signature(records[-1])
             with open(log_file, "w", encoding="utf-8") as f:
                 json.dump(records, f, ensure_ascii=False, indent=2)
     except Exception as e:
@@ -1289,7 +1333,10 @@ def update_transfer_record_to_move(record_id: int, base_path: Path | None = None
         if isinstance(records, list):
             for rec in records:
                 if rec.get("id") == record_id:
+                    if not _can_undo_transfer_record(rec):
+                        return False
                     rec["is_copy"] = False
+                    rec["undo_signature"] = _transfer_record_signature(rec)
                     updated = True
                     break
         if updated:
@@ -1314,7 +1361,10 @@ def update_transfer_record_by_src_to_move(src_path: str, base_path: Path | None 
         if isinstance(records, list):
             for rec in reversed(records):
                 if str(rec.get("source", "")).lower() == src_lower:
+                    if not _can_undo_transfer_record(rec):
+                        return False
                     rec["is_copy"] = False
+                    rec["undo_signature"] = _transfer_record_signature(rec)
                     updated = True
                     break
         if updated:
@@ -1370,6 +1420,8 @@ def get_transfer_history(
                 valid_items: list[dict[str, object]] = [
                     d for d in data if isinstance(d, dict)
                 ]
+                for record in valid_items:
+                    record["can_undo"] = _can_undo_transfer_record(record)
                 return list(reversed(valid_items))
             return []
     except (OSError, json.JSONDecodeError):
@@ -1406,7 +1458,7 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
             target_record = r
             break
 
-    if target_record is None:
+    if target_record is None or not _can_undo_transfer_record(target_record):
         return False
 
     dest_str = str(target_record["destination"])
@@ -1527,6 +1579,9 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
     cleared_keys: list[tuple[str, str]] = []
 
     for r in records:
+        if not _can_undo_transfer_record(r):
+            remaining_records.append(r)
+            continue
         dest_str = str(r.get("destination", ""))
         src_str = str(r.get("source", ""))
         is_copy = bool(r.get("is_copy", True))
