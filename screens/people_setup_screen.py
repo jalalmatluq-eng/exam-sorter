@@ -17,6 +17,7 @@ from kivymd.uix.card import MDCard
 
 import face_classifier
 import file_manager
+from offline_face_recognizer import is_face_image_size_allowed
 from utils.arabic_helper import ar
 from utils.ui_helper import show_app_dialog, show_modern_notification
 
@@ -136,9 +137,19 @@ class PeopleSetupScreen(Screen):
     def _on_files_selected(self, paths: list[str]) -> None:
         if not paths:
             return
+        rejected = False
         for p in paths:
             if p not in self.selected_paths and len(self.selected_paths) < 5:
+                if not is_face_image_size_allowed(p):
+                    rejected = True
+                    continue
                 self.selected_paths.append(p)
+
+        if rejected:
+            _ = show_app_dialog(
+                title="تعذر إضافة الصورة",
+                text="يرجى اختيار صور مدعومة لا تتجاوز 12 مليون بكسل لكل صورة.",
+            )
 
         def _do_render(_dt: float) -> None:
             self.render_samples_grid()
@@ -179,6 +190,8 @@ class PeopleSetupScreen(Screen):
         """رسم مربعات معاينة الصور المرجعية المحددة"""
         self.ids.samples_grid.clear_widgets()
         for _idx, path in enumerate(self.selected_paths):
+            if not is_face_image_size_allowed(path):
+                continue
             card = MDCard(
                 size_hint=(1, None),
                 height=dp(120),

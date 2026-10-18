@@ -16,7 +16,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, BinaryIO
 
 import numpy as np
 
@@ -35,6 +35,43 @@ logger = logging.getLogger("OfflineFaceRecognizer")
 
 MODEL_DIR = Path(__file__).resolve().parent / "assets" / "models" / "face"
 DEFAULT_THRESHOLD = 0.65
+# At most 36 MB for the decoded BGR reference, before processing copies.
+MAX_FACE_IMAGE_PIXELS = 12_000_000
+
+
+def is_face_image_size_allowed(image_source: str | Path | BinaryIO) -> bool:
+    """Check reference headers before decoding; fail closed on unknown sizes."""
+    try:
+        if isinstance(image_source, (str, Path)):
+            with open(image_source, "rb") as source:
+                return is_face_image_size_allowed(source)
+
+        header = image_source.read(30)
+        image_source.seek(0)
+        if header[:4] == b"RIFF" and header[8:12] == b"WEBP":
+            # Pillow's WebP opener can allocate the canvas before returning.
+            # Read the VP8/VP8L/VP8X dimensions without creating that decoder.
+            chunk = header[12:16]
+            if chunk == b"VP8X" and len(header) >= 30:
+                width = int.from_bytes(header[24:27], "little") + 1
+                height = int.from_bytes(header[27:30], "little") + 1
+            elif chunk == b"VP8L" and len(header) >= 25 and header[20] == 0x2F:
+                bits = int.from_bytes(header[21:25], "little")
+                width, height = (bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1
+            elif chunk == b"VP8 " and len(header) >= 30 and header[23:26] == b"\x9d\x01\x2a":
+                width = int.from_bytes(header[26:28], "little") & 0x3FFF
+                height = int.from_bytes(header[28:30], "little") & 0x3FFF
+            else:
+                return False
+        else:
+            from PIL import Image
+
+            # These openers read dimensions without decoding image pixels.
+            with Image.open(image_source, formats=("JPEG", "PNG", "BMP", "GIF", "TIFF")) as image:
+                width, height = image.size
+        return width > 0 and height > 0 and width * height <= MAX_FACE_IMAGE_PIXELS
+    except Exception:
+        return False
 
 
 @dataclass
@@ -199,6 +236,9 @@ def enroll_user_face(image_paths: list[str], threshold: float = DEFAULT_THRESHOL
         img = None
         try:
             with open(img_path, "rb") as f:
+                if not is_face_image_size_allowed(f):
+                    return False, f"الصورة رقم {idx + 1} غير مدعومة أو تتجاوز الحد الأقصى البالغ 12 مليون بكسل."
+                f.seek(0)
                 raw_bytes = bytearray(f.read())
             if cv2 is not None:
                 img = cv2.imdecode(np.asarray(raw_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)

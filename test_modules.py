@@ -148,6 +148,129 @@ def test_classifier_encoding() -> None:
     print("✓ نجح فحص وحدة التصنيف.\n")
 
 
+def test_face_reference_image_limits() -> None:
+    """Reject oversized references before enrollment, fallback or Pillow decoding."""
+    import struct
+    import tempfile
+    import zlib
+    from unittest.mock import patch
+
+    from PIL import PngImagePlugin
+
+    import offline_face_recognizer as recognizer
+
+    assert cv2 is not None
+
+    def png_chunk(kind: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    def png_header(width: int, height: int) -> bytes:
+        return b"\x89PNG\r\n\x1a\n" + png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        oversized = root / "oversized.png"
+        # A real 8000x8000 PNG, compressed a row at a time without a large raster.
+        compressor = zlib.compressobj()
+        with oversized.open("wb") as output:
+            output.write(png_header(8000, 8000))
+            row = b"\0" * (1 + 8000 * 3)
+            for _ in range(8000):
+                compressed = compressor.compress(row)
+                if compressed:
+                    output.write(png_chunk(b"IDAT", compressed))
+            output.write(png_chunk(b"IDAT", compressor.flush()))
+            output.write(png_chunk(b"IEND", b""))
+        assert oversized.stat().st_size < 1_000_000
+
+        # Header checks must precede both Pillow pixel loading and OpenCV decoding.
+        with (
+            patch.object(PngImagePlugin.PngImageFile, "load", side_effect=AssertionError("pixel decode")) as pixel_loader,
+            patch.object(cv2, "imdecode") as decoder,
+        ):
+            assert not recognizer.is_face_image_size_allowed(oversized)
+            ok, message = recognizer.enroll_user_face([str(oversized)] * 3)
+            assert not ok and "12" in message
+            assert face_classifier.safe_read_image(str(oversized)) is None
+            assert not face_classifier.save_user_face_profile([str(oversized)] * 3)["success"]
+            pixel_loader.assert_not_called()
+            decoder.assert_not_called()
+
+        # Check the inclusive pixel budget using headers, without loading rasters.
+        boundary = root / "boundary.png"
+        for width, height, allowed in ((4000, 3000, True), (4000, 3001, False)):
+            boundary.write_bytes(png_header(width, height) + png_chunk(b"IDAT", b"") + png_chunk(b"IEND", b""))
+            assert recognizer.is_face_image_size_allowed(boundary) is allowed
+
+        # Every WebP header variant must be bounded before Pillow opens a canvas.
+        webp = root / "oversized.webp"
+        webp_headers = (
+            (b"VP8 ", b"\0\0\0\x9d\x01\x2a" + struct.pack("<HH", 8000, 8000)),
+            (b"VP8L", b"\x2f" + struct.pack("<I", 7999 | (7999 << 14))),
+            (b"VP8X", b"\0" * 4 + (7999).to_bytes(3, "little") * 2),
+        )
+        with (
+            patch("PIL.Image.open", side_effect=AssertionError("WebP canvas")) as opener,
+            patch.object(cv2, "imdecode") as decoder,
+        ):
+            for chunk, payload in webp_headers:
+                webp.write_bytes(b"RIFF" + struct.pack("<I", 12 + len(payload)) + b"WEBP" + chunk + struct.pack("<I", len(payload)) + payload)
+                assert not recognizer.is_face_image_size_allowed(webp)
+                assert not recognizer.enroll_user_face([str(webp)] * 3)[0]
+                assert face_classifier.safe_read_image(str(webp)) is None
+            opener.assert_not_called()
+            decoder.assert_not_called()
+
+        invalid = root / "invalid.jpg"
+        invalid.write_bytes(b"not an image")
+        with patch.object(cv2, "imdecode") as decoder:
+            assert not recognizer.is_face_image_size_allowed(invalid)
+            assert not recognizer.is_face_image_size_allowed(root / "missing.png")
+            assert face_classifier.safe_read_image(str(invalid)) is None
+            decoder.assert_not_called()
+
+        # Real supported images still decode, resize and preserve BGR channel order.
+        small = root / "small.png"
+        exif = Image.Exif()
+        exif[274] = 1
+        for extension, options in (
+            ("png", {}), ("jpg", {}), ("bmp", {}), ("gif", {}), ("tiff", {}),
+            ("webp", {}), ("webp", {"lossless": True}), ("webp", {"exif": exif}),
+        ):
+            path = root / f"small.{extension}"
+            Image.new("RGB", (64, 48), (220, 30, 10)).save(path, **options)
+            if extension == "webp":
+                expected_chunk = b"VP8X" if "exif" in options else b"VP8L" if options.get("lossless") else b"VP8 "
+                assert path.read_bytes()[12:16] == expected_chunk
+            assert recognizer.is_face_image_size_allowed(path), (extension, options)
+            loaded = face_classifier.safe_read_image(str(path), max_size=32)
+            assert loaded is not None and loaded.shape == (24, 32, 3), (extension, options)
+            assert loaded[0, 0, 2] > loaded[0, 0, 0]
+
+        # Force the Pillow processing fallback, while retaining the header control.
+        with patch("PIL.Image.Image.thumbnail", side_effect=OSError("Pillow processing failed")):
+            loaded = face_classifier.safe_read_image(str(small), max_size=32)
+            assert loaded is not None and loaded.shape == (24, 32, 3)
+
+        profile = root / "profile.json"
+        with (
+            patch.object(recognizer, "get_face_storage_path", return_value=profile),
+            patch.object(recognizer, "detect_faces", return_value=[(0, 0, 32, 32)]),
+            patch.object(recognizer, "extract_face_embedding", return_value=np.array([1.0, 0.0])),
+        ):
+            result = face_classifier.save_user_face_profile([str(small)] * 3)
+            assert result["success"] and profile.exists()
+
+        with (
+            patch.object(recognizer, "enroll_user_face", return_value=(False, "model unavailable")),
+            patch.object(face_classifier, "get_profile_path", return_value=profile),
+            patch.object(face_classifier, "detect_faces_in_image", return_value=[np.full((32, 32, 3), 120, dtype=np.uint8)]),
+        ):
+            assert face_classifier.save_user_face_profile([str(small)] * 3)["success"]
+
+    print("✓ Face reference size limits, fallback rejection and supported image loading passed.")
+
+
 def test_face_classifier() -> None:
     print(
         "--- 4. فحص وحدة تصنيف الوجوه والتعرف عليها (Face Classifier) ---"
@@ -2832,6 +2955,7 @@ if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
     test_classifier_encoding()
+    test_face_reference_image_limits()
     test_face_classifier()
     test_video_classifier()
     test_media_scanner_and_rollback()

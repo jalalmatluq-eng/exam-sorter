@@ -31,6 +31,8 @@ except (ImportError, Exception):
 
 import numpy as np
 
+from offline_face_recognizer import is_face_image_size_allowed
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.68
@@ -81,15 +83,19 @@ def _safe_read_image(image_path: str, max_size: int = 800) -> np.ndarray | None:
     """قراءة الصورة بأمان مع ضغط الحجم فورياً لتوفير 95% من الذاكرة ومنع إغلاق التطبيق على الهواتف الحديثة"""
     try:
         from PIL import Image, ImageOps
-        with Image.open(image_path) as pil_img:
-            try:
-                pil_img = ImageOps.exif_transpose(pil_img)
-            except Exception:
-                pass
-            pil_img.thumbnail((max_size, max_size), Image.Resampling.BILINEAR)
-            pil_img = pil_img.convert("RGB")
-            rgb = np.array(pil_img)
-            return rgb[:, :, ::-1]
+        with open(image_path, "rb") as source:
+            if not is_face_image_size_allowed(source):
+                return None
+            source.seek(0)
+            with Image.open(source) as pil_img:
+                try:
+                    pil_img = ImageOps.exif_transpose(pil_img)
+                except Exception:
+                    pass
+                pil_img.thumbnail((max_size, max_size), Image.Resampling.BILINEAR)
+                pil_img = pil_img.convert("RGB")
+                rgb = np.array(pil_img)
+                return rgb[:, :, ::-1]
     except Exception:
         pass
 
@@ -97,6 +103,9 @@ def _safe_read_image(image_path: str, max_size: int = 800) -> np.ndarray | None:
         # المحاولة البديلة عبر OpenCV إذا فشل PIL
         if cv2 is not None:
             with open(image_path, "rb") as f:
+                if not is_face_image_size_allowed(f):
+                    return None
+                f.seek(0)
                 bytes_data = bytearray(f.read())
             numpy_array = np.asarray(bytes_data, dtype=np.uint8)
             img = cv2.imdecode(numpy_array, cv2.IMREAD_COLOR)
