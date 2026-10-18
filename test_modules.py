@@ -339,6 +339,7 @@ def test_media_scanner_and_rollback() -> None:
 
 def test_service_watcher() -> None:
     print("--- 7. فحص خدمة المراقبة بالخلفية (Media Watcher Service) ---")
+    test_service_control_security()
     media_watcher_service.stop_watcher_thread()
     assert not media_watcher_service.is_watcher_running(), (
         "الخدمة يجب أن تكون متوقفة بعد الاستدعاء"
@@ -351,6 +352,67 @@ def test_service_watcher() -> None:
         "فشل إيقاف ثريد الخدمة!"
     )
     print("✓ تم بدء وإيقاف ثريد خدمة المراقبة بنجاح.\n")
+
+
+def test_service_control_security() -> None:
+    """Keep desktop test state private and never overwrite a symlink target."""
+    import stat
+    import sys
+    import tempfile
+    from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as sandbox:
+        root = Path(sandbox)
+        victim = root / "victim.txt"
+        victim.write_text("keep this data", encoding="utf-8")
+        legacy = root / "cosmosort_test_private"
+        legacy.mkdir()
+        (legacy / "service_control.json").symlink_to(victim)
+
+        with (
+            patch.dict(os.environ, {"COSMOSORT_TEST_ENV": "1", "ANDROID_PRIVATE": ""}),
+            patch.dict(sys.modules, {"kivy": None}),
+            patch.object(tempfile, "tempdir", sandbox),
+            patch.object(file_manager, "_test_private_storage", None, create=True),
+        ):
+            try:
+                private = file_manager.get_app_private_storage_dir()
+                assert private != legacy, "Test storage must not reuse a preclaimed directory"
+                assert private == file_manager.get_app_private_storage_dir()
+                if os.name == "posix":
+                    assert private.stat().st_uid == os.getuid()
+                    assert stat.S_IMODE(private.stat().st_mode) == 0o700
+
+                for running in (True, False):
+                    media_watcher_service.set_service_desired_state(running)
+                    assert media_watcher_service.is_service_desired_running() is running
+                    assert victim.read_text(encoding="utf-8") == "keep this data"
+
+                ctrl = media_watcher_service.get_service_control_file()
+                ctrl.unlink()
+                ctrl.symlink_to(victim)
+                media_watcher_service.set_service_desired_state(True)
+                assert victim.read_text(encoding="utf-8") == "keep this data"
+                assert not ctrl.is_symlink()
+                assert media_watcher_service.is_service_desired_running()
+
+                ctrl.unlink()
+                missing = root / "missing.txt"
+                ctrl.symlink_to(missing)
+                media_watcher_service.set_service_desired_state(False)
+                assert not missing.exists()
+                assert not ctrl.is_symlink()
+                assert not media_watcher_service.is_service_desired_running()
+
+                previous = ctrl.read_bytes()
+                with patch.object(media_watcher_service.json, "dump", side_effect=ValueError("write failed")):
+                    media_watcher_service.set_service_desired_state(True)
+                assert ctrl.read_bytes() == previous
+                assert list(private.iterdir()) == [ctrl], "Failed writes must clean up temporary files"
+            finally:
+                storage = file_manager._test_private_storage
+                if storage is not None:
+                    storage.cleanup()
 
 
 def test_poison_files_and_pending_scan() -> None:

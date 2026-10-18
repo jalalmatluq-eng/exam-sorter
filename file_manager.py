@@ -17,6 +17,8 @@ import re
 import shutil
 import sqlite3
 import sys
+import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -24,6 +26,9 @@ from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("FileManager")
+
+_test_private_storage: tempfile.TemporaryDirectory[str] | None = None
+_test_private_storage_lock = threading.Lock()
 
 
 def get_base_storage_path() -> Path:
@@ -765,7 +770,12 @@ def get_app_private_storage_dir() -> Path:
 
     # 5. للحاسوب وبيئة الاختبارات والتطوير
     if os.environ.get("COSMOSORT_TEST_ENV") or "test" in sys.argv[0].lower():
-        return Path(__import__("tempfile").gettempdir()) / "cosmosort_test_private"
+        global _test_private_storage
+        with _test_private_storage_lock:
+            if _test_private_storage is None:
+                # Retain one owner-only directory for this test process, cleaned at exit.
+                _test_private_storage = tempfile.TemporaryDirectory(prefix="cosmosort_test_private_")
+            return Path(_test_private_storage.name)
     fallback = Path(__file__).resolve().parent / ".app_private"
     fallback.mkdir(parents=True, exist_ok=True)
     return fallback

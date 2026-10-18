@@ -7,6 +7,7 @@
 
 import json
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -61,8 +62,13 @@ def set_service_desired_state(running: bool) -> None:
     """تحديث حالة تشغيل الخدمة المطلوبة من الواجهة"""
     ctrl = get_service_control_file()
     try:
-        with open(ctrl, "w", encoding="utf-8") as f:
-            json.dump({"running": running, "updated_at": time.time()}, f)
+        # Write in a newly allocated private directory, then replace the entry
+        # atomically so an existing control-file symlink is never followed.
+        with tempfile.TemporaryDirectory(dir=ctrl.parent, prefix=".service_control_") as staging:
+            staged = Path(staging) / ctrl.name
+            with staged.open("x", encoding="utf-8") as f:
+                json.dump({"running": running, "updated_at": time.time()}, f)
+            staged.replace(ctrl)
     except Exception as e:
         print("تعذر كتابة حالة الخدمة:", e)
 
