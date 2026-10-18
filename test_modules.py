@@ -148,6 +148,112 @@ def test_classifier_encoding() -> None:
     print("✓ نجح فحص وحدة التصنيف.\n")
 
 
+def test_safe_image_reader() -> None:
+    """Reject oversized images before pixel loading, including decoder/cache fallbacks."""
+    import struct
+    import tempfile
+    import zlib
+    from unittest.mock import patch
+
+    from PIL import ImageFile, ImageOps
+
+    with tempfile.TemporaryDirectory() as temp:
+        root = Path(temp)
+        image_path = root / "image.png"
+        Image.new("RGB", (10, 10), color=(10, 20, 30)).save(image_path)
+        small_png = image_path.read_bytes()
+
+        def write_png_header(width: int, height: int) -> None:
+            # Change only IHDR and its checksum: no large pixel buffers are created.
+            data = bytearray(small_png)
+            data[16:24] = struct.pack(">II", width, height)
+            data[29:33] = struct.pack(">I", zlib.crc32(data[12:29]))
+            image_path.write_bytes(data)
+
+        with patch.object(face_classifier.cv2, "imdecode") as cv_decode, patch.object(
+            storage_backend, "get_displayable_image_path"
+        ) as cached_path:
+            for width, height in ((4000, 4001), (10000, 10000), (20000, 20000)):
+                write_png_header(width, height)
+                with patch.object(ImageFile.ImageFile, "load") as load, patch.object(
+                    ImageOps, "exif_transpose"
+                ) as transpose:
+                    assert face_classifier.safe_read_image(str(image_path)) is None
+                    load.assert_not_called()
+                    transpose.assert_not_called()
+            cv_decode.assert_not_called()
+            cached_path.assert_not_called()
+
+            # Pillow's own size decisions must also be terminal.
+            for rejection in (Image.DecompressionBombError, Image.DecompressionBombWarning):
+                with patch.object(Image, "open", side_effect=rejection("size rejected")):
+                    assert face_classifier.safe_read_image(str(image_path)) is None
+            cv_decode.assert_not_called()
+            cached_path.assert_not_called()
+
+        # The application limit still applies when Pillow's global limit is disabled.
+        with patch.object(Image, "MAX_IMAGE_PIXELS", None), patch.object(
+            ImageFile.ImageFile, "load"
+        ) as load:
+            assert face_classifier.safe_read_image(str(image_path)) is None
+            load.assert_not_called()
+
+        image_path.write_bytes(small_png)
+        with patch.object(face_classifier, "MAX_DECODED_IMAGE_PIXELS", 100):
+            result = face_classifier.safe_read_image(str(image_path), max_size=5)
+            assert result is not None and result.shape == (5, 5, 3)
+            assert tuple(result[0, 0]) == (30, 20, 10), "Expected BGR output"
+            write_png_header(101, 1)
+            with patch.object(ImageFile.ImageFile, "load") as load:
+                assert face_classifier.safe_read_image(str(image_path)) is None
+                load.assert_not_called()
+
+        # Preserve EXIF orientation, thumbnail dimensions and supported color modes.
+        exif = Image.Exif()
+        exif[274] = 6
+        oriented = Image.new("RGB", (40, 20), color=(255, 0, 0))
+        oriented.paste((0, 0, 255), (20, 0, 40, 20))
+        oriented.save(image_path, exif=exif)
+        result = face_classifier.safe_read_image(str(image_path), max_size=10)
+        assert result is not None and result.shape == (10, 5, 3)
+        assert tuple(result[0, 0]) == (0, 0, 255)
+        assert tuple(result[-1, -1]) == (255, 0, 0)
+        for mode, extension in (("L", "jpg"), ("RGBA", "png"), ("RGB", "webp")):
+            sample = root / f"sample.{extension}"
+            Image.new(mode, (20, 10)).save(sample)
+            with patch.object(face_classifier, "cv2", None):
+                result = face_classifier.safe_read_image(str(sample), max_size=10)
+            assert result is not None and result.shape == (5, 10, 3)
+
+        # A copied content URI must pass the same validation as a local image.
+        uri = "content://test/image"
+        with patch.object(storage_backend, "get_displayable_image_path", return_value=str(image_path)):
+            assert face_classifier.safe_read_image(uri) is not None
+            write_png_header(4000, 4001)
+            with patch.object(ImageFile.ImageFile, "load") as load:
+                assert face_classifier.safe_read_image(uri) is None
+                load.assert_not_called()
+
+        # Direct consumers must receive a read failure, not a decoded oversized image.
+        assert face_classifier.detect_faces(str(image_path)) == []
+        assert not media_scanner.is_visual_document_or_paper(str(image_path))
+
+        image_path.write_bytes(small_png)
+        with patch.object(ImageFile.ImageFile, "load", side_effect=OSError("decode failed")), patch.object(
+            face_classifier.cv2, "imdecode"
+        ) as cv_decode:
+            assert face_classifier.safe_read_image(str(image_path)) is None
+            cv_decode.assert_not_called()
+
+        image_path.write_bytes(b"not an image")
+        with patch.object(face_classifier.cv2, "imdecode") as cv_decode:
+            assert face_classifier.safe_read_image(str(image_path)) is None
+            assert face_classifier.safe_read_image(str(root / "missing.png")) is None
+            cv_decode.assert_not_called()
+
+    print("✓ Image reader pixel budget, terminal rejection, orientation and URI checks passed.")
+
+
 def test_face_classifier() -> None:
     print(
         "--- 4. فحص وحدة تصنيف الوجوه والتعرف عليها (Face Classifier) ---"
@@ -2832,6 +2938,7 @@ if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
     test_classifier_encoding()
+    test_safe_image_reader()
     test_face_classifier()
     test_video_classifier()
     test_media_scanner_and_rollback()

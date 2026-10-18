@@ -30,11 +30,14 @@ except (ImportError, Exception):
     cv2 = None  # type: ignore
 
 import numpy as np
+from PIL import Image, ImageOps
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SIMILARITY_THRESHOLD = 0.68
 PROFILE_FILENAME = "face_identity_profile.json"
+# Bound a full RGBA pixel buffer to 64 MB before loading or copying it.
+MAX_DECODED_IMAGE_PIXELS = 16_000_000
 
 
 def get_profile_path() -> Path:
@@ -78,37 +81,31 @@ def _load_cascade(xml_name: str) -> object | None:
 
 
 def _safe_read_image(image_path: str, max_size: int = 800) -> np.ndarray | None:
-    """قراءة الصورة بأمان مع ضغط الحجم فورياً لتوفير 95% من الذاكرة ومنع إغلاق التطبيق على الهواتف الحديثة"""
+    """Read a bounded image as a BGR thumbnail; reject excessive decoded dimensions."""
     try:
-        from PIL import Image, ImageOps
         with Image.open(image_path) as pil_img:
+            width, height = pil_img.size
+            if width <= 0 or height <= 0 or width * height > MAX_DECODED_IMAGE_PIXELS:
+                logger.debug("Image dimensions rejected for %s: %sx%s", image_path, width, height)
+                return None
+            # Resize before EXIF transposition, which loads and copies pixels.
+            pil_img.thumbnail((max_size, max_size), Image.Resampling.BILINEAR)
             try:
                 pil_img = ImageOps.exif_transpose(pil_img)
+            except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+                return None
             except Exception:
                 pass
-            pil_img.thumbnail((max_size, max_size), Image.Resampling.BILINEAR)
             pil_img = pil_img.convert("RGB")
             rgb = np.array(pil_img)
             return rgb[:, :, ::-1]
-    except Exception:
-        pass
-
-    try:
-        # المحاولة البديلة عبر OpenCV إذا فشل PIL
-        if cv2 is not None:
-            with open(image_path, "rb") as f:
-                bytes_data = bytearray(f.read())
-            numpy_array = np.asarray(bytes_data, dtype=np.uint8)
-            img = cv2.imdecode(numpy_array, cv2.IMREAD_COLOR)
-            if img is not None:
-                h, w = img.shape[:2]
-                if max(h, w) > max_size:
-                    scale = float(max_size) / float(max(h, w))
-                    img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
-                return img
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning):
+        # A size rejection is terminal, including when Pillow warnings are errors.
+        return None
     except Exception as exc:
         logger.debug("خطأ أثناء قراءة الصورة %s: %s", image_path, exc)
 
+    # Do not retry failed validation with an unchecked full-resolution decoder.
     try:
         import storage_backend
         cached_p = storage_backend.get_displayable_image_path(image_path)
