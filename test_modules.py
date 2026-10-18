@@ -407,7 +407,7 @@ def test_poison_files_and_pending_scan() -> None:
     print("✓ فحص سقف 200 مسار لـ poison_files: تم التحقق وإسقاط الأقدم بنجاح.")
 
     # 5. فحص عزل مسار transfer_history.json في الاختبارات عن المسار الحقيقي
-    real_prod_log = Path(__file__).resolve().parent / ".app_private" / "transfer_history.json"
+    real_prod_log = Path(__file__).resolve().parent / ".app_private" / "transfer_history_v2.json"
     assert not real_prod_log.exists(), "مسار transfer_history.json الحقيقي لا يجب أن يُمس أثناء الاختبارات!"
     test_log = file_manager.get_transfer_log_path()
     assert test_log != real_prod_log, "مسار السجل في الاختبارات يجب أن يكون معزولاً عن المسار الحقيقي!"
@@ -714,7 +714,7 @@ def test_advanced_saf_and_edge_cases() -> None:
     try:
         log_path = file_manager.get_transfer_log_path()
         assert log_path.parent == private_dir, f"يجب حفظ سجل النقل في app-private storage: {log_path}"
-        assert log_path.name == "transfer_history.json"
+        assert log_path.name == "transfer_history_v2.json"
         # عزل السجل للاختبارات الحالية
         import json
         with open(log_path, "w", encoding="utf-8") as f:

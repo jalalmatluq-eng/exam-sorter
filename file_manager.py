@@ -1200,21 +1200,12 @@ def create_initial_category_folders(
 
 
 def get_transfer_log_path(base_path: Path | None = None) -> Path:
-    """مسار ملف سجل عمليات النقل للتراجع والمراجعة محفوظ دائماً في app-private storage"""
-    if base_path is not None:
-        return Path(base_path) / "transfer_history.json"
-
-    private_log = get_app_private_storage_dir() / "transfer_history.json"
-    # هجرة تلقائية من المسار القديم إن وجد
-    if not private_log.exists():
-        try:
-            legacy_log = get_internal_media_sorter_base_path() / "transfer_history.json"
-            if legacy_log.exists():
-                shutil.copy2(str(legacy_log), str(private_log))
-                logger.info("تمت هجرة سجل transfer_history.json إلى التخزين الخاص بالتطبيق بنجاح")
-        except Exception as e:
-            logger.debug("تعذر نسخ سجل العمليات القديم: %s", e)
-    return private_log
+    """Return private undo history, or an explicitly supplied isolated storage directory."""
+    # Old private history may also contain records imported from shared storage.
+    # Their origin cannot be established, so never reuse either legacy history file.
+    # Only application-recorded transfers in this new private log authorize undo.
+    log_dir = Path(base_path) if base_path is not None else get_app_private_storage_dir()
+    return log_dir / "transfer_history_v2.json"
 
 
 def _log_transfer_record(
