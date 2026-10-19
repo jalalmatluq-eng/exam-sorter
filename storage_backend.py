@@ -987,31 +987,46 @@ def saf_create_target_document(
         return (None, "")
 
 
-def saf_find_directory(tree_uri: str, category_name: str) -> str:
+def saf_find_directory(tree_uri: str, category_name: str, *, exact: bool = False) -> str:
     """
     البحث عن مجلد داخل بطاقة الذاكرة الخارجية عبر SAF دون إنشائه.
     يدعم المسارات بمختلف صيغها:
     1. 'الملفات المنظمة/صور الاختبارات/اسم المادة'
     2. 'صور الاختبارات/اسم المادة'
     3. 'اسم المادة'
+    exact=True: البحث بالمسار النسبي الحرفي من جذر الشجرة دون إزالة بادئات أو تخمين مسارات.
     العائد: Document URI للمجلد كـ string أو فارغ إذا لم يكن موجوداً.
     """
     if not tree_uri:
         return ""
 
-    clean_parts = [p.strip() for p in category_name.replace("\\", "/").split("/") if p.strip()]
-    if clean_parts and clean_parts[0] == ORGANIZED_FOLDER_NAME:
-        clean_parts = clean_parts[1:]
+    if exact:
+        clean_parts = category_name.split("/")
+        if any(p in ("", ".", "..") or "\\" in p for p in clean_parts):
+            return ""
+    else:
+        clean_parts = [p.strip() for p in category_name.replace("\\", "/").split("/") if p.strip()]
+        if clean_parts and clean_parts[0] == ORGANIZED_FOLDER_NAME:
+            clean_parts = clean_parts[1:]
+    if not clean_parts:
+        return ""
 
     # إعداد مسارات البحث المحتملة: المسار المحدد، وتحت صور الاختبارات إن لم تكن مذكورة
     possible_paths = [clean_parts]
-    if clean_parts and clean_parts[0] != CATEGORY_EXAMS_ROOT:
+    if not exact and clean_parts[0] != CATEGORY_EXAMS_ROOT:
         possible_paths.append([CATEGORY_EXAMS_ROOT] + clean_parts)
 
     if tree_uri.startswith("mock_saf://"):
         base_dir = Path(tree_uri.replace("mock_saf://", ""))
         for p_parts in possible_paths:
             sub = "/".join(p_parts)
+            if exact:
+                candidate = base_dir / sub
+                resolved = candidate.resolve()
+                resolved_base = base_dir.resolve()
+                if candidate.is_dir() and resolved.is_relative_to(resolved_base) and resolved != resolved_base:
+                    return f"mock_doc://{candidate}"
+                continue
             cand1 = base_dir / ORGANIZED_FOLDER_NAME / sub
             if cand1.exists() and cand1.is_dir():
                 return f"mock_doc://{cand1}"
@@ -1035,7 +1050,7 @@ def saf_find_directory(tree_uri: str, category_name: str) -> str:
             root_doc = DocFileClass.fromTreeUri(mActivity, parsed_tree)
             if not root_doc:
                 return ""
-            target_org = root_doc.findFile(ORGANIZED_FOLDER_NAME)
+            target_org = root_doc.findFile(ORGANIZED_FOLDER_NAME) if not exact else None
             search_roots = [target_org] if target_org else [root_doc]
             if target_org and target_org != root_doc:
                 search_roots.append(root_doc)
@@ -1059,7 +1074,7 @@ def saf_find_directory(tree_uri: str, category_name: str) -> str:
         tree_doc_id = DocumentsContract.getTreeDocumentId(parsed_tree)
         root_doc_uri = DocumentsContract.buildDocumentUriUsingTree(parsed_tree, tree_doc_id)
 
-        org_child = _contract_find_child_only(cr, parsed_tree, root_doc_uri, ORGANIZED_FOLDER_NAME)
+        org_child = _contract_find_child_only(cr, parsed_tree, root_doc_uri, ORGANIZED_FOLDER_NAME) if not exact else None
         search_root_uris = [org_child] if org_child else [root_doc_uri]
         if org_child and org_child != root_doc_uri:
             search_root_uris.append(root_doc_uri)

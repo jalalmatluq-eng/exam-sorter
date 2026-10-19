@@ -82,6 +82,7 @@ jobs:
         env:
           KIVY_NO_ARGS: "1"
         run: |
+          python -m unittest -v test_subject_folder_deletion
           python test_modules.py
 
   build-apk:

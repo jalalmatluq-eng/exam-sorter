@@ -542,8 +542,34 @@ def delete_subject_folder(
             logger.warning(msg)
             return DeleteFolderResult(files_deleted=False, folder_deleted=False, message=msg)
 
+        # Resolve one literal subject path from enumeration before any destructive operation.
+        # A subject basename must never be interpreted as an archive prefix.
+        folders: dict[tuple[str, ...], list[str]] = {}
+        try:
+            for item in storage_backend.scan_saf_tree_recursively(tree_uri, include_organized=True):
+                parts = item.relative_path.split("/")
+                if any(p in ("", ".", "..") or "\\" in p for p in parts):
+                    continue
+                subject_index = 1 if parts[0] == storage_backend.ORGANIZED_FOLDER_NAME else 0
+                if subject_index < len(parts) - 1 and parts[subject_index] in ("صور الاختبارات", "صور اختبارات"):
+                    subject_index += 1
+                if subject_index >= len(parts) - 1 or parts[subject_index] != subject_name:
+                    continue
+                folder_parts = tuple(parts[:subject_index + 1])
+                folders.setdefault(folder_parts, []).append(item.uri or item.path)
+
+            if len(folders) != 1:
+                raise ValueError("Subject directory is missing or ambiguous")
+            folder_parts, imgs = next(iter(folders.items()))
+            folder_uri = storage_backend.saf_find_directory(tree_uri, "/".join(folder_parts), exact=True)
+            if not folder_uri:
+                raise ValueError("Subject directory could not be resolved")
+        except Exception as e:
+            msg = "تعذر تحديد مجلد المادة بأمان في بطاقة SD"
+            logger.warning("%s: %s", msg, e)
+            return DeleteFolderResult(message=msg)
+
         # أ) حذف جميع الملفات الموجودة داخل المادة أولاً
-        imgs = get_subject_images(clean_name, target_location=target_location)
         deleted_count = 0
         for img in imgs:
             if delete_image_file(img, target_location=target_location):
@@ -551,14 +577,8 @@ def delete_subject_folder(
 
         files_deleted = (deleted_count == len(imgs))
 
-        # ب) البحث عن مجلد المادة في شجرة SAF وحذفه كـ Document
-        folder_uri = storage_backend.saf_find_directory(tree_uri, clean_name)
-        if not folder_uri:
-            folder_uri = storage_backend.saf_find_directory(tree_uri, f"صور الاختبارات/{clean_name}")
-
-        folder_deleted = False
-        if folder_uri:
-            folder_deleted = storage_backend.delete_media_item(folder_uri)
+        # ب) حذف المجلد الذي تم تحديده بالمسار الحرفي فقط
+        folder_deleted = storage_backend.delete_media_item(folder_uri)
 
         if files_deleted and folder_deleted:
             return DeleteFolderResult(
