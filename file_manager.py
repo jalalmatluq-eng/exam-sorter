@@ -10,10 +10,12 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import os
 import re
+import secrets
 import shutil
 import sqlite3
 import sys
@@ -1228,11 +1230,39 @@ def get_transfer_log_path(base_path: Path | None = None) -> Path:
         try:
             legacy_log = get_internal_media_sorter_base_path() / "transfer_history.json"
             if legacy_log.exists():
-                shutil.copy2(str(legacy_log), str(private_log))
+                with open(legacy_log, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                # Shared history cannot authorize filesystem changes, even if
+                # it contains forged fields from the current record format.
+                records = [dict(r, undo_allowed=False) for r in loaded if isinstance(r, dict)] if isinstance(loaded, list) else []
+                with open(private_log, "w", encoding="utf-8") as f:
+                    json.dump(records, f, ensure_ascii=False, indent=2)
                 logger.info("تمت هجرة سجل transfer_history.json إلى التخزين الخاص بالتطبيق بنجاح")
         except Exception as e:
             logger.debug("تعذر نسخ سجل العمليات القديم: %s", e)
     return private_log
+
+
+def _transfer_undo_signature(record: dict[str, object], create_key: bool = False) -> str:
+    """Authenticate immutable undo paths using a key never imported from history."""
+    key_file = get_app_private_storage_dir() / "transfer_undo.key"
+    try:
+        if create_key:
+            key_file.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                with key_file.open("xb") as f:
+                    f.write(secrets.token_bytes(32))
+                key_file.chmod(0o600)
+            except FileExistsError:
+                pass
+        key = key_file.read_bytes()
+        if len(key) != 32:
+            return ""
+        # is_copy can change after source deletion; the authorized paths cannot.
+        payload = json.dumps([record.get(k) for k in ("id", "source", "destination", "archive_root")])
+        return hmac.digest(key, payload.encode("utf-8"), "sha256").hex()
+    except OSError:
+        return ""
 
 
 def _log_transfer_record(
@@ -1243,8 +1273,12 @@ def _log_transfer_record(
     base_path: Path | None = None,
     is_copy: bool = True,
     is_saf_dest: bool = False,
+    archive_root: str = "",
 ) -> int:
     """تسجيل عملية نسخ/فرز في سجل المعاملات JSON مع دعم المسارات وعناوين URIs"""
+    if archive_root and "://" not in archive_root:
+        archive_root = str(Path(archive_root).resolve())
+        dest_path = str(Path(dest_path).resolve())
     log_file = get_transfer_log_path(base_path)
     records: list[dict[str, object]] = []
     if log_file.exists():
@@ -1267,8 +1301,11 @@ def _log_transfer_record(
         "size_bytes": file_size,
         "is_copy": is_copy,
         "is_saf_dest": is_saf_dest or dest_path.startswith("content://"),
+        "undo_allowed": bool(archive_root),
+        "archive_root": archive_root,
         "timestamp": datetime.now(UTC).isoformat(),
     })
+    records[-1]["undo_signature"] = _transfer_undo_signature(records[-1], create_key=True)
 
     records = records[-1000:]
     try:
@@ -1394,6 +1431,25 @@ def get_transfer_history(
         return []
 
 
+def can_undo_transfer(record: dict[str, object]) -> bool:
+    """Only new private records with a destination inside their archive can undo."""
+    import storage_backend
+
+    if record.get("undo_allowed") is not True:
+        return False
+    signature = record.get("undo_signature")
+    expected = _transfer_undo_signature(record)
+    if not expected or not isinstance(signature, str) or not re.fullmatch(r"[0-9a-f]{64}", signature):
+        return False
+    if not hmac.compare_digest(signature, expected):
+        return False
+    destination = record.get("destination")
+    archive_root = record.get("archive_root")
+    if not isinstance(destination, str) or not isinstance(archive_root, str):
+        return False
+    return storage_backend.is_within_archive_root(destination, archive_root)
+
+
 def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     """
     التراجع عن عملية تصنيف/نسخ معينة:
@@ -1424,7 +1480,7 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
             target_record = r
             break
 
-    if target_record is None:
+    if target_record is None or not can_undo_transfer(target_record):
         return False
 
     dest_str = str(target_record["destination"])
@@ -1545,6 +1601,9 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
     cleared_keys: list[tuple[str, str]] = []
 
     for r in records:
+        if not can_undo_transfer(r):
+            remaining_records.append(r)
+            continue
         dest_str = str(r.get("destination", ""))
         src_str = str(r.get("source", ""))
         is_copy = bool(r.get("is_copy", True))
@@ -1761,6 +1820,7 @@ def copy_to_category(
             base_path=base_path,
             is_copy=is_copy,
             is_saf_dest=True,
+            archive_root=tree_uri,
         )
         return dest_uri
 
@@ -1787,6 +1847,7 @@ def copy_to_category(
             base_path=base_path,
             is_copy=is_copy,
             is_saf_dest=False,
+            archive_root=str(target_base.resolve()),
         )
         return primary_dest
 
@@ -1802,6 +1863,7 @@ def copy_to_category(
                 base_path=base_path,
                 is_copy=is_copy,
                 is_saf_dest=False,
+                archive_root=str(target_base.resolve()),
             )
             return dest
         dest = target_folder / f"{stem}_{counter:02d}{suffix}"
@@ -1831,6 +1893,7 @@ def copy_to_category(
         base_path=base_path,
         is_copy=is_copy,
         is_saf_dest=False,
+        archive_root=str(target_base.resolve()),
     )
 
     return dest
