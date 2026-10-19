@@ -92,3 +92,8 @@ MIME_TYPE_MAP: dict[str, str] = {
 
 # ─── مهلة اتصال API ─────────────────────────────────────────────────────────────
 API_TIMEOUT_SECONDS = 12.0
+
+# OCR memory limits: reject large sources before decoding, then bound working arrays.
+OCR_MAX_SOURCE_PIXELS = 16_000_000
+OCR_MAX_DIMENSION = 2400
+OCR_DESKEW_MAX_DIMENSION = 512
