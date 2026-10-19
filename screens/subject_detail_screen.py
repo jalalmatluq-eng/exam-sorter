@@ -7,7 +7,9 @@
 - توفر زر لإضافة ورقة اختبار جديدة مباشرة إلى هذه المادة.
 """
 
+import stat
 from pathlib import Path
+from typing import Any
 
 from kivy.core.window import Window
 from kivy.metrics import dp
@@ -28,6 +30,28 @@ class SubjectDetailScreen(Screen):
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self.subject_name: str = ""
+        self._subject_target_location = None
+        self._subject_target_identity = None
+
+    @staticmethod
+    def _get_target_identity(target_location: Any) -> tuple | None:
+        """Identify the displayed storage, including the mounted filesystem for local paths."""
+        import storage_backend
+        if not target_location or not target_location.is_valid:
+            return None
+        if target_location.is_saf:
+            uri = target_location.tree_uri or target_location.saf_uri
+            if uri and storage_backend.is_saf_uri_valid(uri):
+                return (target_location.storage_type, True, uri)
+        elif target_location.path:
+            try:
+                path = target_location.path.resolve(strict=True)
+                info = path.stat()
+                if stat.S_ISDIR(info.st_mode):
+                    return (target_location.storage_type, False, str(path), info.st_dev, info.st_ino)
+            except OSError:
+                pass
+        return None
 
     def _on_window_resize(self, _instance: object, _size: object) -> None:
         self.update_grid_layout()
@@ -93,7 +117,12 @@ class SubjectDetailScreen(Screen):
 
         import storage_backend
         target_loc = storage_backend.get_active_target_location()
-        images = file_manager.get_subject_images(self.subject_name, target_location=target_loc)
+        self._subject_target_location = target_loc
+        self._subject_target_identity = self._get_target_identity(target_loc)
+        images = (
+            file_manager.get_subject_images(self.subject_name, target_location=target_loc)
+            if self._subject_target_identity else []
+        )
         count = len(images)
 
         details = get_category_ui_details(self.subject_name)
@@ -330,6 +359,9 @@ class SubjectDetailScreen(Screen):
         """تأكيد حذف المادة ومجلدها بالكامل"""
         if not self.subject_name:
             return
+        subject_name = self.subject_name
+        target_loc = self._subject_target_location
+        target_identity = self._subject_target_identity
         show_app_dialog(
             title="حذف المادة بالكامل",
             text=(
@@ -338,13 +370,24 @@ class SubjectDetailScreen(Screen):
                 " أوراق الاختبار نهائياً!"
                 "\nهل تريد المتابعة؟"
             ),
-            on_confirm=self._execute_delete_subject,
+            on_confirm=lambda: self._execute_delete_subject(subject_name, target_loc, target_identity),
         )
 
-    def _execute_delete_subject(self):
+    def _execute_delete_subject(self, subject_name: str, target_loc: Any, target_identity: tuple | None):
         import storage_backend
-        target_loc = storage_backend.get_active_target_location()
-        res = file_manager.delete_subject_folder(self.subject_name, target_location=target_loc)
+        storage_backend.detect_storage_locations(force_refresh=True)
+        current_target = storage_backend.get_active_target_location()
+        if (
+            target_identity is None
+            or self._get_target_identity(current_target) != target_identity
+            or self._get_target_identity(target_loc) != target_identity
+        ):
+            show_app_dialog(
+                title="تعذر الحذف",
+                text="وجهة التخزين غير متاحة أو تغيرت منذ عرض المادة. أعد فتح المادة وحاول مجدداً.",
+            )
+            return
+        res = file_manager.delete_subject_folder(subject_name, target_location=target_loc)
         if res.files_deleted and res.folder_deleted:
             self.go_back()
         elif res.files_deleted and not res.folder_deleted:

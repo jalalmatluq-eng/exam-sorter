@@ -532,6 +532,11 @@ def delete_subject_folder(
         else:
             target_location = storage_backend.get_active_target_location()
 
+    if not target_location or not target_location.is_valid or (not target_location.is_saf and not target_location.path):
+        msg = "تعذر حذف مجلد المادة: وجهة التخزين غير صالحة أو غير متاحة"
+        logger.warning(msg)
+        return DeleteFolderResult(message=msg)
+
     clean_name = sanitize_folder_name(subject_name)
 
     # 1. إذا كانت الوجهة SAF Tree URI لبطاقة الذاكرة
@@ -590,7 +595,9 @@ def delete_subject_folder(
             )
 
     # 2. إذا كانت الوجهة مسار محلي فيزيائي
-    base = target_location.path if (target_location and target_location.path) else (Path(base_path) if base_path else get_internal_media_sorter_base_path())
+    base = target_location.path
+    if not base.is_dir():
+        return DeleteFolderResult(message="تعذر حذف مجلد المادة: مسار التخزين غير متاح")
     candidates = [
         base / "صور الاختبارات" / clean_name,
         base / clean_name,

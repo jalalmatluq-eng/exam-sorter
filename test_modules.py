@@ -48,6 +48,9 @@ def test_arabic_helper() -> None:
 
 
 def test_file_manager() -> None:
+    from test_subject_deletion import run_subject_deletion_tests
+
+    run_subject_deletion_tests()
     print("--- 2. فحص وحدة إدارة الملفات ---")
     file_manager.save_sorter_preferences({"target_storage": "internal"})
     test_dir = Path("test_data")
