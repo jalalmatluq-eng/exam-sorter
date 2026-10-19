@@ -998,7 +998,7 @@ class SettingsScreen(Screen):
 
         undo_btn = MDButton(
             style="outlined",
-            disabled=not bool(record.get("undo_root")),
+            disabled=not file_manager.can_undo_transfer(record),
             size_hint=(None, None),
             size=(dp(80), dp(36)),
             pos_hint={"center_y": 0.5},

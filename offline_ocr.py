@@ -19,6 +19,8 @@ from typing import Any
 
 import numpy as np
 
+from constants import OCR_DESKEW_MAX_DIMENSION, OCR_MAX_DIMENSION, OCR_MAX_SOURCE_PIXELS
+
 cv2: Any = None
 try:
     import cv2  # type: ignore
@@ -473,7 +475,30 @@ def is_offline_ocr_available() -> bool:
     return has_tess_model and has_tess_runtime
 
 
+def _load_ocr_image(image_path: str) -> np.ndarray | None:
+    """Read a bounded BGR image; check source dimensions before loading pixels."""
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(image_path) as image:
+            width, height = image.size
+            if width <= 0 or height <= 0 or width * height > OCR_MAX_SOURCE_PIXELS:
+                return None
+            image.thumbnail((OCR_MAX_DIMENSION, OCR_MAX_DIMENSION), Image.Resampling.LANCZOS)
+            image = ImageOps.exif_transpose(image)
+            return np.asarray(image.convert("RGB"))[:, :, ::-1].copy()
+    except Exception as exc:
+        logger.debug("تعذر قراءة الصورة ضمن حدود ذاكرة OCR: %s", exc)
+        return None
+
+
 def preprocess_image_for_ocr(image_path: str) -> Any | None:
+    """Load an image within the OCR memory budget and preprocess it."""
+    img = _load_ocr_image(image_path)
+    return _preprocess_ocr_image(img) if img is not None else None
+
+
+def _preprocess_ocr_image(img: np.ndarray) -> Any | None:
     """
     تطبيق مرشحات المعالجة المسبقة لتحسين جودة قراءة النصوص العربية:
     1. تحويل للصورة الرمادية (Grayscale).
@@ -483,19 +508,6 @@ def preprocess_image_for_ocr(image_path: str) -> Any | None:
     5. تكبير الأبعاد إذا كانت الصورة صغيرة.
     """
     try:
-        import cv2  # type: ignore
-        import numpy as np  # type: ignore
-    except ImportError:
-        return None
-
-    try:
-        # قراءة آمنة للصورة
-        with open(image_path, "rb") as f:
-            data = bytearray(f.read())
-        img = cv2.imdecode(np.asarray(data, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if img is None:
-            return None
-
         # 1. تحويل للرمادي
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
@@ -503,7 +515,7 @@ def preprocess_image_for_ocr(image_path: str) -> Any | None:
         h, w = gray.shape[:2]
         if max(h, w) < 1200:
             scale = 1200.0 / max(h, w)
-            gray = cv2.resize(gray, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_CUBIC)
+            gray = cv2.resize(gray, (max(1, int(w * scale)), max(1, int(h * scale))), interpolation=cv2.INTER_CUBIC)
 
         # 3. إزالة الضوضاء مع الحفاظ على حواف الحروف
         denoised = cv2.bilateralFilter(gray, 9, 75, 75)
@@ -512,7 +524,9 @@ def preprocess_image_for_ocr(image_path: str) -> Any | None:
         _, thresh = cv2.threshold(denoised, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
         # 5. تصحيح زوايا الميل (Deskewing) لصفحات الاختبار المائلة
-        coords = np.column_stack(np.where(thresh == 0))
+        # Subsample before constructing masks or coordinates (at most 512² points).
+        step = max(1, (max(thresh.shape) + OCR_DESKEW_MAX_DIMENSION - 1) // OCR_DESKEW_MAX_DIMENSION)
+        coords = np.column_stack(np.where(thresh[::step, ::step] == 0))
         if len(coords) > 100:
             rect = cv2.minAreaRect(coords)
             angle = rect[-1]
@@ -586,23 +600,21 @@ def extract_arabic_text_offline(image_path: str) -> OCRResult:
             needs_review=True,
         )
 
-    # 2. المعالجة المسبقة
-    processed_img = preprocess_image_for_ocr(str(p))
+    # 2. Reject unsafe inputs once; every recognition path uses this bounded image.
+    raw_bgr = _load_ocr_image(str(p))
+    if raw_bgr is None:
+        return OCRResult(
+            available=True,
+            error="تعذرت قراءة الصورة أو تجاوزت حدود ذاكرة OCR",
+            needs_review=True,
+        )
+    processed_img = _preprocess_ocr_image(raw_bgr)
 
     raw_text = ""
     conf_scores: list[float] = []
 
     # 3. الاستدعاء الفعلي للمحرك (نموذج ONNX العصبي أولاً ثم Tesseract)
-    raw_bgr = None
-    if cv2 is not None:
-        try:
-            with open(str(p), "rb") as f:
-                raw_bytes = bytearray(f.read())
-            raw_bgr = cv2.imdecode(np.asarray(raw_bytes, dtype=np.uint8), cv2.IMREAD_COLOR)
-        except Exception:
-            raw_bgr = None
-
-    onnx_text = recognize_text_onnx(raw_bgr) if raw_bgr is not None else ""
+    onnx_text = recognize_text_onnx(raw_bgr)
     if not onnx_text and processed_img is not None:
         onnx_text = recognize_text_onnx(processed_img)
 
@@ -617,7 +629,9 @@ def extract_arabic_text_offline(image_path: str) -> OCRResult:
             tess_dir = get_tessdata_path()
             tess_cfg = f'--tessdata-dir "{tess_dir}" -l ara+eng --psm 6' if tess_dir else "-l ara+eng --psm 6"
 
-            img_input = Image.fromarray(processed_img) if processed_img is not None else Image.open(image_path)
+            img_input = Image.fromarray(
+                processed_img if processed_img is not None else raw_bgr[:, :, ::-1]
+            )
             data = pytesseract.image_to_data(img_input, config=tess_cfg, output_type=pytesseract.Output.DICT)
 
             words: list[str] = []

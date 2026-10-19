@@ -883,6 +883,7 @@ def test_transfer_history_security() -> None:
 def test_saf_undo_ancestry() -> None:
     """SAF undo uses provider ancestry, never a prefix comparison of opaque IDs."""
     import sys
+    from tempfile import TemporaryDirectory
     from types import SimpleNamespace
     from unittest.mock import Mock, patch
 
@@ -898,20 +899,28 @@ def test_saf_undo_ancestry() -> None:
         "android": SimpleNamespace(mActivity=activity),
         "jnius": SimpleNamespace(autoclass=lambda name: uri if name == "android.net.Uri" else contract),
     }
-    record = {"undo_root": "content://provider/tree/root", "destination": "content://provider/document/child"}
-    with patch.dict(sys.modules, modules), patch.object(storage_backend, "_get_platform", return_value="android"):
+    record = {"archive_root": "content://provider/tree/root", "destination": "content://provider/document/child",
+              "undo_allowed": True}
+    with (
+        patch.dict(sys.modules, modules),
+        patch.object(storage_backend, "_get_platform", return_value="android"),
+        patch.object(storage_backend, "is_saf_uri_valid", return_value=True),
+        TemporaryDirectory() as tmp,
+        patch.object(file_manager, "get_app_private_storage_dir", return_value=Path(tmp)),
+    ):
+        record["undo_signature"] = file_manager._transfer_undo_signature(record, create_key=True)
         for descendant in (True, False):
             contract.isChildDocument.return_value = descendant
-            assert file_manager._is_transfer_undo_authorized(record) is descendant
+            assert file_manager.can_undo_transfer(record) is descendant
         contract.isChildDocument.side_effect = RuntimeError("provider unavailable")
-        assert not file_manager._is_transfer_undo_authorized(record)
+        assert not file_manager.can_undo_transfer(record)
         contract.isChildDocument.side_effect = None
         contract.isChildDocument.return_value = True
         for authority, document_id in (("other-provider", "child"), ("provider", "opaque-root")):
             document.getAuthority.return_value = authority
             contract.getDocumentId.return_value = document_id
             contract.isChildDocument.reset_mock()
-            assert not file_manager._is_transfer_undo_authorized(record)
+            assert not file_manager.can_undo_transfer(record)
             contract.isChildDocument.assert_not_called()
     print("✓ SAF undo ancestry: provider decision, failures, authorities, and root deletion.")
 
@@ -958,9 +967,9 @@ def test_advanced_saf_and_edge_cases() -> None:
             dest_path=str(f_dest),
             category="صوري",
             file_size=4,
+            archive_root=str(test_root),
             base_path=private_dir,
             is_copy=True,
-            undo_root=str(test_root),
         )
         hist = file_manager.get_transfer_history(base_path=private_dir)
         rec_id = int(str(hist[0]["id"]))
@@ -985,9 +994,9 @@ def test_advanced_saf_and_edge_cases() -> None:
             dest_path=str(f_ok_dest),
             category="صوري",
             file_size=2,
+            archive_root=str(test_root),
             base_path=private_dir,
             is_copy=True,
-            undo_root=str(test_root),
         )
         assert len(file_manager.get_transfer_history(base_path=private_dir)) == 2
 
@@ -1017,9 +1026,11 @@ def test_advanced_saf_and_edge_cases() -> None:
             "size_bytes": 4,
             "is_copy": True,
             "is_saf_dest": True,
-            "undo_root": "content://com.android.externalstorage.documents/tree/SD",
+            "archive_root": "content://com.android.externalstorage.documents/tree/SD",
+            "undo_allowed": True,
             "timestamp": "2026-10-01T00:00:00Z",
         }
+        saf_rec["undo_signature"] = file_manager._transfer_undo_signature(saf_rec)
         log_f = file_manager.get_transfer_log_path(private_dir)
         import json
         with open(log_f, "w", encoding="utf-8") as f:
@@ -1027,9 +1038,9 @@ def test_advanced_saf_and_edge_cases() -> None:
 
         # بطاقة مفصولة / إذن غير صالح
         orig_valid = storage_backend.is_saf_uri_valid
-        orig_ancestry = storage_backend.is_saf_document_in_tree
+        orig_ancestry = storage_backend.is_within_archive_root
         storage_backend.is_saf_uri_valid = lambda uri_str: False
-        storage_backend.is_saf_document_in_tree = lambda doc, tree: True
+        storage_backend.is_within_archive_root = lambda doc, tree: True
         try:
             saf_undo_res = file_manager.undo_transfer(999999, base_path=private_dir)
             assert saf_undo_res is False, "يجب أن يفشل التراجع بأمان عند فقدان إذن SAF أو فصل SD"
@@ -1038,7 +1049,7 @@ def test_advanced_saf_and_edge_cases() -> None:
             print("  [4/8] ✓ حماية فصل SD وفقدان إذن SAF: رفض التراجع بأمان والاحتفاظ بالسجل.")
         finally:
             storage_backend.is_saf_uri_valid = orig_valid
-            storage_backend.is_saf_document_in_tree = orig_ancestry
+            storage_backend.is_within_archive_root = orig_ancestry
 
         # 5. فحص استخراج تفاصيل Content URI ومنع حفظ الفيديو كـ JPG
         vid_mock = test_root / "my_holiday_clip.mp4"
@@ -2217,6 +2228,110 @@ def test_comprehensive_real_android_fixes() -> None:
     print("✓ نجحت جميع فحوصات الجناح 18 للإصلاح الشامل للملفات والصلاحيات بنسبة 100%!\n")
 
 
+def test_offline_ocr_memory_limits() -> None:
+    """Reject oversized sources before decoding and bound deskew allocations."""
+    from tempfile import TemporaryDirectory
+    from unittest.mock import patch
+
+    from PIL import ImageFile
+
+    import offline_ocr
+    from constants import OCR_DESKEW_MAX_DIMENSION, OCR_MAX_DIMENSION
+
+    with TemporaryDirectory() as tmp:
+        oversized = Path(tmp) / "oversized.png"
+        # A valid, highly compressed image below Pillow's own bomb threshold.
+        Image.new("1", (4100, 4000), 0).save(oversized)
+        assert oversized.stat().st_size < 100_000
+        with (
+            patch.object(ImageFile.ImageFile, "load") as decode,
+            patch.object(offline_ocr, "is_offline_ocr_available", return_value=True),
+            patch.object(offline_ocr, "recognize_text_onnx") as recognize,
+        ):
+            assert offline_ocr.preprocess_image_for_ocr(str(oversized)) is None
+            rejected = offline_ocr.extract_arabic_text_offline(str(oversized))
+            assert rejected.needs_review and rejected.error and not rejected.subject
+            decode.assert_not_called()
+            recognize.assert_not_called()
+
+        black = Path(tmp) / "black.png"
+        Image.new("1", (3000, 2000), 0).save(black)
+        original_where = np.where
+        mask_sizes = []
+
+        def bounded_where(mask):
+            # Assert before np.where itself can allocate coordinates.
+            assert max(mask.shape) <= OCR_DESKEW_MAX_DIMENSION
+            mask_sizes.append(mask.size)
+            return original_where(mask)
+
+        with patch.object(offline_ocr.np, "where", side_effect=bounded_where):
+            processed = offline_ocr.preprocess_image_for_ocr(str(black))
+        assert processed is not None and processed.shape == (1600, OCR_MAX_DIMENSION)
+        assert mask_sizes and max(mask_sizes) <= OCR_DESKEW_MAX_DIMENSION ** 2
+        assert np.all(processed == 0)
+
+        for size in ((200, 300), (1, 1000), (1000, 1)):
+            white = Path(tmp) / "white.png"
+            Image.new("RGB", size, "white").save(white)
+            processed = offline_ocr.preprocess_image_for_ocr(str(white))
+            assert processed is not None and max(processed.shape) == 1200
+            assert np.all(processed == 255)
+
+        corrupt = Path(tmp) / "corrupt.png"
+        corrupt.write_bytes(b"not an image")
+        assert offline_ocr.preprocess_image_for_ocr(str(corrupt)) is None
+        assert offline_ocr.preprocess_image_for_ocr(str(Path(tmp) / "missing.png")) is None
+
+        rotated = Path(tmp) / "rotated.jpg"
+        exif = Image.Exif()
+        exif[274] = 6
+        Image.new("RGB", (200, 300), "white").save(rotated, exif=exif)
+        processed = offline_ocr.preprocess_image_for_ocr(str(rotated))
+        assert processed is not None and processed.shape == (800, 1200)
+
+
+def test_offline_ocr_bounded_fallbacks() -> None:
+    """Keep ONNX and the Tesseract fallback on the same bounded image."""
+    from tempfile import TemporaryDirectory
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    import offline_ocr
+    from constants import OCR_MAX_DIMENSION
+
+    with TemporaryDirectory() as tmp:
+        image = Path(tmp) / "document.png"
+        Image.new("RGB", (3000, 2000), (20, 40, 60)).save(image)
+        with (
+            patch.object(offline_ocr, "is_offline_ocr_available", return_value=True),
+            patch.object(offline_ocr, "recognize_text_onnx", return_value="اختبار رياضيات") as recognize,
+        ):
+            result = offline_ocr.extract_arabic_text_offline(str(image))
+            assert result.subject == "رياضيات" and not result.needs_review
+            raw = recognize.call_args.args[0]
+            assert raw.shape == (1600, OCR_MAX_DIMENSION, 3)
+            assert tuple(raw[0, 0]) == (60, 40, 20)  # Preserve BGR for ONNX.
+
+        engine = SimpleNamespace(
+            Output=SimpleNamespace(DICT="dict"),
+            image_to_data=Mock(return_value={"text": ["اختبار", "رياضيات"], "conf": [90, 90]}),
+        )
+        with (
+            patch.object(offline_ocr, "is_offline_ocr_available", return_value=True),
+            patch.object(offline_ocr, "recognize_text_onnx", return_value=""),
+            patch.object(offline_ocr, "cv2", None),
+            patch.dict("sys.modules", {"pytesseract": engine}),
+            patch.object(Image, "open", wraps=Image.open) as image_open,
+        ):
+            result = offline_ocr.extract_arabic_text_offline(str(image))
+            assert result.subject == "رياضيات" and not result.needs_review
+            image_open.assert_called_once()
+            fallback = engine.image_to_data.call_args.args[0]
+            assert fallback.size == (OCR_MAX_DIMENSION, 1600)
+            assert fallback.getpixel((0, 0)) == (20, 40, 60)
+
+
 def test_offline_ai_capabilities() -> None:
     print("--- 19. فحص قدرات ومحركات الذكاء الاصطناعي الأوفلاين الحقيقية ---")
     from PIL import Image
@@ -3082,6 +3197,8 @@ if __name__ == "__main__":
     test_production_error_scenarios_and_resilience()
     test_category_ui_details_and_layout_resilience()
     test_comprehensive_real_android_fixes()
+    test_offline_ocr_memory_limits()
+    test_offline_ocr_bounded_fallbacks()
     test_offline_ai_capabilities()
     test_android_10_and_permissions_preflight()
     test_cumulative_classified_counter()

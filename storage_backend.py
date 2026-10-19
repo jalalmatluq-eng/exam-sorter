@@ -2122,25 +2122,48 @@ def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, 
             delete_media_item(created_uri_str)
 
 
-def is_saf_document_in_tree(document_uri: str, tree_uri: str) -> bool:
-    """Ask the provider to verify ancestry; URI/document IDs are opaque, not paths."""
-    if not document_uri.startswith("content://") or _get_platform() != "android":
+def is_within_archive_root(destination: str, archive_root: str) -> bool:
+    """Check undo containment using resolved paths or the SAF provider, failing closed."""
+    if not destination or not archive_root:
         return False
     try:
-        from android import mActivity
-        from jnius import autoclass
+        if archive_root.startswith("content://"):
+            if not destination.startswith("content://") or _get_platform() != "android":
+                return False
+            from android import mActivity
+            from jnius import autoclass
 
-        Uri = autoclass("android.net.Uri")
-        DocumentsContract = autoclass("android.provider.DocumentsContract")
-        tree = Uri.parse(tree_uri)
-        document = Uri.parse(document_uri)
-        root_id = DocumentsContract.getTreeDocumentId(tree)
-        if tree.getAuthority() != document.getAuthority() or root_id == DocumentsContract.getDocumentId(document):
+            Uri = autoclass("android.net.Uri")
+            DocumentsContract = autoclass("android.provider.DocumentsContract")
+            tree = Uri.parse(archive_root)
+            child = Uri.parse(destination)
+            if tree.getAuthority() != child.getAuthority() or not is_saf_uri_valid(archive_root):
+                return False
+            root_id = DocumentsContract.getTreeDocumentId(tree)
+            if root_id == DocumentsContract.getDocumentId(child):
+                return False
+            parent = DocumentsContract.buildDocumentUriUsingTree(tree, root_id)
+            return bool(DocumentsContract.isChildDocument(mActivity.getContentResolver(), parent, child))
+
+        if archive_root.startswith("mock_saf://"):
+            if not destination.startswith("mock_doc://"):
+                return False
+            archive_root = archive_root.removeprefix("mock_saf://")
+            destination = destination.removeprefix("mock_doc://")
+        elif "://" in archive_root or "://" in destination:
             return False
-        root = DocumentsContract.buildDocumentUriUsingTree(tree, root_id)
-        return bool(DocumentsContract.isChildDocument(mActivity.getContentResolver(), root, document))
+
+        root = Path(archive_root)
+        dest = Path(destination).resolve()
+        return (
+            root.is_absolute()
+            and root.resolve() == root
+            and dest != root
+            and dest.is_relative_to(root)
+            and not dest.is_dir()
+        )
     except Exception as e:
-        logger.debug("Unable to verify undo document ancestry: %s", e)
+        logger.debug("Cannot verify undo destination containment: %s", e)
         return False
 
 
