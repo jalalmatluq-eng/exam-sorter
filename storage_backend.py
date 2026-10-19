@@ -2122,6 +2122,28 @@ def copy_uri_to_saf_uri(src_content_uri: str, saf_tree_uri: str, category: str, 
             delete_media_item(created_uri_str)
 
 
+def is_saf_document_in_tree(document_uri: str, tree_uri: str) -> bool:
+    """Ask the provider to verify ancestry; URI/document IDs are opaque, not paths."""
+    if not document_uri.startswith("content://") or _get_platform() != "android":
+        return False
+    try:
+        from android import mActivity
+        from jnius import autoclass
+
+        Uri = autoclass("android.net.Uri")
+        DocumentsContract = autoclass("android.provider.DocumentsContract")
+        tree = Uri.parse(tree_uri)
+        document = Uri.parse(document_uri)
+        root_id = DocumentsContract.getTreeDocumentId(tree)
+        if tree.getAuthority() != document.getAuthority() or root_id == DocumentsContract.getDocumentId(document):
+            return False
+        root = DocumentsContract.buildDocumentUriUsingTree(tree, root_id)
+        return bool(DocumentsContract.isChildDocument(mActivity.getContentResolver(), root, document))
+    except Exception as e:
+        logger.debug("Unable to verify undo document ancestry: %s", e)
+        return False
+
+
 def delete_media_item(item: MediaItem | Path | str) -> bool:
     """
     حذف الملف المصدر أو وجهة تراجع بأمان:

@@ -998,6 +998,7 @@ class SettingsScreen(Screen):
 
         undo_btn = MDButton(
             style="outlined",
+            disabled=not bool(record.get("undo_root")),
             size_hint=(None, None),
             size=(dp(80), dp(36)),
             pos_hint={"center_y": 0.5},

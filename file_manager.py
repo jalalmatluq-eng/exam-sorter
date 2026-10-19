@@ -1219,16 +1219,23 @@ def create_initial_category_folders(
 
 def get_transfer_log_path(base_path: Path | None = None) -> Path:
     """مسار ملف سجل عمليات النقل للتراجع والمراجعة محفوظ دائماً في app-private storage"""
-    if base_path is not None:
-        return Path(base_path) / "transfer_history.json"
-
-    private_log = get_app_private_storage_dir() / "transfer_history.json"
+    history_dir = Path(base_path) if base_path is not None else get_app_private_storage_dir()
+    # Older private logs may themselves contain raw imports from shared storage.
+    # A new private file establishes provenance even for previously migrated data.
+    private_log = history_dir / "transfer_history_v2.json"
     # هجرة تلقائية من المسار القديم إن وجد
     if not private_log.exists():
         try:
-            legacy_log = get_internal_media_sorter_base_path() / "transfer_history.json"
+            legacy_log = history_dir / "transfer_history.json"
+            if not legacy_log.exists() and base_path is None:
+                legacy_log = get_internal_media_sorter_base_path() / "transfer_history.json"
             if legacy_log.exists():
-                shutil.copy2(str(legacy_log), str(private_log))
+                with open(legacy_log, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                # Shared history is untrusted, including any claimed undo authorization.
+                records = [dict(r, undo_root="") for r in loaded if isinstance(r, dict)] if isinstance(loaded, list) else []
+                with open(private_log, "x", encoding="utf-8") as f:
+                    json.dump(records, f, ensure_ascii=False, indent=2)
                 logger.info("تمت هجرة سجل transfer_history.json إلى التخزين الخاص بالتطبيق بنجاح")
         except Exception as e:
             logger.debug("تعذر نسخ سجل العمليات القديم: %s", e)
@@ -1243,6 +1250,7 @@ def _log_transfer_record(
     base_path: Path | None = None,
     is_copy: bool = True,
     is_saf_dest: bool = False,
+    undo_root: str = "",
 ) -> int:
     """تسجيل عملية نسخ/فرز في سجل المعاملات JSON مع دعم المسارات وعناوين URIs"""
     log_file = get_transfer_log_path(base_path)
@@ -1258,6 +1266,16 @@ def _log_transfer_record(
         except (OSError, json.JSONDecodeError):
             records = []
 
+    # Only transfer callers that know the authorized archive can enable undo.
+    if undo_root.startswith("mock_saf://"):
+        undo_root = "mock_saf://" + str(Path(undo_root.removeprefix("mock_saf://")).resolve())
+    elif undo_root and not undo_root.startswith("content://"):
+        undo_root = str(Path(undo_root).resolve())
+    if dest_path.startswith("mock_doc://"):
+        dest_path = "mock_doc://" + str(Path(dest_path.removeprefix("mock_doc://")).absolute())
+    elif not dest_path.startswith("content://"):
+        dest_path = str(Path(dest_path).absolute())
+
     rec_id = int(datetime.now(UTC).timestamp() * 1000)
     records.append({
         "id": rec_id,
@@ -1267,6 +1285,7 @@ def _log_transfer_record(
         "size_bytes": file_size,
         "is_copy": is_copy,
         "is_saf_dest": is_saf_dest or dest_path.startswith("content://"),
+        "undo_root": undo_root,
         "timestamp": datetime.now(UTC).isoformat(),
     })
 
@@ -1394,6 +1413,37 @@ def get_transfer_history(
         return []
 
 
+def _is_transfer_undo_authorized(record: dict[str, object]) -> bool:
+    """Fail closed for legacy records and destinations outside the recorded archive."""
+    import storage_backend
+
+    root = record.get("undo_root")
+    dest = record.get("destination")
+    if not isinstance(root, str) or not root or not isinstance(dest, str) or not dest:
+        return False
+    if root.startswith("content://"):
+        return storage_backend.is_saf_document_in_tree(dest, root)
+    if root.startswith("mock_saf://"):
+        if not dest.startswith("mock_doc://"):
+            return False
+        root = root.removeprefix("mock_saf://")
+        dest = dest.removeprefix("mock_doc://")
+    elif "://" in root or "://" in dest:
+        return False
+    try:
+        root_path = Path(root)
+        dest_path = Path(dest).resolve()
+        return (
+            root_path.is_absolute()
+            and root_path.resolve() == root_path
+            and dest_path != root_path
+            and dest_path.is_relative_to(root_path)
+            and not dest_path.is_dir()
+        )
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
 def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
     """
     التراجع عن عملية تصنيف/نسخ معينة:
@@ -1424,7 +1474,7 @@ def undo_transfer(record_id: int, base_path: Path | None = None) -> bool:
             target_record = r
             break
 
-    if target_record is None:
+    if target_record is None or not _is_transfer_undo_authorized(target_record):
         return False
 
     dest_str = str(target_record["destination"])
@@ -1545,6 +1595,9 @@ def undo_all_transfers(base_path: Path | None = None) -> int:
     cleared_keys: list[tuple[str, str]] = []
 
     for r in records:
+        if not _is_transfer_undo_authorized(r):
+            remaining_records.append(r)
+            continue
         dest_str = str(r.get("destination", ""))
         src_str = str(r.get("source", ""))
         is_copy = bool(r.get("is_copy", True))
@@ -1761,6 +1814,7 @@ def copy_to_category(
             base_path=base_path,
             is_copy=is_copy,
             is_saf_dest=True,
+            undo_root=tree_uri,
         )
         return dest_uri
 
@@ -1787,6 +1841,7 @@ def copy_to_category(
             base_path=base_path,
             is_copy=is_copy,
             is_saf_dest=False,
+            undo_root=str(target_base),
         )
         return primary_dest
 
@@ -1802,6 +1857,7 @@ def copy_to_category(
                 base_path=base_path,
                 is_copy=is_copy,
                 is_saf_dest=False,
+                undo_root=str(target_base),
             )
             return dest
         dest = target_folder / f"{stem}_{counter:02d}{suffix}"
@@ -1831,6 +1887,7 @@ def copy_to_category(
         base_path=base_path,
         is_copy=is_copy,
         is_saf_dest=False,
+        undo_root=str(target_base),
     )
 
     return dest

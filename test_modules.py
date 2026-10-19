@@ -483,7 +483,7 @@ def test_poison_files_and_pending_scan() -> None:
     print("✓ فحص سقف 200 مسار لـ poison_files: تم التحقق وإسقاط الأقدم بنجاح.")
 
     # 5. فحص عزل مسار transfer_history.json في الاختبارات عن المسار الحقيقي
-    real_prod_log = Path(__file__).resolve().parent / ".app_private" / "transfer_history.json"
+    real_prod_log = Path(__file__).resolve().parent / ".app_private" / "transfer_history_v2.json"
     assert not real_prod_log.exists(), "مسار transfer_history.json الحقيقي لا يجب أن يُمس أثناء الاختبارات!"
     test_log = file_manager.get_transfer_log_path()
     assert test_log != real_prod_log, "مسار السجل في الاختبارات يجب أن يكون معزولاً عن المسار الحقيقي!"
@@ -766,6 +766,156 @@ def test_saf_and_target_location_simulations() -> None:
     print("✓ نجحت جميع اختبارات محاكاة SAF والسيناريوهات الثمانية بنسبة 100%!\n")
 
 
+def test_transfer_history_security() -> None:
+    """Untrusted history stays display-only; new transfers stay inside their archive."""
+    import json
+    from tempfile import TemporaryDirectory
+    from unittest.mock import patch
+
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        private, shared, archive = (root / name for name in ("private", "shared", "archive"))
+        for directory in (private, shared, archive):
+            directory.mkdir()
+        victim = private / "sensitive.txt"
+        victim.write_bytes(b"private data")
+        source = root / "source.jpg"
+        source.write_bytes(b"photo data")
+        log = private / "transfer_history_v2.json"
+        with (
+            patch.object(file_manager, "get_app_private_storage_dir", return_value=private),
+            patch.object(file_manager, "get_internal_media_sorter_base_path", return_value=shared),
+        ):
+            # Exercise shared imports and records already copied to private by older releases.
+            for legacy_dir in (shared, private):
+                forged = [{
+                    "id": -i - 1, "source": str(source), "destination": dest,
+                    "is_copy": is_copy, "undo_root": str(private),
+                } for i, (dest, is_copy) in enumerate((
+                    (str(victim), True), (str(victim), False),
+                    (f"mock_doc://{victim}", True), ("content://provider/document/victim", True),
+                ))]
+                (legacy_dir / "transfer_history.json").write_text(json.dumps(forged))
+                original_legacy = (legacy_dir / "transfer_history.json").read_bytes()
+                imported = file_manager.get_transfer_history()
+                assert len(imported) == len(forged)
+                with (
+                    patch.object(storage_backend, "delete_media_item") as delete,
+                    patch.object(file_manager.shutil, "move") as move,
+                    patch.object(storage_backend, "copy_uri_to_path") as restore,
+                ):
+                    for record in imported:
+                        assert not file_manager.undo_transfer(int(str(record["id"])))
+                    assert file_manager.undo_all_transfers() == 0
+                    delete.assert_not_called()
+                    move.assert_not_called()
+                    restore.assert_not_called()
+                assert victim.read_bytes() == b"private data"
+                assert source.read_bytes() == b"photo data"
+                assert len(file_manager.get_transfer_history()) == len(forged)
+                assert (legacy_dir / "transfer_history.json").read_bytes() == original_legacy
+
+                # Appending a genuine transfer must not enable imported records.
+                dest = Path(file_manager.copy_to_category(source, "صوري", base_path=None,
+                    target_location=storage_backend.TargetLocation("custom", False, path=archive, is_valid=True)))
+                assert file_manager.undo_all_transfers() == 1
+                assert not dest.exists() and source.exists()
+                assert len(file_manager.get_transfer_history()) == len(forged)
+                log.unlink()
+
+            # Old records without provenance must also be rejected in the new file.
+            log.write_text(json.dumps([{"id": 1, "source": str(source), "destination": str(victim)}]))
+            assert not file_manager.undo_transfer(1)
+            assert file_manager.undo_all_transfers() == 0
+            assert victim.exists()
+
+            # Simulate private record damage and filesystem changes after a genuine transfer.
+            for bulk in (False, True):
+                log.write_text("[]")
+                dest = Path(file_manager.copy_to_category(source, "صوري", base_path=private,
+                    target_location=storage_backend.TargetLocation("custom", False, path=archive, is_valid=True)))
+                original = json.loads(log.read_text())[0]
+                sibling = root / "archive-other"
+                sibling.mkdir(exist_ok=True)
+                (sibling / "sensitive.txt").write_bytes(b"sibling data")
+                link = archive / "escape"
+                link.symlink_to(private, target_is_directory=True)
+                for escape in (victim, sibling / "sensitive.txt", archive / ".." / "private" / victim.name,
+                               link / victim.name, archive):
+                    log.write_text(json.dumps([dict(original, destination=str(escape))]))
+                    assert (file_manager.undo_all_transfers() == 0 if bulk else
+                            not file_manager.undo_transfer(int(original["id"])))
+                    assert len(file_manager.get_transfer_history()) == 1
+                link.unlink()
+                # The selected archive itself may be replaced by a symlink.
+                saved = root / "saved_archive"
+                archive.rename(saved)
+                archive.symlink_to(private, target_is_directory=True)
+                log.write_text(json.dumps([dict(original, destination=str(archive / victim.name))]))
+                assert (file_manager.undo_all_transfers() == 0 if bulk else
+                        not file_manager.undo_transfer(int(original["id"])))
+                archive.unlink()
+                saved.rename(archive)
+                assert victim.read_bytes() == b"private data"
+                log.write_text(json.dumps([original]))
+                assert (file_manager.undo_all_transfers() == 1 if bulk else
+                        file_manager.undo_transfer(int(original["id"])))
+                assert not dest.exists() and source.exists()
+
+            # A legitimate move restores its source, and simulated SAF copies still undo.
+            log.write_text("[]")
+            target = storage_backend.TargetLocation("custom", False, path=archive, is_valid=True)
+            dest = Path(file_manager.copy_to_category(source, "صوري", target_location=target, is_copy=False))
+            source.unlink()
+            assert file_manager.undo_all_transfers() == 1
+            assert source.read_bytes() == b"photo data" and not dest.exists()
+            for bulk in (False, True):
+                target = storage_backend.TargetLocation("sdcard", True, tree_uri=f"mock_saf://{archive}", is_valid=True)
+                dest_uri = str(file_manager.copy_to_category(source, "صوري", target_location=target))
+                record = file_manager.get_transfer_history()[0]
+                assert (file_manager.undo_all_transfers() == 1 if bulk else
+                        file_manager.undo_transfer(int(str(record["id"]))))
+                assert not Path(dest_uri.removeprefix("mock_doc://")).exists()
+                assert source.exists()
+    print("✓ Transfer history security: forged imports, prior migrations, archive escapes, copy/move and SAF undo.")
+
+
+def test_saf_undo_ancestry() -> None:
+    """SAF undo uses provider ancestry, never a prefix comparison of opaque IDs."""
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import Mock, patch
+
+    tree, document = Mock(), Mock()
+    tree.getAuthority.return_value = document.getAuthority.return_value = "provider"
+    uri = Mock()
+    uri.parse.side_effect = lambda value: tree if value == "content://provider/tree/root" else document
+    contract = Mock()
+    contract.getTreeDocumentId.return_value = "opaque-root"
+    contract.getDocumentId.return_value = "unrelated-looking-child"
+    activity = Mock()
+    modules = {
+        "android": SimpleNamespace(mActivity=activity),
+        "jnius": SimpleNamespace(autoclass=lambda name: uri if name == "android.net.Uri" else contract),
+    }
+    record = {"undo_root": "content://provider/tree/root", "destination": "content://provider/document/child"}
+    with patch.dict(sys.modules, modules), patch.object(storage_backend, "_get_platform", return_value="android"):
+        for descendant in (True, False):
+            contract.isChildDocument.return_value = descendant
+            assert file_manager._is_transfer_undo_authorized(record) is descendant
+        contract.isChildDocument.side_effect = RuntimeError("provider unavailable")
+        assert not file_manager._is_transfer_undo_authorized(record)
+        contract.isChildDocument.side_effect = None
+        contract.isChildDocument.return_value = True
+        for authority, document_id in (("other-provider", "child"), ("provider", "opaque-root")):
+            document.getAuthority.return_value = authority
+            contract.getDocumentId.return_value = document_id
+            contract.isChildDocument.reset_mock()
+            assert not file_manager._is_transfer_undo_authorized(record)
+            contract.isChildDocument.assert_not_called()
+    print("✓ SAF undo ancestry: provider decision, failures, authorities, and root deletion.")
+
+
 def test_advanced_saf_and_edge_cases() -> None:
     """
     اختبار الحالات المتقدمة والإضافية (Suite 12):
@@ -790,7 +940,7 @@ def test_advanced_saf_and_edge_cases() -> None:
     try:
         log_path = file_manager.get_transfer_log_path()
         assert log_path.parent == private_dir, f"يجب حفظ سجل النقل في app-private storage: {log_path}"
-        assert log_path.name == "transfer_history.json"
+        assert log_path.name == "transfer_history_v2.json"
         # عزل السجل للاختبارات الحالية
         import json
         with open(log_path, "w", encoding="utf-8") as f:
@@ -810,6 +960,7 @@ def test_advanced_saf_and_edge_cases() -> None:
             file_size=4,
             base_path=private_dir,
             is_copy=True,
+            undo_root=str(test_root),
         )
         hist = file_manager.get_transfer_history(base_path=private_dir)
         rec_id = int(str(hist[0]["id"]))
@@ -836,6 +987,7 @@ def test_advanced_saf_and_edge_cases() -> None:
             file_size=2,
             base_path=private_dir,
             is_copy=True,
+            undo_root=str(test_root),
         )
         assert len(file_manager.get_transfer_history(base_path=private_dir)) == 2
 
@@ -865,6 +1017,7 @@ def test_advanced_saf_and_edge_cases() -> None:
             "size_bytes": 4,
             "is_copy": True,
             "is_saf_dest": True,
+            "undo_root": "content://com.android.externalstorage.documents/tree/SD",
             "timestamp": "2026-10-01T00:00:00Z",
         }
         log_f = file_manager.get_transfer_log_path(private_dir)
@@ -874,7 +1027,9 @@ def test_advanced_saf_and_edge_cases() -> None:
 
         # بطاقة مفصولة / إذن غير صالح
         orig_valid = storage_backend.is_saf_uri_valid
+        orig_ancestry = storage_backend.is_saf_document_in_tree
         storage_backend.is_saf_uri_valid = lambda uri_str: False
+        storage_backend.is_saf_document_in_tree = lambda doc, tree: True
         try:
             saf_undo_res = file_manager.undo_transfer(999999, base_path=private_dir)
             assert saf_undo_res is False, "يجب أن يفشل التراجع بأمان عند فقدان إذن SAF أو فصل SD"
@@ -883,6 +1038,7 @@ def test_advanced_saf_and_edge_cases() -> None:
             print("  [4/8] ✓ حماية فصل SD وفقدان إذن SAF: رفض التراجع بأمان والاحتفاظ بالسجل.")
         finally:
             storage_backend.is_saf_uri_valid = orig_valid
+            storage_backend.is_saf_document_in_tree = orig_ancestry
 
         # 5. فحص استخراج تفاصيل Content URI ومنع حفظ الفيديو كـ JPG
         vid_mock = test_root / "my_holiday_clip.mp4"
@@ -2917,6 +3073,8 @@ if __name__ == "__main__":
     test_export_logs()
     test_unified_storage_backend()
     test_saf_and_target_location_simulations()
+    test_transfer_history_security()
+    test_saf_undo_ancestry()
     test_advanced_saf_and_edge_cases()
     test_architectural_saf_unification()
     test_saf_reading_dedup_and_recoverable_security()
