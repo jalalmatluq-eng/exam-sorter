@@ -732,6 +732,7 @@ def test_advanced_saf_and_edge_cases() -> None:
             dest_path=str(f_dest),
             category="صوري",
             file_size=4,
+            archive_root=str(test_root),
             base_path=private_dir,
             is_copy=True,
         )
@@ -758,6 +759,7 @@ def test_advanced_saf_and_edge_cases() -> None:
             dest_path=str(f_ok_dest),
             category="صوري",
             file_size=2,
+            archive_root=str(test_root),
             base_path=private_dir,
             is_copy=True,
         )
