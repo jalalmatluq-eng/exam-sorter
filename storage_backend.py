@@ -2153,9 +2153,15 @@ def is_within_archive_root(destination: str, archive_root: str) -> bool:
         elif "://" in archive_root or "://" in destination:
             return False
 
-        root = Path(archive_root).resolve()
+        root = Path(archive_root)
         dest = Path(destination).resolve()
-        return dest != root and dest.is_relative_to(root)
+        return (
+            root.is_absolute()
+            and root.resolve() == root
+            and dest != root
+            and dest.is_relative_to(root)
+            and not dest.is_dir()
+        )
     except Exception as e:
         logger.debug("Cannot verify undo destination containment: %s", e)
         return False

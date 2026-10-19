@@ -1221,21 +1221,23 @@ def create_initial_category_folders(
 
 def get_transfer_log_path(base_path: Path | None = None) -> Path:
     """مسار ملف سجل عمليات النقل للتراجع والمراجعة محفوظ دائماً في app-private storage"""
-    if base_path is not None:
-        return Path(base_path) / "transfer_history.json"
-
-    private_log = get_app_private_storage_dir() / "transfer_history.json"
+    history_dir = Path(base_path) if base_path is not None else get_app_private_storage_dir()
+    # Older private logs may themselves contain raw imports from shared storage.
+    # A new private file establishes provenance even for previously migrated data.
+    private_log = history_dir / "transfer_history_v2.json"
     # هجرة تلقائية من المسار القديم إن وجد
     if not private_log.exists():
         try:
-            legacy_log = get_internal_media_sorter_base_path() / "transfer_history.json"
+            legacy_log = history_dir / "transfer_history.json"
+            if not legacy_log.exists() and base_path is None:
+                legacy_log = get_internal_media_sorter_base_path() / "transfer_history.json"
             if legacy_log.exists():
                 with open(legacy_log, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
                 # Shared history cannot authorize filesystem changes, even if
                 # it contains forged fields from the current record format.
-                records = [dict(r, undo_allowed=False) for r in loaded if isinstance(r, dict)] if isinstance(loaded, list) else []
-                with open(private_log, "w", encoding="utf-8") as f:
+                records = [dict(r, undo_root="", undo_allowed=False) for r in loaded if isinstance(r, dict)] if isinstance(loaded, list) else []
+                with open(private_log, "x", encoding="utf-8") as f:
                     json.dump(records, f, ensure_ascii=False, indent=2)
                 logger.info("تمت هجرة سجل transfer_history.json إلى التخزين الخاص بالتطبيق بنجاح")
         except Exception as e:
@@ -1249,19 +1251,32 @@ def _transfer_undo_signature(record: dict[str, object], create_key: bool = False
     try:
         if create_key:
             key_file.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                with key_file.open("xb") as f:
-                    f.write(secrets.token_bytes(32))
-                key_file.chmod(0o600)
-            except FileExistsError:
-                pass
+            if not key_file.exists():
+                # SQLite serializes app/service creators on Android and desktop.
+                lock = sqlite3.connect(str(key_file.with_name(".transfer_undo.lock")))
+                try:
+                    lock.execute("BEGIN IMMEDIATE")
+                    if not key_file.exists():
+                        candidate = key_file.with_name(f".{key_file.name}.{secrets.token_hex(8)}")
+                        fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        try:
+                            with os.fdopen(fd, "wb") as f:
+                                f.write(secrets.token_bytes(32))
+                                f.flush()
+                                os.fsync(f.fileno())
+                            os.replace(candidate, key_file)
+                        finally:
+                            candidate.unlink(missing_ok=True)
+                    lock.commit()
+                finally:
+                    lock.close()
         key = key_file.read_bytes()
         if len(key) != 32:
             return ""
         # is_copy can change after source deletion; the authorized paths cannot.
         payload = json.dumps([record.get(k) for k in ("id", "source", "destination", "archive_root")])
         return hmac.digest(key, payload.encode("utf-8"), "sha256").hex()
-    except OSError:
+    except (OSError, sqlite3.Error):
         return ""
 
 
@@ -1276,9 +1291,14 @@ def _log_transfer_record(
     archive_root: str = "",
 ) -> int:
     """تسجيل عملية نسخ/فرز في سجل المعاملات JSON مع دعم المسارات وعناوين URIs"""
-    if archive_root and "://" not in archive_root:
+    if archive_root.startswith("mock_saf://"):
+        archive_root = "mock_saf://" + str(Path(archive_root.removeprefix("mock_saf://")).resolve())
+    elif archive_root and "://" not in archive_root:
         archive_root = str(Path(archive_root).resolve())
-        dest_path = str(Path(dest_path).resolve())
+    if dest_path.startswith("mock_doc://"):
+        dest_path = "mock_doc://" + str(Path(dest_path.removeprefix("mock_doc://")).absolute())
+    elif "://" not in dest_path:
+        dest_path = str(Path(dest_path).absolute())
     log_file = get_transfer_log_path(base_path)
     records: list[dict[str, object]] = []
     if log_file.exists():

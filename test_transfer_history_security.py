@@ -1,6 +1,7 @@
 """Regression checks for shared history crossing the destructive undo boundary."""
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -53,7 +54,7 @@ class TransferHistorySecurityTests(unittest.TestCase):
     def test_imported_records_cannot_authorize_copy_or_move_undo(self):
         for is_copy in (True, False):
             with self.subTest(is_copy=is_copy):
-                private_log = self.private / 'transfer_history.json'
+                private_log = self.private / 'transfer_history_v2.json'
                 private_log.unlink(missing_ok=True)
                 record = self.forged_record(is_copy)
                 (self.shared / 'transfer_history.json').write_text(json.dumps([record]))
@@ -81,6 +82,59 @@ class TransferHistorySecurityTests(unittest.TestCase):
 
     def location(self):
         return storage_backend.TargetLocation(storage_type='custom', path=self.archive)
+
+    def test_interrupted_key_creation_can_retry_without_publishing_partial_key(self):
+        record = self.forged_record()
+        key_file = self.private / 'transfer_undo.key'
+        with patch.object(file_manager.os, 'fsync', side_effect=OSError('disk error')):
+            self.assertEqual(file_manager._transfer_undo_signature(record, create_key=True), '')
+        self.assertFalse(key_file.exists())
+        self.assertEqual(sorted(p.name for p in self.private.iterdir()), ['.transfer_undo.lock', 'settings.json'])
+        signature = file_manager._transfer_undo_signature(record, create_key=True)
+        self.assertEqual(len(signature), 64)
+        self.assertEqual(key_file.stat().st_mode & 0o777, 0o600)
+
+    def test_competing_key_creators_use_same_fully_written_key(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+
+        record = self.forged_record()
+        real_replace = os.replace
+        real_connect = file_manager.sqlite3.connect
+        ready_to_publish, competitor_started = Event(), Event()
+
+        def connect(*args, **kwargs):
+            competitor_started.set()
+            return real_connect(*args, **kwargs)
+
+        def publish(candidate, key_file):
+            self.assertFalse(key_file.exists())
+            self.assertEqual(len(Path(candidate).read_bytes()), 32)
+            self.assertEqual(Path(candidate).stat().st_mode & 0o777, 0o600)
+            ready_to_publish.set()
+            self.assertTrue(competitor_started.wait(5))
+            return real_replace(candidate, key_file)
+
+        with ThreadPoolExecutor(max_workers=2) as pool, patch.object(file_manager.os, 'replace', side_effect=publish) as rename:
+            first = pool.submit(file_manager._transfer_undo_signature, record, create_key=True)
+            self.assertTrue(ready_to_publish.wait(5))
+            with patch.object(file_manager.sqlite3, 'connect', side_effect=connect):
+                second = pool.submit(file_manager._transfer_undo_signature, record, create_key=True)
+                signature = first.result(timeout=5)
+                self.assertEqual(second.result(timeout=5), signature)
+            rename.assert_called_once()
+        self.assertEqual(len(signature), 64)
+        self.assertEqual(sorted(p.name for p in self.private.iterdir()),
+                         ['.transfer_undo.lock', 'settings.json', 'transfer_undo.key'])
+
+    def test_key_creation_and_undo_work_when_hard_links_are_denied(self):
+        with patch.object(file_manager.os, 'link', side_effect=PermissionError('Android policy')) as hard_link:
+            destination = file_manager.copy_to_category(self.source, 'photos', target_location=self.location())
+            record = self.read_log()[0]
+            self.assertTrue(file_manager.can_undo_transfer(record))
+            self.assertTrue(file_manager.undo_transfer(record['id']))
+            self.assertFalse(Path(destination).exists())
+            hard_link.assert_not_called()
 
     def test_new_copy_and_move_remain_undoable_after_reload(self):
         for is_copy in (True, False):
@@ -133,6 +187,32 @@ class TransferHistorySecurityTests(unittest.TestCase):
             with self.subTest(destination=destination):
                 self.assertFalse(storage_backend.is_within_archive_root(str(destination), str(self.archive)))
         self.assertTrue(storage_backend.is_within_archive_root(str(self.archive / 'photos' / 'missing.jpg'), str(self.archive)))
+
+    def test_archive_root_replacement_is_rejected_with_valid_signature(self):
+        destination = Path(file_manager.copy_to_category(self.source, 'photos', target_location=self.location()))
+        record = self.read_log()[0]
+        replacement = self.private / destination.relative_to(self.archive)
+        replacement.parent.mkdir(parents=True, exist_ok=True)
+        replacement.write_bytes(b'private replacement')
+        self.archive.rename(self.root / 'original_archive')
+        self.archive.symlink_to(self.private, target_is_directory=True)
+        self.assertEqual(record['undo_signature'], file_manager._transfer_undo_signature(record))
+        self.assert_rejected(record)
+        self.assertEqual(replacement.read_bytes(), b'private replacement')
+
+    def test_mock_saf_undo_rejects_destination_replaced_by_directory(self):
+        target = storage_backend.TargetLocation(storage_type='custom', is_saf=True,
+                                               tree_uri=f'mock_saf://{self.archive}')
+        destination = file_manager.copy_to_category(self.source, 'photos', target_location=target)
+        record = self.read_log()[0]
+        path = Path(destination.removeprefix('mock_doc://'))
+        path.unlink()
+        path.mkdir()
+        child = path / 'keep.txt'
+        child.write_bytes(b'keep directory contents')
+        self.assertEqual(record['undo_signature'], file_manager._transfer_undo_signature(record))
+        self.assert_rejected(record)
+        self.assertEqual(child.read_bytes(), b'keep directory contents')
 
     def test_mock_saf_copy_undo_uses_recorded_tree(self):
         target = storage_backend.TargetLocation(storage_type='custom', is_saf=True,
