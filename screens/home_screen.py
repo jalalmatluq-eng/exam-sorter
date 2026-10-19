@@ -1164,7 +1164,7 @@ class HomeScreen(Screen):
             except Exception as e:
                 logger.warning("تعذر حفظ المفتاح في %s: %s", env_path, e)
 
-        # حفظ المفتاح في مسار التخزين المشترك للخدمات الخلفية
+        # حفظ المفتاح في التخزين الخاص بالتطبيق والخدمة الخلفية
         file_manager.save_api_key_to_persistent_storage(new_key)
 
     def get_app(self) -> Any:

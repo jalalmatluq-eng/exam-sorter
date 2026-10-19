@@ -909,8 +909,33 @@ def get_pending_scan() -> tuple[bool, str, str]:
     return get_pending_scan_info()
 
 
+def _remove_legacy_shared_api_keys() -> None:
+    """Remove old credential copies from organized-media storage without reading them."""
+    bases = {
+        Path(__file__).resolve().parent / ORGANIZED_FOLDER_NAME,
+        Path("/storage/emulated/0") / ORGANIZED_FOLDER_NAME,
+    }
+    try:
+        import storage_backend
+        for location in storage_backend.detect_storage_locations().values():
+            if location.detected and location.path and Path(location.path).is_absolute():
+                base = Path(location.path)
+                if base.name != ORGANIZED_FOLDER_NAME:
+                    base /= ORGANIZED_FOLDER_NAME
+                bases.add(base)
+    except Exception:
+        logger.warning("Unable to locate legacy API key files; rotate any previously saved key.")
+
+    for base in bases:
+        try:
+            (base / ".api_key").unlink(missing_ok=True)
+        except OSError:
+            logger.warning("Unable to remove a legacy API key file; rotate any previously saved key.")
+
+
 def get_stored_api_key() -> str:
-    """استرجاع مفتاح API المحفوظ في مسار التخزين المشترك لتتمكن الخدمة والتطبيق من قراءته"""
+    """Read the API key from app-private storage shared by the app and its service."""
+    _remove_legacy_shared_api_keys()
     try:
         prefs = get_sorter_preferences()
         k = str(prefs.get("api_key", "")).strip()
@@ -920,11 +945,7 @@ def get_stored_api_key() -> str:
         pass
 
     try:
-        candidates = [
-            get_prefs_file_path().parent / ".api_key",
-            get_media_sorter_base_path() / ".api_key",
-            Path(__file__).resolve().parent / ".api_key",
-        ]
+        candidates = [get_prefs_file_path().parent / ".api_key"]
         for c in candidates:
             if c.exists() and c.is_file():
                 val = c.read_text(encoding="utf-8").strip()
@@ -936,7 +957,8 @@ def get_stored_api_key() -> str:
 
 
 def save_api_key_to_persistent_storage(new_key: str) -> None:
-    """حفظ مفتاح API في مسار تخزين دائم ومشترك يصل إليه التطبيق والخدمة الخلفية"""
+    """Persist the API key only in app-private storage accessible to the service."""
+    _remove_legacy_shared_api_keys()
     clean_k = (new_key or "").strip()
     try:
         save_sorter_preferences({"api_key": clean_k})
@@ -944,10 +966,6 @@ def save_api_key_to_persistent_storage(new_key: str) -> None:
         pass
 
     targets = [get_prefs_file_path().parent / ".api_key"]
-    try:
-        targets.append(get_media_sorter_base_path() / ".api_key")
-    except Exception:
-        pass
     for target in targets:
         try:
             if clean_k:

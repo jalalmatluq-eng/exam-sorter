@@ -96,6 +96,82 @@ def test_file_manager() -> None:
     print("✓ نجح فحص وحدة إدارة الملفات بالكامل.\n")
 
 
+def test_api_key_private_storage() -> None:
+    """Keep saved keys private, clean up old shared copies, and support the service."""
+    import subprocess
+    import sys
+    import tempfile
+    from unittest.mock import patch
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        private = root / "private"
+        shared = root / "app" / file_manager.ORGANIZED_FOLDER_NAME
+        sdcard = root / "sdcard" / file_manager.ORGANIZED_FOLDER_NAME
+        for directory in (private, shared, sdcard):
+            directory.mkdir(parents=True)
+        locations = {
+            "internal": storage_backend.StorageLocation(
+                id="internal", name="internal", path=str(shared), detected=True,
+            ),
+            "sdcard": storage_backend.StorageLocation(
+                id="sdcard", name="sdcard", path=str(sdcard.parent), detected=True,
+            ),
+        }
+        shared_keys = [directory / ".api_key" for directory in (shared, sdcard)]
+        test_key = "synthetic-private-api-key"
+        with (
+            patch.dict(os.environ, {"ANDROID_PRIVATE": str(private), "ANTHROPIC_API_KEY": ""}),
+            patch.object(file_manager, "__file__", str(root / "app" / "file_manager.py")),
+            patch.object(storage_backend, "detect_storage_locations", return_value=locations),
+        ):
+            for key_file in shared_keys:
+                key_file.write_text("legacy-shared-key", encoding="utf-8")
+            file_manager.save_api_key_to_persistent_storage(f" {test_key} ")
+            assert file_manager.get_sorter_preferences()["api_key"] == test_key
+            assert (private / ".api_key").read_text(encoding="utf-8") == test_key
+            assert all(not key_file.exists() for key_file in shared_keys)
+
+            # Cleanup must also run when private preferences already contain a key.
+            for key_file in shared_keys:
+                key_file.write_text("legacy-shared-key", encoding="utf-8")
+            assert file_manager.get_stored_api_key() == test_key
+            assert all(not key_file.exists() for key_file in shared_keys)
+
+            # A fresh interpreter models the service, with no running Kivy app.
+            result = subprocess.run(
+                [sys.executable, "-c", "import classifier; print(classifier.get_api_key())"],
+                capture_output=True, text=True, check=True,
+            )
+            assert result.stdout.strip() == test_key
+
+            # The private file remains usable if the preferences file is missing.
+            file_manager.get_prefs_file_path().unlink()
+            assert file_manager.get_stored_api_key() == test_key
+
+            # Clearing a key cannot resurrect a legacy shared credential.
+            file_manager.save_api_key_to_persistent_storage("")
+            for key_file in shared_keys:
+                key_file.write_text("untrusted-shared-key", encoding="utf-8")
+            assert file_manager.get_stored_api_key() == ""
+            assert not (private / ".api_key").exists()
+            assert all(not key_file.exists() for key_file in shared_keys)
+
+            # Media storage availability must not control private persistence.
+            with patch.object(storage_backend, "detect_storage_locations", side_effect=OSError):
+                file_manager.save_api_key_to_persistent_storage(test_key)
+                assert file_manager.get_stored_api_key() == test_key
+
+            # If cleanup is denied, never read the remaining shared credential.
+            file_manager.save_api_key_to_persistent_storage("")
+            shared_keys[0].write_text("untrusted-shared-key", encoding="utf-8")
+            with patch.object(Path, "unlink", side_effect=PermissionError):
+                assert file_manager.get_stored_api_key() == ""
+            assert shared_keys[0].exists()
+
+    print("✓ API keys stay private; legacy cleanup and background service access passed.")
+
+
 def test_classifier_encoding() -> None:
     print("--- 3. فحص وحدة التصنيف وتجهيز الصور ---")
     test_img = Path("test_sample.png")
@@ -385,7 +461,7 @@ def test_poison_files_and_pending_scan() -> None:
     is_pending_after, _, _ = file_manager.get_pending_scan_info()
     assert is_pending_after is False, "يجب إلغاء الفحص المعلق بعد clear_pending_scan!"
 
-    # 3. فحص حفظ واسترجاع مفتاح API المشترك
+    # 3. فحص حفظ واسترجاع مفتاح API الخاص
     test_key = "sk-ant-test-key-12345"
     file_manager.save_api_key_to_persistent_storage(test_key)
     retrieved_key = file_manager.get_stored_api_key()
@@ -2831,6 +2907,7 @@ def test_cumulative_classified_counter() -> None:
 if __name__ == "__main__":
     test_arabic_helper()
     test_file_manager()
+    test_api_key_private_storage()
     test_classifier_encoding()
     test_face_classifier()
     test_video_classifier()
