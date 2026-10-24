@@ -17,7 +17,7 @@ python-dotenv>=1.0.0
 plyer>=2.1.0
 
 # دعم اللغة العربية والتشكيل داخل Kivy (متوافق مع buildozer.spec)
-arabic-reshaper>=2.1.4
+arabic-reshaper>=3.0.1
 python-bidi>=0.4.2
 
 # خيار بديل اختياري: التعرف الضوئي على الحروف بدون إنترنت (OCR)
